@@ -1,0 +1,114 @@
+{
+  "$comment": "复制为 config.json 后可按需修改；未提供的字段用默认值。密钥不存这里——运行时按 $secretsComment 的优先级自动读取。",
+  "intervals": {
+    "$comment": "分平台采集间隔（分钟）。改变后运行 node tools/set-task-interval.mjs 同步计划任务（任务按最小间隔触发，各平台按自己的间隔取数）",
+    "codexMinutes": 1,
+    "balanceMinutes": 5
+  },
+  "proxy": null,
+  "$proxyComment": "null = 自动探测系统代理（推荐）；也可写死如 \"http://127.0.0.1:7897\"。探测失败时采集器会再试直连。",
+  "codexHome": "",
+  "$codexHomeComment": "Codex 数据目录。留空 = 自动用当前用户的家目录（%USERPROFILE%\\.codex），通常不用改。",
+  "thinCoderConfig": "",
+  "$thinCoderConfigComment": "ThinCoder 配置路径（DeepSeek/GLM 的密钥可以从这里读）。留空 = 自动推导（%USERPROFILE%\\.thincoder\\config.json）；没装 ThinCoder 也不影响，密钥填在 secrets.json 或环境变量里即可。",
+  "$secretsComment": "API Key 来源（按优先级自动尝试）：① 项目根目录 secrets.json —— 形如 {\"deepseek\":\"sk-xxx\",\"glm\":\"xxx\"}，该文件已被 .gitignore 排除，公开仓库/备份都不会带上密钥（没装 ThinCoder 的用户填这里就够）② 上面的 thinCoderConfig（ThinCoder 配置文件）③ 环境变量 DEEPSEEK_API_KEY / GLM_API_KEY。某平台三路都没有 → 该平台显示为「未配置」，不影响其他平台采集。",
+  "platforms": {
+    "$comment": "平台开关：false = 该平台完全不采集（不写历史、不参与提醒规则，看板显示「已关闭」）。只想用其中一两家时关掉其余；删掉这一段或删掉其中某一项 = 该平台开启。",
+    "codex": true,
+    "deepseek": true,
+    "glm": true
+  },
+  "dashboard": {
+    "$comment": "看板页面行为：自动刷新秒数（0=关闭自动刷新）、默认时间窗（h24|d7）、主题（auto|dark|light）",
+    "refreshSeconds": 60,
+    "defaultWindow": "h24",
+    "theme": "auto"
+  },
+  "notify": {
+    "launchUrl": "",
+    "$comment": "通知行为：launchUrl=「打开看板」按钮跳转地址（留空 = 自动指向本机 dashboard.html）；sound=是否带提示音（免打扰时段自动静音）；launchButton=是否显示跳转按钮",
+    "sound": true,
+    "launchButton": true
+  },
+  "links": {
+    "$comment": "各平台官方页面：看板卡片↗按钮、快捷键 1/2/3、通知「去充值」按钮都用这里的地址",
+    "codex": { "name": "Codex", "usage": "https://chatgpt.com/codex/settings/usage", "topup": null },
+    "deepseek": { "name": "DeepSeek", "usage": "https://platform.deepseek.com/usage", "topup": "https://platform.deepseek.com/top_up" },
+    "glm": { "name": "GLM", "usage": "https://www.bigmodel.cn/finance-center/finance/overview", "topup": "https://www.bigmodel.cn/finance-center/finance/pay" }
+  },
+  "predict": {
+    "$comment": "触顶预测：按近 30 分钟的用量斜率外推，预计 X 分钟内触顶时提醒（需当前用量 ≥ minUsedPercent 才判断，避免低用量误报）",
+    "enabled": true,
+    "warnMinutes": 30,
+    "minUsedPercent": 40,
+    "slopeWindowMinutes": 30
+  },
+  "anomaly": {
+    "$comment": "异常消耗预警：当日消耗 > 近 7 日均值 × factor 且 > minAmount 时提醒",
+    "enabled": true,
+    "factor": 3,
+    "minAmount": 5
+  },
+  "attribution": {
+    "$comment": "额度去向归因：解析本地 Codex 会话文件按项目聚合 token 用量（每小时维护时生成；增量扫描，只读新增内容）",
+    "enabled": true,
+    "maxFileMB": 1024
+  },
+  "projectsRoots": [],
+  "$projectsRootsComment": "「额度去向」里点📁打开项目文件夹时允许的根目录（白名单）。填你自己的项目总目录，例如 [\"D:\\\\projects\"]；留空则只能打开本项目自身目录。填错会导致点击被拒绝。",
+  "tcRoots": [],
+  "$tcRootsComment": "额外允许「启动 ThinCoder 工作台」的目录（项目根以外的常用目录，如你的文档/下载/临时目录）。留空表示只允许 projectsRoots 与本项目目录。",
+  "backup": { "$comment": "一键备份：备份文件保留份数", "keep": 10 },
+  "tray": { "$comment": "托盘常驻：轮询 state.json 的间隔秒数", "enabled": true, "pollSeconds": 60 },
+  "dnd": { "enabled": true, "from": "23:00", "to": "08:00", "$comment": "免打扰时段内 P1/P2 提醒入队，时段结束后合并补发；P0（限流/余额耗尽/采集异常）始终即时弹" },
+  "mute": { "allowP0": true, "$comment": "静音（静音2小时.bat / node mute.mjs）期间：true = P0 仍送达，false = 全部静音" },
+  "thresholds": {
+    "codex5hWarn": 80,
+    "codex5hCritical": 95,
+    "codexWeekWarn": 80,
+    "glmLow": 5,
+    "glmCritical": 2,
+    "dsLow": 20,
+    "dsCritical": 10
+  },
+  "hysteresis": {
+    "$comment": "滞回（阈值类为百分点：触发后需回落到 阈值-该值 才重新武装；其余为分钟：按各平台实际采集间隔自动换算样本数）",
+    "codex5h": 5,
+    "codex5hCritical": 3,
+    "codexWeek": 5,
+    "degradedFailMinutes": 15,
+    "degradedRecoverMinutes": 30,
+    "healthFailMinutes": 15,
+    "healthRecoverMinutes": 10
+  },
+  "release": {
+    "$comment": "额度释放提醒：用量从 ≥peakHigh% 回落到 ≤dropTo% 且降幅 ≥minDrop 时提醒一次（替代旧的\"重置\"判定——Codex 的 reset_at 是滑动值，不能作为窗口身份）",
+    "peakHigh": 60,
+    "dropTo": 20,
+    "minDrop": 30
+  },
+  "cooldown": {
+    "$comment": "同一提醒命名空间的冷却小时数；-1 表示永不重复",
+    "default": 12,
+    "codexRelease": 4,
+    "codexThreshold": 0.5,
+    "codexLimit": 3,
+    "codexLink": 24,
+    "codexIdle": 168,
+    "codexPredict": 1,
+    "anomaly": 24,
+    "balanceRe": 24,
+    "health": 12
+  },
+  "history": {
+    "$comment": "永久保留 + 分级降采样：数据越老粒度越粗（不删除任何数据）。keepDays>0 时才额外删除超期数据。",
+    "keepDays": 0,
+    "tiers": [
+      { "olderThanDays": 7, "bucketMinutes": 5 },
+      { "olderThanDays": 30, "bucketMinutes": 60 },
+      { "olderThanDays": 365, "bucketMinutes": 1440 }
+    ],
+    "stateKeepDays": 7
+  },
+  "staleMinutes": 15
+}

@@ -1,0 +1,9 @@
+{
+  "$comment": "便携 Node 的来源记录：make-portable.mjs 下载时写入；安装脚本据此说明运行时来源",
+  "version": "v22.11.0",
+  "arch": "win-x64",
+  "mirror": "https://npmmirror.com/mirrors/node",
+  "sha256": "7447c4ece014aa41fb2ff866c993c708e5a8213a00913cc2ac5049ea3ffc230d",
+  "sizeBytes": 80511640,
+  "fetchedAtMs": 1789305505002
+}

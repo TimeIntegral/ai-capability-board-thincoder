@@ -1,0 +1,25 @@
+# ---- 运行时数据（私有，永不公开）----
+data/
+backups/
+secrets.json
+config.json
+
+# ---- 生成物（含真实用量数据；每个用户本地生成）----
+dashboard-data.js
+
+# ---- 工具与系统 ----
+node_modules/
+*.log
+.tmp-*
+
+# ---- 私有区（笔记、完整日志、草稿）----
+private/
+
+# ---- 项目记忆（含个人信息）----
+.thincoder/
+
+# ---- 发布临时产物 ----
+dist/
+*.zip
+runtime/
+release/audit-rules.local.json

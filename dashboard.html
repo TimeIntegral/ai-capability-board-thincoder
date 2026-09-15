@@ -1,0 +1,2611 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 能力看板</title>
+<script>
+// 尽早应用已保存的主题（在首帧绘制前），避免先闪一下默认主题
+try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentElement.dataset.theme = __t; } catch (e) { /* 忽略 */ }
+</script>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%20width='32'%20height='32'%3E%20%3Cdefs%3E%20%3ClinearGradient%20id='arc'%20x1='0'%20y1='1'%20x2='1'%20y2='0'%3E%20%3Cstop%20offset='0'%20stop-color='%234f8cff'/%3E%20%3Cstop%20offset='1'%20stop-color='%233ecf8e'/%3E%20%3C/linearGradient%3E%20%3C/defs%3E%20%3Crect%20width='32'%20height='32'%20rx='7.5'%20fill='%23121a2b'/%3E%20%3Ccircle%20cx='16'%20cy='16'%20r='9.5'%20fill='none'%20stroke='url(%23arc)'%20stroke-width='3.8'%20stroke-linecap='round'%20stroke-dasharray='44.8%2014.9'%20transform='rotate(135%2016%2016)'/%3E%20%3Ccircle%20cx='16'%20cy='16'%20r='2.5'%20fill='%23e8ecf4'/%3E%20%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0f1420; --card: #1a2130; --card2: #212a3d; --line: #2c3650; --grid: #232c40;
+    --text: #e8ecf4; --muted: #8b96ad; --accent: #4f8cff;
+    --ok: #3ecf8e; --warn: #f5a623; --bad: #ff5c5c; --shadow: 0 2px 12px rgba(0,0,0,.35);
+    --stale-a: #9aa5b8; --stale-b: #59637a;   /* 数据停滞（关机/离线）时的曲线灰度：按系列区分 */
+    --stale-band: rgba(139,150,173,.07);
+  }
+  html[data-theme="light"] {
+    --bg: #f4f6fb; --card: #ffffff; --card2: #eef2f9; --line: #dbe2ee; --grid: #e7ecf5;
+    --text: #1d2433; --muted: #6b7688; --accent: #2f6fe4;
+    --ok: #16a06a; --warn: #c47f0a; --bad: #d93b3b; --shadow: 0 2px 12px rgba(20,30,60,.08);
+    --stale-a: #b6bfcd; --stale-b: #8b94a4;
+    --stale-band: rgba(120,130,150,.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: "Segoe UI", "Microsoft YaHei", sans-serif; padding: 18px 22px 40px; transition: background .2s, color .2s; }
+  .wrap { max-width: 1360px; margin: 0 auto; }
+
+  /* ---------- 顶栏 ---------- */
+  header { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); padding: 10px 0 12px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  .hrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .brand { width: 26px; height: 26px; flex: 0 0 auto; }
+  .mark { width: 20px; height: 20px; flex: 0 0 auto; display: inline-block; vertical-align: -4px; }
+  h2 .mark { margin-right: 2px; }
+  h1 { font-size: 19px; font-weight: 650; letter-spacing: .2px; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .spacer { flex: 1 1 auto; }
+  .chip { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--card2); color: var(--muted); white-space: nowrap; }
+  .chip.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .chip.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .chip.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .btn { background: var(--card); border: 1px solid var(--line); color: var(--text); font: inherit; font-size: 12.5px; padding: 5px 12px; border-radius: 8px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.sm { font-size: 11.5px; padding: 3px 10px; }
+  .muted-note { font-size: 11.5px; color: var(--muted); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 12.5px; padding: 5px 13px; cursor: pointer; }
+  .seg button.on { background: var(--card2); color: var(--text); }
+
+  /* 刷新进度环 + 秒数 */
+  .seg.sm button { padding: 2px 9px; font-size: 11.5px; }
+  .ring { width: 30px; height: 30px; flex: 0 0 auto; }
+  .ring circle { fill: none; stroke-width: 3; }
+  .ring .bgc { stroke: var(--line); }
+  .ring .fgc { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .95s linear; }
+  .ring .rtxt { font-size: 12px; font-weight: 650; fill: var(--muted); }
+
+  /* 分区标题（区分「实时状态」与「历史与记录」两套体系） */
+  .group { display: flex; align-items: center; gap: 10px; margin: 26px 0 12px; }
+  .group .gbar { width: 4px; height: 16px; border-radius: 2px; background: var(--accent); }
+  .group.alt .gbar { background: var(--muted); opacity: .55; }
+  .group .gtxt { font-size: 13px; font-weight: 650; letter-spacing: .3px; }
+  .group .gsub { font-size: 11.5px; color: var(--muted); }
+  .group .gline { flex: 1; height: 1px; background: var(--line); }
+
+  /* 记录类面板：刻意做成"扁平列表"而非"卡片"，与上方指标卡区分 */
+  .panel { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: transparent; }
+  .panel + .panel { margin-top: 12px; }
+  .panel .ph { display: flex; align-items: center; gap: 8px; padding: 9px 14px; background: color-mix(in srgb, var(--card2) 55%, transparent); font-size: 12px; color: var(--muted); }
+  .panel table { font-size: 12px; }
+  .panel th { font-weight: 500; font-size: 11.5px; background: transparent; }
+  .panel td, .panel th { padding: 6px 14px; border-bottom: 1px dashed var(--line); }
+  .panel tbody tr:last-child td { border-bottom: 0; }
+  .panel tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+  .panel .mono { font-variant-numeric: tabular-nums; color: var(--muted); }
+
+  /* 区间选择统计面板 */
+  .sel-stats { margin-top: 11px; padding: 10px 13px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--accent) 7%, transparent); font-size: 12.5px; display: none; }
+  .sel-stats.on { display: block; }
+  .sel-stats .hd { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+  .sel-stats .hd .t { font-weight: 650; }
+  .sel-stats .hd .clear { margin-left: auto; }
+  .sel-stats .kvs { display: flex; flex-wrap: wrap; gap: 5px 20px; }
+  .sel-stats .kvs .k { color: var(--muted); margin-right: 5px; }
+  .sel-stats b { font-variant-numeric: tabular-nums; }
+  .sel-hint { font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+
+  /* 首次使用引导（没有 dashboard-data.js 时） */
+  .nodata { border-left: 3px solid var(--accent, #4f8cff); }
+  .nodata .nd-t { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .nodata .nd-s { color: var(--muted); font-size: 12.5px; line-height: 1.7; margin-bottom: 8px; }
+  .nodata .nd-l { margin: 0 0 10px; padding-left: 22px; font-size: 13px; line-height: 2; }
+  .nodata .nd-l b { font-weight: 600; }
+  .nodata code { background: color-mix(in srgb, var(--text) 8%, transparent); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+
+  /* 每日热力图（含坐标：左侧星期、顶部月份，行列间距与格子严格对齐） */
+  .heat-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .heat-top { display: flex; gap: 6px; margin-bottom: 3px; }
+  .heat-gutter { width: 20px; flex: 0 0 auto; }
+  .heat-days { width: 20px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 3px; }
+  .heat-days span { height: 14px; line-height: 14px; font-size: 10px; color: var(--muted); text-align: right; padding-right: 2px; }
+  .heat-months { display: flex; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+  .heat-months span { flex: 0 0 auto; }
+  .heat-body { display: flex; gap: 6px; }
+  .heat-wrap { overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; position: relative; }
+  .heat { display: flex; gap: 3px; }
+  .heat .hcol { display: flex; flex-direction: column; gap: 3px; }
+  .heat .hcell { width: 14px; height: 14px; border-radius: 3px; background: var(--card2); cursor: default; }
+  .heat .hcell.empty { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+  .heat .hcell.today { box-shadow: 0 0 0 1.5px var(--text); }
+  .heat-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 11.5px; color: var(--muted); flex-wrap: wrap; }
+  .heat-foot .scale { display: flex; align-items: center; gap: 3px; }
+  .heat-foot .scale i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+  /* 平台跳转按钮 */
+  a.open { text-decoration: none; color: var(--muted); padding: 1px 7px; line-height: 1.4; }
+  a.open:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* 额度去向（对齐表格 + 整行色带表示幅度；右侧跳转按钮）
+     关键：.abars 是**一个**网格，每行用 grid-template-columns: subgrid 继承同一套列轨道——
+     否则每行各自成网格时，最后一列宽度会随按钮多少变化，把前面几列挤偏（曾因此出现 1/2/2 的不对齐）。 */
+  .abars { display: grid; grid-template-columns: minmax(0, 1fr) 76px 72px 48px max-content max-content;
+           gap: 2px 10px; max-height: 330px; overflow-y: auto; padding-right: 4px; }
+  .arow { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center;
+          padding: 5px 9px; border-radius: 6px; font-size: 12.5px; }
+  .arow.head { color: var(--muted); font-size: 11.5px; padding-bottom: 2px; position: sticky; top: 0;
+               background: var(--card); z-index: 1; }
+  .arow:not(.head) { background: linear-gradient(to right, rgba(var(--c), .15) var(--w), transparent var(--w)); }
+  .arow:not(.head):hover { background-color: color-mix(in srgb, var(--accent) 9%, transparent); }
+  /* ThinCoder 列：有会话 → 实心徽标（醒目、可竖扫）；无 → 极淡的占位点 */
+  .arow .tcc { text-align: center; }
+  .arow.head .tcc { font-size: 11px; }
+  .arow .tcc .on { display: inline-block; font-size: 10.5px; padding: 0 7px; border-radius: 999px;
+                   background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); font-weight: 600; }
+  .arow .tcc .off { color: var(--line); }
+  .arow .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .arow a.name { color: inherit; text-decoration: none; }
+  .arow a.name:hover { color: var(--accent); text-decoration: underline; }
+  .arow .num, .arow .pct { text-align: right; font-variant-numeric: tabular-nums; }
+  .arow .pct { color: var(--muted); }
+  .arow:not(.head) .num { font-weight: 600; }
+  .arow .acts { display: flex; justify-content: flex-end; }
+  .arow .acts a { font-size: 11px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px;
+                  color: var(--muted); text-decoration: none; white-space: nowrap; }
+  .arow .acts a:hover { color: var(--accent); border-color: var(--accent); }
+  .arow .acts a.tc { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .arow .acts a.tc:hover { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+  .arow .acts .na { color: var(--line); font-size: 11px; padding: 1px 7px; }
+
+  /* AI 能力构成（模型使用画像）：七列——模型 / 轮次 / 用量 / 占比 / 活跃区间 / 主要用在 */
+  .abars.md { grid-template-columns: minmax(0, 1fr) 56px 66px 50px 132px minmax(0, 1.1fr); }
+  .abars.md .arow { --c: 167, 139, 250; }
+  .arow .span2 { text-align: right; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .arow .mid { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11.5px; }
+  .arow .mid b { color: var(--ok); font-weight: 600; }
+
+  /* 使用方式画像（放在模型表下方，同一张卡） */
+  .style-grid { margin-top: 12px; padding-top: 11px; border-top: 1px dashed var(--line);
+                display: grid; grid-template-columns: 76px 1fr; gap: 6px 12px; font-size: 12px; align-items: baseline; }
+  .style-grid .sh { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; }
+  .style-grid .k { color: var(--muted); }
+  .style-grid .v { display: flex; flex-wrap: wrap; gap: 3px 12px; }
+  .style-grid .it { color: var(--muted); }
+  .style-grid .it b { color: var(--text); font-variant-numeric: tabular-nums; margin-right: 3px; }
+  .style-grid .it .pct { opacity: .7; }
+  .abars.tc { grid-template-columns: minmax(0, 1fr) 56px 62px 96px max-content max-content; }
+  .abars.tc .arow { --c: 62, 207, 142; }
+  .arow .n { text-align: right; font-variant-numeric: tabular-nums; }
+  .arow .n.strong { font-weight: 600; }
+  .arow .last { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11.5px; }
+
+  /* 可排序表头：点击切换升/降序 */
+  .arow.head .so { cursor: pointer; user-select: none; white-space: nowrap; }
+  .arow.head .so:hover { color: var(--accent); }
+  .arow.head .so i { font-style: normal; font-size: 9px; opacity: .3; margin-left: 2px; }
+  .arow.head .so.on { color: var(--text); font-weight: 600; }
+  .arow.head .so.on i { opacity: 1; color: var(--accent); }
+
+  /* 余额变化（拐点）列表 */
+  .seg-sum { font-size: 11.5px; color: var(--muted); margin-bottom: 4px; }
+  .seg-row { display: grid; grid-template-columns: 62px 1fr auto auto; gap: 8px; align-items: center;
+             font-size: 11.5px; padding: 2px 0; }
+  .seg-row .k.down { color: var(--warn); font-weight: 600; }
+  .seg-row .k.up { color: var(--ok); font-weight: 600; }
+  .seg-row .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .seg-row .d { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .seg-row .d.down { color: var(--warn); }
+  .seg-row .d.up { color: var(--ok); }
+  .seg-row .r { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* 健康面板 */
+  .health-row { display: grid; grid-template-columns: 74px 1fr auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: 12.5px; }
+  .health-row:last-child { border-bottom: 0; }
+  .health-row .rate { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .health-row .sub { color: var(--muted); font-size: 12px; }
+
+  /* 快捷键帮助浮层 & 配置编辑弹窗 */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); z-index: 100; display: none; align-items: center; justify-content: center; }
+  .overlay.on { display: flex; }
+  .modal { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; min-width: 380px; max-width: 560px; max-height: 80vh; overflow: auto; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+  .modal h3 { margin: 0 0 12px; font-size: 15px; }
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: 13px; }
+  .keys kbd { background: var(--card2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; font: 600 11.5px/1.7 var(--mono, ui-monospace, monospace); }
+  .cfg-grid { display: grid; grid-template-columns: 1fr auto; gap: 9px 14px; align-items: center; font-size: 13px; }
+  .cfg-grid input { width: 92px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; text-align: right; }
+  .modal .actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 16px; }
+
+  /* ---------- 配置检查横幅 + 配置面板 ---------- */
+  .setupbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: color-mix(in srgb, var(--warn) 10%, var(--card));
+    border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+    border-radius: 10px; padding: 9px 14px; margin-bottom: 14px; font-size: 12.5px; }
+  .setupbar .sb-warn { color: var(--warn); }
+  .setupbar .spacer { flex: 1; }
+  .cfgpanel { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
+  .cfgpanel h3 { font-size: 13.5px; margin: 0 0 4px; font-weight: 600; }
+  .cfgpanel .cp-sub { color: var(--muted); font-size: 11.5px; margin: 0 0 10px; line-height: 1.6; }
+  .cfgpanel .cp-row { display: flex; align-items: center; gap: 10px; padding: 8px 0;
+    border-top: 1px dashed var(--line); flex-wrap: wrap; }
+  .cfgpanel .cp-row:first-of-type { border-top: none; }
+  .cfgpanel .cp-name { width: 96px; font-weight: 600; font-size: 12.5px; }
+  .cfgpanel .cp-state { font-size: 11.5px; color: var(--muted); flex: 1; min-width: 180px; }
+  .cfgpanel .cp-state b { color: var(--text); font-weight: 600; }
+  .cfgpanel .cp-acts { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+  .cfgpanel .cp-sec { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .btn.sm { padding: 3px 10px; font-size: 11.5px; }
+  .btn.danger { color: var(--bad); }
+
+  /* ---------- 配置向导（看板内首次配置） ---------- */
+  .wz { width: 560px; max-width: 94vw; }
+  .wz h3 { margin: 0; font-size: 15px; }
+  .srow { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-top: 1px dashed var(--line); font-size: 13px; flex-wrap: wrap; }
+  .srow:first-of-type { border-top: 0; }
+  .srow .nm { width: 76px; font-weight: 600; flex: 0 0 auto; }
+  .srow .st { flex: 1; min-width: 150px; color: var(--muted); font-size: 12px; }
+  .srow input[type=password] { flex: 1; min-width: 140px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  .msg { font-size: 12.5px; color: var(--muted); line-height: 1.8; margin: 8px 0; }
+  .msg.ok { color: var(--ok); }
+  .msg.warn { color: var(--warn); }
+  .msg.bad { color: var(--bad); }
+  .nd-fb { margin-top: 8px; }
+
+  /* ---------- 概览状态条 ---------- */
+  .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 3px; box-shadow: var(--shadow); }
+  .tile.ok { border-left-color: var(--ok); }
+  .tile.warn { border-left-color: var(--warn); }
+  .tile.bad { border-left-color: var(--bad); }
+  /* 已关闭 / 未配置：中性色，不吓人（不是故障） */
+  .tile.idle { border-left-color: var(--line); opacity: .72; }
+  .tile.idle .v { color: var(--muted); }
+  .tile .t { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+  .tile .v { font-size: 20px; font-weight: 650; }
+  .tile .v small { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+
+  /* ---------- 卡片 ---------- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+  .card h2 { font-size: 14.5px; font-weight: 650; margin-bottom: 3px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .card h2 .tag { font-size: 11px; color: var(--muted); font-weight: 400; background: var(--card2); padding: 1px 8px; border-radius: 8px; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .big { font-size: 29px; font-weight: 700; margin: 4px 0 2px; }
+  .big small { font-size: 13px; color: var(--muted); font-weight: 400; }
+  .bar { height: 8px; background: var(--card2); border-radius: 4px; overflow: hidden; margin: 9px 0 5px; }
+  .bar > div { height: 100%; border-radius: 4px; background: var(--ok); transition: width .5s; }
+  .bar > div.warn { background: var(--warn); }
+  .bar > div.bad { background: var(--bad); }
+  .row { display: flex; justify-content: space-between; font-size: 12.5px; margin-top: 7px; gap: 10px; }
+  .row .k { color: var(--muted); }
+  .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; font-size: 12.5px; margin-top: 9px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { text-align: right; }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; }
+  .pill.bad { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .pill.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .pill.warn { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+  .err { color: var(--bad); font-size: 12.5px; margin-top: 6px; word-break: break-all; }
+  .card.idle { opacity: .8; }
+  .card.idle code { background: color-mix(in srgb, var(--text) 8%, transparent); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+
+  /* ---------- 区块 ---------- */
+  .sec { margin: 24px 0 10px; font-size: 13.5px; font-weight: 650; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+  .sec .span { flex: 1; height: 1px; background: var(--line); }
+
+  /* ---------- 图表 ---------- */
+  .chart-wrap { position: relative; }
+  .chart-wrap canvas { display: block; width: 100%; cursor: crosshair; }
+  .tip { position: absolute; pointer-events: none; background: var(--card2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.6; box-shadow: var(--shadow); opacity: 0; transition: opacity .08s; white-space: nowrap; z-index: 5; }
+  .tip.on { opacity: 1; }
+  .tip .tt { color: var(--muted); margin-bottom: 2px; }
+  .tip .row2 { display: flex; align-items: center; gap: 7px; }
+  .tip i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 7px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 11px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+  .cap { font-size: 12px; color: var(--muted); margin-bottom: 5px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .hint { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+
+  /* ---------- 表格 ---------- */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .lv { font-size: 11px; padding: 1px 7px; border-radius: 999px; }
+  .lv.P0 { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .lv.P1 { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+  .lv.P2 { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  footer { margin-top: 26px; color: var(--muted); font-size: 11.5px; line-height: 1.9; }
+  @media (max-width: 620px) {
+    body { padding: 12px; }
+    .grid, .strip { grid-template-columns: 1fr; }
+    h1 { font-size: 17px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="hrow">
+      <svg class="brand" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="bg1" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#4f8cff"/><stop offset="1" stop-color="#3ecf8e"/></linearGradient></defs><rect width="32" height="32" rx="7.5" fill="var(--card2)"/><circle cx="16" cy="16" r="9.5" fill="none" stroke="url(#bg1)" stroke-width="3.8" stroke-linecap="round" stroke-dasharray="44.8 14.9" transform="rotate(135 16 16)"/><circle cx="16" cy="16" r="2.5" fill="var(--text)"/></svg>
+      <h1>AI 能力看板</h1>
+      <span class="chip" id="fresh">加载中…</span>
+      <span class="muted" id="updated"></span>
+      <span class="chip warn" id="mute" style="display:none"></span>
+      <span class="spacer"></span>
+      <svg class="ring" viewBox="0 0 36 36" id="ring" title="下次自动刷新倒计时">
+        <circle class="bgc" cx="18" cy="18" r="15"></circle>
+        <circle class="fgc" cx="18" cy="18" r="15" stroke-dasharray="94.2" stroke-dashoffset="0"></circle>
+        <text class="rtxt" x="18" y="22" text-anchor="middle" id="ringTxt">--</text>
+      </svg>
+      <button class="btn" id="pauseBtn" title="暂停/继续自动刷新">暂停</button>
+      <button class="btn" id="refreshBtn" title="立即刷新数据">刷新</button>
+      <button class="btn" id="exportBtn" title="导出当前时间窗历史数据">导出</button>
+      <button class="btn" id="themeBtn" title="切换主题">主题</button>
+      <button class="btn" id="cfgPanelBtn" title="配置：平台开关、密钥、提醒阈值">配置</button>
+    </div>
+    <div class="hrow" style="margin-top:9px">
+      <span class="muted">时间窗口</span>
+      <span class="seg" id="winSeg">
+        <button data-win="h24">24 小时</button>
+        <button data-win="d7">7 天</button>
+        <button data-win="d30">30 天</button>
+        <button data-win="all">全部</button>
+      </span>
+      <span class="muted" id="intervalNote"></span>
+    </div>
+  </header>
+
+  <div class="setupbar" id="setupBar" style="display:none"></div>
+  <div class="cfgpanel" id="cfgPanel" style="display:none"></div>
+
+  <div class="group"><span class="gbar"></span><span class="gtxt">实时状态</span><span class="gsub">当前额度与用量趋势</span><span class="gline"></span></div>
+  <div class="strip" id="strip"></div>
+  <div class="grid" id="cards"></div>
+
+  <div class="sec" style="margin-top:20px">用量趋势 <span class="span"></span><span class="muted" id="chartHint">在图上点两下选择区间：第一下起点、第二下终点</span></div>
+  <div class="card">
+    <div class="cap"><span><span data-mark="codex"></span>Codex 剩余额度（近 5 小时窗口 / 近 7 天窗口）</span><span id="cap-codex"></span></div>
+    <div class="chart-wrap" id="wrap-codex" style="height:170px"><canvas></canvas><div class="tip"></div></div>
+    <div class="legend">
+      <span><i style="background:#4f8cff"></i>5h 剩余</span>
+      <span><i style="background:#3ecf8e"></i>7 天剩余</span>
+      <span><i style="background:var(--stale-a)"></i>停滞段（5h 灰度）</span>
+      <span><i style="background:var(--stale-b)"></i>停滞段（7 天灰度）</span>
+      <span>灰底 = 该时段无采集（关机/离线）</span>
+    </div>
+    <div class="sel-stats" id="stats-codex"></div>
+    <div class="sel-hint" id="hint-codex"></div>
+  </div>
+
+  <div class="grid" style="margin-top:14px">
+    <div class="card">
+      <div class="cap"><span><span data-mark="deepseek"></span>DeepSeek 余额</span><span id="cap-ds"></span></div>
+      <div class="chart-wrap" id="wrap-ds" style="height:150px"><canvas></canvas><div class="tip"></div></div>
+      <div class="sel-stats" id="stats-ds"></div>
+      <div class="changes" id="changes-ds"></div>
+    </div>
+    <div class="card">
+      <div class="cap"><span><span data-mark="glm"></span>GLM 余额</span><span id="cap-glm"></span></div>
+      <div class="chart-wrap" id="wrap-glm" style="height:150px"><canvas></canvas><div class="tip"></div></div>
+      <div class="sel-stats" id="stats-glm"></div>
+      <div class="changes" id="changes-glm"></div>
+    </div>
+  </div>
+
+  <div class="sec" style="margin-top:20px">每日热力图 <span class="span"></span><span class="muted" id="heatNote"></span></div>
+  <div class="card">
+    <div class="heat-head">
+      <span class="seg" id="heatSeg">
+        <button data-heat="codex">Codex 用量峰值</button>
+        <button data-heat="deepseek">DeepSeek 消耗</button>
+        <button data-heat="glm">GLM 消耗</button>
+      </span>
+      <span class="muted" id="heatSummary"></span>
+    </div>
+    <div class="heat-top">
+      <span class="heat-gutter"></span>
+      <div class="heat-months" id="heatMonths"></div>
+    </div>
+    <div class="heat-body">
+      <div class="heat-days" id="heatDays"></div>
+      <div class="heat-wrap" id="heatWrap"><div class="heat" id="heat"></div><div class="tip" id="heatTip"></div></div>
+    </div>
+    <div class="heat-foot" id="heatFoot"></div>
+  </div>
+
+  <div class="sec" style="margin-top:20px">额度去向与采集健康 <span class="span"></span><span class="muted" id="attrNote"></span></div>
+  <div class="grid">
+    <div class="card">
+      <h2>额度去向 <span class="tag">Codex 会话归因</span>
+        <span class="seg sm" id="attrSeg" style="margin-left:auto">
+          <button data-attr="7">近 7 天</button>
+          <button data-attr="30">近 30 天</button>
+          <button data-attr="all">全部</button>
+        </span>
+      </h2>
+      <div class="abars" id="attrBars"></div>
+      <div class="hint" id="attrHint"></div>
+    </div>
+    <div class="card">
+      <h2>采集健康 <span class="tag">近 24 小时</span></h2>
+      <div id="healthList"></div>
+      <div class="hint" id="healthHint"></div>
+    </div>
+  </div>
+
+  <div class="sec" style="margin-top:20px">AI 能力构成 <span class="span"></span><span class="muted" id="modelNote"></span></div>
+  <div class="card">
+    <div class="cap"><span id="modelSummary"></span><span class="muted">模型使用画像 · 来自本地会话记录</span></div>
+    <div class="abars md" id="modelBars"></div>
+    <div class="style-grid" id="usageStyle"></div>
+    <div class="hint" id="modelHint"></div>
+  </div>
+
+  <div class="sec" style="margin-top:20px">ThinCoder 项目 <span class="span"></span><span class="muted" id="tcNote"></span></div>
+  <div class="card">
+    <div class="cap">
+      <span id="tcSummary"></span>
+      <span class="seg sm" id="tcSeg">
+        <button data-tc="7">近 7 天</button>
+        <button data-tc="30">近 30 天</button>
+        <button data-tc="all">全部</button>
+      </span>
+    </div>
+    <div class="abars tc" id="tcBars"></div>
+    <div class="hint" id="tcHint"></div>
+  </div>
+
+  <div class="sec" style="margin-top:20px">工具 <span class="span"></span><span class="muted">快捷键按 ? 查看</span></div>
+  <div class="card">
+    <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
+      <button class="btn" id="cfgBtn">编辑阈值与预警</button>
+      <button class="btn" id="backupBtn">一键备份</button>
+      <button class="btn" id="helpBtn">快捷键帮助</button>
+      <span class="muted" id="toolNote" style="font-size:12px"></span>
+    </div>
+  </div>
+
+  <div class="overlay" id="helpOverlay">
+    <div class="modal">
+      <h3>键盘快捷键</h3>
+      <div class="keys">
+        <kbd>1</kbd><span>打开 Codex 官方用量页</span>
+        <kbd>2</kbd><span>打开 DeepSeek 用量页</span>
+        <kbd>3</kbd><span>打开 GLM 财务页</span>
+        <kbd>R</kbd><span>立即刷新数据</span>
+        <kbd>空格</kbd><span>暂停 / 继续自动刷新</span>
+        <kbd>T</kbd><span>切换主题（自动 → 深色 → 浅色）</span>
+        <kbd>W</kbd><span>切换时间窗口（24 小时 → 7 天 → 30 天 → 全部）</span>
+        <kbd>点选</kbd><span>在趋势图上点两下选择区间（第一下起点、第二下终点），统计该区间用量与花费；<kbd>Esc</kbd> 取消</span>
+        <kbd>点击</kbd><span>点表头可排序（额度去向 / ThinCoder 表格）；在「额度去向」里点 📁 打开项目文件夹、点 ⌨ 启动 ThinCoder 工作台</span>
+        <kbd>Esc</kbd><span>清除框选 / 关闭浮层</span>
+        <kbd>?</kbd><span>显示或隐藏本帮助</span>
+      </div>
+      <div class="actions"><button class="btn primary" data-close="helpOverlay">知道了</button></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="cfgOverlay">
+    <div class="modal">
+      <h3>阈值与预警设置</h3>
+      <div class="hint" style="margin-bottom:12px">保存后写回 <code>config.json</code>，下一次采集生效（页面刷新后同步显示）。</div>
+      <div class="cfg-grid" id="cfgGrid"></div>
+      <div class="actions">
+        <button class="btn" data-close="cfgOverlay">取消</button>
+        <button class="btn primary" id="cfgSave">保存并应用</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="group alt"><span class="gbar"></span><span class="gtxt">历史与记录</span><span class="gsub">充值凭证与提醒流水</span><span class="gline"></span></div>
+
+  <div class="panel">
+    <div class="ph"><span>GLM 充值记录</span><span class="spacer" style="flex:1"></span><span>支付凭证，非未消费额度</span></div>
+    <table id="packs-table">
+      <thead><tr><th>金额</th><th>支付时间</th><th>有效期至</th><th>状态</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span>最近提醒</span><span class="spacer" style="flex:1"></span><span id="alertCount"></span></div>
+    <table id="alerts-table">
+      <thead><tr><th style="width:56px">级别</th><th style="width:120px">时间</th><th>内容</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <footer>
+    数据来源：Codex = chatgpt.com/backend-api/codex/usage（OAuth）；DeepSeek = api.deepseek.com/user/balance（官方）；GLM = bigmodel.cn 财务接口（逆向，失效会显示「数据陈旧」并提醒）。<br>
+    采集：Windows 计划任务按最小间隔触发，各平台按各自间隔取数（Codex 与余额可不同）；关机/睡眠期间无数据，唤醒后自动补跑。<br>
+    临时不想被打扰：双击项目目录下的 <b>静音2小时.bat</b>（恢复：<b>取消静音.bat</b>）。
+  </footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let D = {};
+let win = 'h24';
+let paused = false;
+let refreshSec = 60;
+let countdown = 60;
+
+const fmtMoney = v => (Number(v) || 0).toFixed(2);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const pad2 = n => String(n).padStart(2, '0');
+function fmtTime(ms, withDate = true) {
+  const d = new Date(ms + 8 * 3600e3);
+  const t = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+  return withDate ? `${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${t}` : t;
+}
+function fmtAge(min) {
+  if (min == null) return '—';
+  if (min < 1) return '刚刚';
+  if (min < 60) return `${min} 分钟前`;
+  return `${Math.floor(min / 60)} 小时前`;
+}
+
+/* ================= 平台标识（自绘矢量，非官方商标） =================
+   Codex    → 终端提示符 >_      （编码 agent 的通用意象）
+   DeepSeek → 下潜深度层（三横） （"deep" 的意象）
+   GLM      → 三节点神经网络      （语言模型意象）
+   统一「同色淡底 + 同色实心图形」，与看板的 pill 语言一致 */
+const MARK = {
+  codex: '<svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#4f8cff" opacity="0.18"/><path d="M11.5 10.5 L18 16 L11.5 21.5" fill="none" stroke="#4f8cff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 21.5 H23.5" fill="none" stroke="#4f8cff" stroke-width="2.8" stroke-linecap="round"/></svg>',
+  deepseek: '<svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#f5a623" opacity="0.18"/><rect x="8" y="10" width="16" height="3.6" rx="1.8" fill="#f5a623"/><rect x="11.5" y="15.2" width="9" height="3.6" rx="1.8" fill="#f5a623" opacity="0.72"/><rect x="14.5" y="20.4" width="3" height="3.6" rx="1.5" fill="#f5a623" opacity="0.45"/></svg>',
+  glm: '<svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#ff5c5c" opacity="0.18"/><path d="M11 11 L21 11 M11 11 L16 21 M21 11 L16 21" fill="none" stroke="#ff5c5c" stroke-width="1.8" stroke-linecap="round" opacity="0.55"/><circle cx="11" cy="11" r="2.8" fill="#ff5c5c"/><circle cx="21" cy="11" r="2.8" fill="#ff5c5c"/><circle cx="16" cy="21" r="2.8" fill="#ff5c5c"/></svg>',
+};
+
+/* ================= 首次使用：还没有数据时的引导 =================
+   dashboard-data.js 是采集生成的，不进仓库。新用户克隆后、第一次采集之前打开看板会白屏——
+   这里给一条明确的路：主入口 = 页面内的配置向导；其余路径降级为「自己动手」的备选。 */
+function showNoData() {
+  let el = $('noData');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'noData';
+    el.className = 'card nodata';
+    el.innerHTML = `
+      <div class="nd-t">还没有采集数据</div>
+      <div class="nd-s">看板的数据全部来自本机采集，不会联网获取你的账号信息。点「开始配置」，两三分钟就能看到数据。</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px">
+        <button class="btn primary" id="setupStartBtn" data-setup-open>开始配置</button>
+        <span class="muted-note">选平台 → 填密钥 → 试采看结果，全程在这个页面里</span>
+      </div>
+      <details class="nd-fb">
+        <summary class="nd-s" style="cursor:pointer;margin:0">我更想自己动手（备选方式）</summary>
+        <ol class="nd-l">
+          <li data-fallback><b>双击项目里的「安装定时任务.bat」</b> —— 注册采集任务、桌面快捷方式与托盘图标（之后自动更新）</li>
+          <li data-fallback>或者手动采集一次：<code>node collect.mjs --all</code>，完成后点右上角「<b>刷新</b>」</li>
+          <li data-fallback>老式向导（一问一答）：<a class="btn sm" href="aiquotaboard://setup">打开</a></li>
+        </ol>
+        <div class="nd-s">密钥也可以自己填在 <code>secrets.json</code>（不会被提交到 git）。</div>
+      </details>`;
+    document.querySelector('.wrap')?.prepend(el);
+  }
+  el.style.display = '';
+}
+function hideNoData() { const el = $('noData'); if (el) el.style.display = 'none'; }
+
+/* ================= 数据加载（无闪烁） ================= */
+function refreshData(manual = false) {
+  const old = $('dashboard-data-script');
+  if (old) old.remove();
+  const s = document.createElement('script');
+  s.id = 'dashboard-data-script';
+  s.src = 'dashboard-data.js?t=' + Date.now();
+  s.onload = () => {
+    D = window.DASHBOARD_DATA || {};
+    hideNoData();
+    if (!window.__winInit) { win = D.config?.defaultWindow || 'h24'; window.__winInit = true; syncWinButtons(); }
+    applyConfig();
+    render();
+    countdown = refreshSec;
+  };
+  s.onerror = () => { $('fresh').textContent = '暂无数据'; $('fresh').className = 'chip bad'; showNoData(); };
+  document.head.appendChild(s);
+  if (manual) countdown = refreshSec;
+}
+
+function applyConfig() {
+  refreshSec = Math.max(0, Number(D.config?.refreshSeconds ?? 60));
+  applyTheme(); // 注意：必须尊重手动选择，不能被配置覆盖（否则每次刷新都会把主题重置）
+}
+
+/* ================= 主题（手动选择优先于配置） =================
+   三级优先：localStorage 手动选择 > config.dashboard.theme > auto（跟随系统）
+   按钮三态循环，保证每次点击画面都有变化：自动 → 反色 → 再反色 → 自动 */
+let manualTheme = null;
+try { manualTheme = localStorage.getItem('quota-theme'); } catch { /* 存储不可用时仅本次会话有效 */ }
+
+function resolveTheme() {
+  const pref = manualTheme || D.config?.theme || 'auto';
+  if (pref === 'auto') return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return pref === 'light' ? 'light' : 'dark';
+}
+
+function applyTheme() {
+  const resolved = resolveTheme();
+  document.documentElement.dataset.theme = resolved;
+  const btn = $('themeBtn');
+  if (btn) {
+    // 标签始终反映真实状态：「自动」时同时标出实际解析到的明暗，避免"点了没变化"的困惑
+    btn.textContent = manualTheme ?? `自动·${resolved === 'dark' ? '深' : '浅'}`;
+    btn.title = manualTheme
+      ? `主题：${manualTheme === 'dark' ? '深色' : '浅色'}（手动）· 点击继续切换（→自动）`
+      : '主题：自动跟随系统/配置 · 点击切换为手动';
+  }
+  if (D.history) renderCharts(); // 图表颜色取自 CSS 变量，主题变了要重绘
+}
+
+setInterval(() => {
+  if (paused || refreshSec === 0) { $('fresh').title = paused ? '已暂停自动刷新' : '自动刷新已关闭'; $('ringTxt').textContent = '⏸'; return; }
+  countdown -= 1;
+  const ring = document.querySelector('#ring .fgc');
+  if (ring) ring.setAttribute('stroke-dashoffset', String(94.2 * (1 - Math.max(0, countdown) / refreshSec)));
+  $('ringTxt').textContent = Math.max(0, countdown);
+  if (countdown <= 0) refreshData();
+}, 1000);
+
+/* ================= 渲染 ================= */
+function render() {
+  renderHeader();
+  renderStrip();
+  renderCards();
+  renderCharts();
+  renderRangeStats();
+  renderHeat();
+  renderAttr();
+  renderModels();
+  renderTc();
+  renderHealth();
+  renderPacks();
+  renderAlerts();
+  renderCfg();
+}
+
+function renderHeader() {
+  const ageMin = D.collectedAtMs ? Math.round((Date.now() - D.collectedAtMs) / 60000) : null;
+  const stale = D.config?.staleMinutes ?? 15;
+  const f = $('fresh');
+  if (ageMin == null) { f.textContent = '无数据'; f.className = 'chip bad'; }
+  else if (ageMin <= stale) { f.textContent = `新鲜 · ${fmtAge(ageMin)}`; f.className = 'chip ok'; }
+  else if (ageMin <= 60) { f.textContent = `陈旧 · ${fmtAge(ageMin)}`; f.className = 'chip warn'; }
+  else { f.textContent = `数据过期 · ${fmtAge(ageMin)}`; f.className = 'chip bad'; }
+  $('updated').textContent = D.collectedAtText ? `更新于 ${D.collectedAtText}` : '';
+
+  const m = $('mute');
+  if (D.mute?.active) { m.style.display = ''; m.textContent = `🔇 静音至 ${(D.mute.untilText ?? '').slice(-5)}`; } else m.style.display = 'none';
+
+  const iv = D.intervals ?? {};
+  $('intervalNote').textContent = `采集：Codex ${iv.codex ?? '?'} 分钟 · 余额 ${iv.balance ?? '?'} 分钟 · 页面 ${refreshSec || '—'} 秒刷新`;
+}
+
+/* 平台可用状态分类：关闭与未配置**不是故障**，不能显示成红色故障——
+   那会让用户以为出了问题。仅当平台已启用却采集失败时才是真故障。 */
+function platState(x) {
+  if (x?.ok) return 'ok';
+  if (x?.disabled) return 'disabled';
+  if (x?.unconfigured) return 'unconfigured';
+  return 'error';
+}
+// 关闭/未配置时的中性占位块（用于顶部状态条）
+// 提示文案必须分平台：Codex 的凭据来自它的登录文件，不走 secrets.json（曾经三个平台共用一句错误提示）
+const IDLE_HINT = {
+  codex: { need: '先安装并登录 Codex（生成 ~/.codex/auth.json）', off: '在 config.json → platforms 中重新开启' },
+  deepseek: { need: '在 secrets.json 中填写密钥', off: '在 config.json → platforms 中重新开启' },
+  glm: { need: '在 secrets.json 中填写密钥', off: '在 config.json → platforms 中重新开启' },
+};
+function idleTile(mark, name, x, platform) {
+  const isOff = x?.disabled;
+  const hint = IDLE_HINT[platform] ?? IDLE_HINT.deepseek;
+  const title = isOff ? '已关闭' : '未配置';
+  return `<div class="tile idle"><div class="t"><span>${mark} ${esc(name)}</span><span><span class="pill">${title}</span></span></div>
+    <div class="v">—</div><div class="t"><span>${esc(isOff ? hint.off : hint.need)}</span></div></div>`;
+}
+
+function renderStrip() {
+  const tiles = [];
+  const c = D.codex, ds = D.deepseek, g = D.glm;
+  if (c?.ok) {
+    const w5 = c.fiveHour.usedPercent ?? 0, ww = c.weekly.usedPercent ?? 0;
+    const r5 = Math.max(0, 100 - w5), rw = Math.max(0, 100 - ww); // 以「剩余」为主口径
+    const warnAt = 100 - (D.thresholds?.codex5hWarn ?? 80), badAt = 100 - (D.thresholds?.codex5hCritical ?? 95);
+    const cls = c.limitReached ? 'bad' : r5 <= badAt ? 'bad' : r5 <= warnAt ? 'warn' : 'ok';
+    tiles.push(`<div class="tile ${cls}"><div class="t"><span>${MARK.codex} Codex 剩余额度</span><span>${c.degraded ? '<span class="pill warn">降级</span>' : ''}${c.limitReached ? '<span class="pill bad">已限流</span>' : ''}</span></div>
+      <div class="v">${r5}% <small>5h 窗口剩余</small></div><div class="t"><span>7 天窗口剩余 ${rw}%</span><span>${fmtAge(c.ageMinutes)}</span></div></div>`);
+  } else if (platState(c) !== 'error') tiles.push(idleTile(MARK.codex, 'Codex', c, 'codex'));
+  else tiles.push(`<div class="tile bad"><div class="t"><span>${MARK.codex} Codex</span></div><div class="v">—</div><div class="t"><span>${esc(c?.error ?? '无数据')}</span></div></div>`);
+
+  if (ds?.ok) {
+    const b = ds.totalBalance, low = D.thresholds?.dsCritical ?? 10, mid = D.thresholds?.dsLow ?? 20;
+    const cls = !ds.isAvailable || b < low ? 'bad' : b < mid ? 'warn' : 'ok';
+    tiles.push(`<div class="tile ${cls}"><div class="t"><span>${MARK.deepseek} DeepSeek 余额</span><span>${ds.projectedDays != null ? `约 ${ds.projectedDays} 天` : ''}</span></div>
+      <div class="v">¥${fmtMoney(b)}</div><div class="t"><span>${ds.burnPerDay != null ? '¥' + ds.burnPerDay.toFixed(2) + '/天' : '速率未知'}</span><span>${fmtAge(ds.ageMinutes)}</span></div></div>`);
+  } else if (platState(ds) !== 'error') tiles.push(idleTile(MARK.deepseek, 'DeepSeek', ds, 'deepseek'));
+  else tiles.push(`<div class="tile bad"><div class="t"><span>${MARK.deepseek} DeepSeek</span></div><div class="v">—</div><div class="t"><span>${esc(ds?.error ?? '无数据')}</span></div></div>`);
+
+  if (g?.ok) {
+    const b = Number(g.balance), low = D.thresholds?.glmCritical ?? 2, mid = D.thresholds?.glmLow ?? 5;
+    const cls = g.depleted || b < low ? 'bad' : b < mid ? 'warn' : 'ok';
+    tiles.push(`<div class="tile ${cls}"><div class="t"><span>${MARK.glm} GLM 余额</span><span>${g.depleted ? '<span class="pill bad">已耗尽</span>' : ''}</span></div>
+      <div class="v">¥${fmtMoney(b)}</div><div class="t"><span>${g.projectedDays != null ? `约 ${g.projectedDays} 天` : '需充值'}</span><span>${fmtAge(g.ageMinutes)}</span></div></div>`);
+  } else if (platState(g) !== 'error') tiles.push(idleTile(MARK.glm, 'GLM', g, 'glm'));
+  else tiles.push(`<div class="tile bad"><div class="t"><span>${MARK.glm} GLM</span></div><div class="v">—</div><div class="t"><span>${esc(g?.error ?? '无数据')}</span></div></div>`);
+
+  $('strip').innerHTML = tiles.join('');
+}
+
+function bar(pct, warn = 80, bad = 90) {
+  const cls = pct >= bad ? 'bad' : pct >= warn ? 'warn' : '';
+  return `<div class="bar"><div class="${cls}" style="width:${Math.min(100, pct)}%"></div></div>`;
+}
+// 剩余额度进度条：越少越危险（与「已用」口径相反）
+function barRemain(pct, warnAt = 20, badAt = 5) {
+  const cls = pct <= badAt ? 'bad' : pct <= warnAt ? 'warn' : '';
+  return `<div class="bar"><div class="${cls}" style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>`;
+}
+
+function renderCards() {
+  const cards = $('cards');
+  const out = [];
+  const sup = D.suppression ?? {};
+
+  if (D.codex?.ok) {
+    const c = D.codex, w5 = c.fiveHour.usedPercent ?? 0, ww = c.weekly.usedPercent ?? 0;
+    const r5 = Math.max(0, 100 - w5), rw = Math.max(0, 100 - ww);
+    const warnAt = 100 - (D.thresholds?.codex5hWarn ?? 80), badAt = 100 - (D.thresholds?.codex5hCritical ?? 95);
+    const idle = D.stats?.codexMax5h7d != null && D.stats.codexMax5h7d < 5;
+    out.push(`<div class="card">
+      <h2>${MARK.codex} Codex <span class="tag">${esc(c.plan ?? '')}</span>
+        ${c.limitReached ? '<span class="pill bad">已限流</span>' : ''}
+        ${c.degraded ? `<span class="pill warn">降级数据 · 快照 ${c.snapshotAgeMinutes ?? '?'} 分钟前</span>` : ''}
+        ${c.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('codex', 1)}</h2>
+      <div class="sub">${esc(c.email ?? '（实时接口不可达，显示本地会话快照）')} · 数据 ${fmtAge(c.ageMinutes)}</div>
+      <div class="row"><span class="k">近 5 小时剩余</span><span><b>${r5}%</b> <span class="muted-note">（已用 ${w5}%）</span></span></div>
+      ${barRemain(r5, warnAt, badAt)}
+      <div class="row"><span class="k">窗口</span><span>${windowStatus(c)}</span></div>
+      <div class="row"><span class="k">近 7 天剩余</span><span><b>${rw}%</b> <span class="muted-note">（已用 ${ww}%）</span></span></div>
+      ${barRemain(rw, 100 - (D.thresholds?.codexWeekWarn ?? 80), 5)}
+      <div class="kv">
+        <span class="k">API Credits</span><span class="v">${c.credits?.hasCredits ? esc(c.credits.balance) : '0（无）'}</span>
+        <span class="k">7 天用量峰值</span><span class="v">${D.stats?.codexMax5h7d != null ? D.stats.codexMax5h7d + '%' : '—'}</span>
+      </div>
+      ${idle ? '<div class="hint">💤 最近 7 天用量很低，已触发过「订阅闲置」提醒（7 天最多一次）</div>' : ''}
+    </div>`);
+  } else if (platState(D.codex) !== 'error') out.push(idleCard('Codex', D.codex, MARK.codex, 'codex'));
+  else out.push(errCard('Codex', D.codex, '连续失败 15 分钟会弹系统提醒；恢复时也会提醒。', MARK.codex));
+
+  if (D.deepseek?.ok) {
+    const d = D.deepseek;
+    const low = D.thresholds?.dsCritical ?? 10, mid = D.thresholds?.dsLow ?? 20;
+    out.push(`<div class="card">
+      <h2>${MARK.deepseek} DeepSeek ${d.isAvailable ? '' : '<span class="pill bad">账户不可用</span>'}
+        ${d.totalBalance < low ? '<span class="pill bad">余额紧急</span>' : d.totalBalance < mid ? '<span class="pill warn">余额偏低</span>' : ''}
+        ${sup.deepseek ? '<span class="pill">提醒已关闭</span>' : ''}
+        ${d.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('deepseek', 2)}</h2>
+      <div class="sub">按量计费余额 · 数据 ${fmtAge(d.ageMinutes)}</div>
+      <div class="big">¥${fmtMoney(d.totalBalance)} <small>可用</small></div>
+      <div class="kv">
+        <span class="k">现金充值</span><span class="v">¥${fmtMoney(d.toppedUpBalance)}</span>
+        <span class="k">赠金</span><span class="v">¥${fmtMoney(d.grantedBalance)}</span>
+        <span class="k">消耗速率（近 3 天）</span><span class="v">${d.burnPerDay != null ? '¥' + d.burnPerDay.toFixed(2) + '/天' : '—'}</span>
+        <span class="k">预计可用</span><span class="v">${d.projectedDays != null ? d.projectedDays + ' 天' : '—'}</span>
+      </div>
+      ${alertControl('deepseek', sup.deepseek)}
+    </div>`);
+  } else if (platState(D.deepseek) !== 'error') out.push(idleCard('DeepSeek', D.deepseek, MARK.deepseek, 'deepseek'));
+  else out.push(errCard('DeepSeek', D.deepseek, null, MARK.deepseek));
+
+  if (D.glm?.ok) {
+    const g = D.glm, bal = Number(g.balance);
+    const low = D.thresholds?.glmCritical ?? 2, mid = D.thresholds?.glmLow ?? 5;
+    out.push(`<div class="card">
+      <h2>${MARK.glm} 智谱 GLM
+        ${g.depleted ? '<span class="pill bad">余额已耗尽</span>' : bal < low ? '<span class="pill bad">余额紧急</span>' : bal < mid ? '<span class="pill warn">余额偏低</span>' : ''}
+        ${sup.glm ? '<span class="pill">提醒已关闭</span>' : ''}
+        ${g.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('glm', 3)}</h2>
+      <div class="sub">bigmodel.cn 开放平台 · 数据 ${fmtAge(g.ageMinutes)}</div>
+      <div class="big">¥${fmtMoney(bal)} <small>可用</small></div>
+      ${g.depleted ? '<div class="hint" style="color:var(--bad)">⛔ 余额为 0，GLM API 调用会失败——需充值后恢复</div>' : ''}
+      <div class="kv">
+        <span class="k">累计充值</span><span class="v">¥${fmtMoney(g.rechargeAmount)}</span>
+        <span class="k">累计消费</span><span class="v">¥${fmtMoney(g.totalSpendAmount)}</span>
+        <span class="k">消耗速率（近 3 天）</span><span class="v">${g.burnPerDay != null ? '¥' + g.burnPerDay.toFixed(2) + '/天' : '—'}</span>
+      </div>
+      ${alertControl('glm', sup.glm)}
+    </div>`);
+  } else if (platState(D.glm) !== 'error') out.push(idleCard('智谱 GLM', D.glm, MARK.glm, 'glm'));
+  else out.push(errCard('智谱 GLM', D.glm, null, MARK.glm));
+
+  cards.innerHTML = out.join('');
+}
+
+// 余额提醒开关：未关闭时（且余额不健康）提供「不再提醒」，已关闭时提供「恢复提醒」
+function alertControl(platform, supInfo) {
+  const label = platform === 'glm' ? 'GLM' : 'DeepSeek';
+  if (supInfo) {
+    return `<div class="hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span>🔕 余额提醒已关闭（充值后自动恢复）</span>
+      <a class="btn sm" href="aiquotaboard://resume?platform=${platform}" title="立即恢复该平台的余额提醒">恢复提醒</a>
+    </div>`;
+  }
+  const p = platform === 'glm' ? D.glm : D.deepseek;
+  const mid = platform === 'glm' ? (D.thresholds?.glmLow ?? 5) : (D.thresholds?.dsLow ?? 20);
+  const bal = Number(platform === 'glm' ? p?.balance : p?.totalBalance);
+  const unhealthy = p?.depleted || bal < mid || p?.isAvailable === false;
+  if (!unhealthy) return '';
+  return `<div class="hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span>不想再收到该平台的余额提醒？</span>
+    <a class="btn sm" href="aiquotaboard://suppress?platform=${platform}" title="关闭提醒，直到下次充值自动恢复">不再提醒${label}余额</a>
+  </div>`;
+}
+
+function errCard(name, d, note, mark = '') {
+  return `<div class="card"><h2>${mark} ${name} <span class="tag">错误</span></h2><div class="err">${esc(d?.error ?? '无数据')}</div>${note ? `<div class="hint">${note}</div>` : ''}</div>`;
+}
+
+// 关闭 / 未配置 的占位卡：既不能当真故障报错，也不能让卡片凭空消失
+// （用户主动关掉的平台，下次打开看板得看得到「它还在，只是关了」）
+function idleCard(name, x, mark = '', platform = '') {
+  const off = x?.disabled;
+  const isCodex = platform === 'codex';
+  // 分平台给解法：Codex 靠登录文件，其余两家靠 secrets.json
+  const how = isCodex
+    ? '安装 Codex 客户端并登录后，它会在用户目录生成 <code>.codex/auth.json</code>，采集会自动读它。若不用 Codex，可在 <code>config.json → platforms</code> 里把 <code>codex</code> 设为 <code>false</code>。'
+    : `在项目根目录建一个 <code>secrets.json</code>，写入 <code>{&quot;${platform}&quot;:&quot;你的密钥&quot;}</code>；不打算用这个平台，就在 <code>config.json → platforms</code> 里把它设为 <code>false</code>。`;
+  return `<div class="card idle">
+    <h2>${mark} ${name} <span class="tag">${off ? '已关闭' : '未配置'}</span></h2>
+    <div class="sub">${off ? '已在 <code>config.json → platforms</code> 中关闭，不再采集、不参与提醒（不影响其他平台）' : '还没有可用的凭据，采集已跳过（不影响其他平台）'}</div>
+    <div class="hint">${off ? `想重新启用：把 <code>config.json → platforms</code> 中对应项改为 <code>true</code>，再跑一次 <code>node collect.mjs --all</code>` : how}</div>
+  </div>`;
+}
+
+/* ================= 图表引擎（含悬停 tooltip） ================= */
+const charts = new Map();
+
+function drawChart(hostId, spec) {
+  const host = $(hostId);
+  if (!host) return;
+  const cv = host.querySelector('canvas');
+  const tip = host.querySelector('.tip');
+  const dpr = window.devicePixelRatio || 1;
+  const W = host.clientWidth, H = host.clientHeight;
+  cv.width = Math.max(1, Math.round(W * dpr));
+  cv.height = Math.max(1, Math.round(H * dpr));
+  cv.style.height = H + 'px';
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const series = spec.series.filter(s => s.points.length);
+  const allPts = series.flatMap(s => s.points);
+  const P = { l: 46, r: 14, t: 12, b: 22 };
+  if (allPts.length < 2) {
+    ctx.fillStyle = getVar('--muted'); ctx.font = '13px sans-serif';
+    ctx.fillText('数据点不足（积累中）', P.l, H / 2);
+    charts.set(hostId, { empty: true });
+    return;
+  }
+
+  const t0 = Math.min(...allPts.map(p => p.ts)), t1 = Math.max(...allPts.map(p => p.ts));
+  const vals = allPts.map(p => p.v);
+  const vmin = Math.min(...vals), vmax = Math.max(...vals);
+  let lo, hi;
+  if (vmax === vmin) {                       // 平值序列（如余额长期为 0）：给一个可读的固定跨度
+    const padV = Math.max(Math.abs(vmax) * 0.5, 1);
+    lo = Math.max(0, vmin - padV); hi = vmax + padV;
+  } else {
+    const pad = (vmax - vmin) * 0.12 || 1;
+    lo = Math.max(0, vmin - pad); hi = vmax + pad;
+  }
+  if (spec.minSpan && hi - lo < spec.minSpan) hi = lo + spec.minSpan; // 避免小数值被视觉放大
+  if (spec.yMax != null && hi > spec.yMax && vmax <= spec.yMax) hi = spec.yMax; // 百分比类不越过 100%
+  const span = hi - lo;
+  const yf = spec.yFmt ?? (v => v.toFixed(0));
+  const pw = W - P.l - P.r, ph = H - P.t - P.b;
+  const X = ts => P.l + (t1 === t0 ? pw / 2 : (ts - t0) / (t1 - t0) * pw);
+  const Y = v => P.t + ph - (v - lo) / (hi - lo) * ph;
+
+  // 网格 + Y 轴刻度
+  ctx.font = '11px sans-serif';
+  ctx.textBaseline = 'middle';
+  const seen = new Set();                     // 防止刻度文字重复（窄跨度时）
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4;
+    const y = Y(v);
+    ctx.strokeStyle = getVar('--grid'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y); ctx.stroke();
+    const label = yf(v, span);
+    if (seen.has(label)) continue;
+    seen.add(label);
+    ctx.fillStyle = getVar('--muted');
+    ctx.textAlign = 'right';
+    ctx.fillText(label, P.l - 6, y);
+  }
+  // X 轴时间刻度
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const ticks = 5;
+  for (let i = 0; i < ticks; i++) {
+    const ts = t0 + (t1 - t0) * i / (ticks - 1);
+    const x = X(ts);
+    ctx.fillStyle = getVar('--muted');
+    ctx.fillText(fmtTime(ts, t1 - t0 > 36 * 3600e3), Math.min(W - P.r - 16, Math.max(P.l + 16, x)), H - P.b + 5);
+  }
+
+  // 阈值参考线
+  for (const th of spec.thresholds ?? []) {
+    if (th.v < lo || th.v > hi) continue;
+    const y = Y(th.v);
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = th.color || getVar('--warn');
+    ctx.globalAlpha = .55;
+    ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = th.color || getVar('--warn');
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillText(th.label ?? String(th.v), P.l + 3, y - 2);
+  }
+
+  // 提醒时刻标记
+  for (const mk of spec.markers ?? []) {
+    if (mk.ts < t0 || mk.ts > t1) continue;
+    const x = X(mk.ts);
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = mk.level === 'P0' ? getVar('--bad') : mk.level === 'P1' ? getVar('--warn') : getVar('--accent');
+    ctx.globalAlpha = .5;
+    ctx.beginPath(); ctx.moveTo(x, P.t); ctx.lineTo(x, P.t + ph); ctx.stroke();
+    ctx.restore();
+  }
+
+  // 余额变化拐点：在"变化起点"画竖线 + 圆点（下降=橙、回升=绿），让"什么时候开始变的"一眼可见
+  for (const cm of spec.changeMarks ?? []) {
+    if (cm.ts < t0 || cm.ts > t1) continue;
+    const x = X(cm.ts);
+    const up = cm.kind === 'up';
+    const col = up ? getVar('--ok') : getVar('--warn');
+    ctx.save();
+    ctx.strokeStyle = col; ctx.globalAlpha = .4; ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, P.t); ctx.lineTo(x, P.t + ph); ctx.stroke();
+    ctx.restore();
+    if (cm.fromV != null && cm.fromV >= lo && cm.fromV <= hi) {
+      ctx.beginPath(); ctx.arc(x, Y(cm.fromV), 2.8, 0, Math.PI * 2);
+      ctx.fillStyle = col; ctx.globalAlpha = .85; ctx.fill(); ctx.globalAlpha = 1;
+    }
+  }
+
+  // 数据停滞段：拆成"连续段"（段内采样正常）+ 停滞区间（段与段之间）
+  const gapMs = spec.gapMs ?? 10 * 60000;
+  const runsOf = pts => {
+    const runs = [];
+    let cur = null;
+    for (const p of pts) {
+      if (!cur) { cur = [p]; runs.push(cur); continue; }
+      if (p.ts - cur.at(-1).ts > gapMs) { cur = [p]; runs.push(cur); } else cur.push(p);
+    }
+    return runs;
+  };
+  const staleRanges = [];
+  const runsPerSeries = series.map(s => {
+    const runs = runsOf(s.points);
+    for (let i = 1; i < runs.length; i++) staleRanges.push([runs[i - 1].at(-1).ts, runs[i][0].ts]);
+    return runs;
+  });
+
+  // 停滞区间底色（先画，位于曲线之下）
+  ctx.fillStyle = getVar('--stale-band');
+  for (const [a, b] of staleRanges) ctx.fillRect(X(a), P.t, Math.max(1, X(b) - X(a)), ph);
+
+  // 停滞连接线（每条系列各自的灰度：5h 浅、7d 深）
+  series.forEach((s, si) => {
+    const runs = runsPerSeries[si];
+    ctx.save();
+    ctx.strokeStyle = si === 0 ? getVar('--stale-a') : getVar('--stale-b');
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([5, 3]);
+    for (let i = 1; i < runs.length; i++) {
+      const a = runs[i - 1].at(-1), b = runs[i][0];
+      ctx.beginPath(); ctx.moveTo(X(a.ts), Y(a.v)); ctx.lineTo(X(b.ts), Y(b.v)); ctx.stroke();
+    }
+    ctx.restore();
+  });
+
+  // 正常数据段
+  series.forEach((s, si) => {
+    const runs = runsPerSeries[si];
+    for (const run of runs) {
+      if (s.fill && run.length > 1) {
+        const g = ctx.createLinearGradient(0, P.t, 0, P.t + ph);
+        g.addColorStop(0, hexA(s.color, .22)); g.addColorStop(1, hexA(s.color, 0));
+        ctx.beginPath();
+        run.forEach((p, i) => { const x = X(p.ts), y = Y(p.v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+        ctx.lineTo(X(run.at(-1).ts), P.t + ph); ctx.lineTo(X(run[0].ts), P.t + ph); ctx.closePath();
+        ctx.fillStyle = g; ctx.fill();
+      }
+      if (run.length === 1) { // 被停滞包围的孤立样本：画个点
+        ctx.beginPath(); ctx.arc(X(run[0].ts), Y(run[0].v), 1.8, 0, Math.PI * 2);
+        ctx.fillStyle = s.color; ctx.fill();
+        continue;
+      }
+      ctx.beginPath();
+      ctx.strokeStyle = s.color; ctx.lineWidth = 1.8; ctx.lineJoin = 'round';
+      run.forEach((p, i) => { const x = X(p.ts), y = Y(p.v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.stroke();
+    }
+  });
+
+  charts.set(hostId, { series, X, Y, P, W, H, t0, t1, ctx, tip, cv, spec, staleRanges });
+
+  // 点选起点：画一条实线标记（等待第二下点击定终点）
+  if (spec.selectable && pendingAnchor[hostId] != null) {
+    const ax = X(Math.min(Math.max(pendingAnchor[hostId], t0), t1));
+    ctx.save();
+    ctx.strokeStyle = hexA(getVar('--accent'), 0.85);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(ax, P.t); ctx.lineTo(ax, P.t + ph); ctx.stroke();
+    ctx.fillStyle = getVar('--accent');
+    ctx.beginPath(); ctx.moveTo(ax, P.t); ctx.lineTo(ax - 4, P.t - 6); ctx.lineTo(ax + 4, P.t - 6); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // 区间选择高亮（画在 base 之前，这样悬停重绘时会保留）
+  if (spec.selectable && selection[hostId]) {
+    const [sa, sb] = selection[hostId];
+    const xa = X(Math.max(sa, t0)), xb = X(Math.min(sb, t1));
+    if (xb > xa) {
+      ctx.fillStyle = hexA(getVar('--accent'), 0.13);
+      ctx.fillRect(xa, P.t, xb - xa, ph);
+      ctx.save();
+      ctx.strokeStyle = hexA(getVar('--accent'), 0.6);
+      ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(xa, P.t); ctx.lineTo(xa, P.t + ph);
+      ctx.moveTo(xb, P.t); ctx.lineTo(xb, P.t + ph);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // 悬停
+  if (!cv.__hoverBound) {
+    cv.__hoverBound = true;
+    const onMove = ev => {
+      if (brushing) return; // 框选中，交给选择逻辑处理
+      const st = charts.get(hostId);
+      if (!st || st.empty) return;
+      const rect = cv.getBoundingClientRect();
+      const mx = ev.clientX - rect.left;
+      const ts = st.t0 + (Math.min(Math.max(mx, st.P.l), st.W - st.P.r) - st.P.l) / (st.W - st.P.l - st.P.r) * (st.t1 - st.t0);
+      redrawHover(hostId, ts);
+    };
+    cv.addEventListener('mousemove', onMove);
+    cv.addEventListener('mouseleave', () => {
+      const st = charts.get(hostId);
+      if (st && !st.empty) { st.ctx.putImageData(st.base, 0, 0); st.tip.classList.remove('on'); }
+    });
+  }
+  const st = charts.get(hostId);
+  st.base = ctx.getImageData(0, 0, cv.width, cv.height);
+  if (spec.selectable) bindBrush(hostId, cv);
+}
+
+function redrawHover(hostId, ts) {
+  const st = charts.get(hostId);
+  if (!st || st.empty) return;
+  const { ctx, cv, P, W, H } = st;
+  ctx.putImageData(st.base, 0, 0);
+
+  // 点选预览：已设起点时，把「起点 → 光标」的范围铺一层淡色（点第二下即定终点）
+  const pend = pendingAnchor[hostId];
+  if (pend != null) {
+    const xa = st.X(Math.min(pend, ts)), xb = st.X(Math.max(pend, ts));
+    ctx.fillStyle = hexA(getVar('--accent'), 0.12);
+    ctx.fillRect(Math.min(xa, xb), P.t, Math.abs(xb - xa), H - P.t - P.b);
+  }
+
+  const x = st.X(ts);
+  ctx.save();
+  ctx.strokeStyle = getVar('--accent'); ctx.globalAlpha = .6; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, P.t); ctx.lineTo(x, P.t + H - P.t - P.b); ctx.stroke();
+  ctx.restore();
+
+  const rows = [];
+  for (const s of st.series) {
+    let best = null;
+    for (const p of s.points) if (!best || Math.abs(p.ts - ts) < Math.abs(best.ts - ts)) best = p;
+    if (!best) continue;
+    const px = st.X(best.ts), py = st.Y(best.v);
+    ctx.beginPath(); ctx.arc(px, py, 3.4, 0, Math.PI * 2);
+    ctx.fillStyle = s.color; ctx.fill();
+    ctx.strokeStyle = getVar('--card'); ctx.lineWidth = 1.4; ctx.stroke();
+    rows.push({ color: s.color, name: s.name, v: best.v, ts: best.ts });
+  }
+  if (!rows.length) return;
+  const stale = (st.staleRanges ?? []).some(([a, b]) => ts >= a && ts <= b);
+  const fx = st.spec?.vFmt ?? (v => v.toFixed(0));
+  st.tip.innerHTML = `<div class="tt">${fmtTime(rows[0].ts)}${stale ? ' · <span style="color:var(--warn)">数据停滞（无采集）</span>' : ''}</div>` + rows.map(r =>
+    `<div class="row2"><i style="background:${r.color}"></i><span>${esc(r.name)}</span><b style="margin-left:auto">${fx(r.v)}</b></div>`).join('');
+  st.tip.classList.add('on');
+  const tw = st.tip.offsetWidth, th = st.tip.offsetHeight;
+  let left = x + 12;
+  if (left + tw > W - 6) left = x - tw - 12;
+  st.tip.style.left = Math.max(4, left) + 'px';
+  st.tip.style.top = Math.max(4, Math.min(H - th - 4, P.t + 8)) + 'px';
+}
+
+function getVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function hexA(hex, a) {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+const WIN_LABEL = { h24: '近 24 小时', d7: '近 7 天', d30: '近 30 天', all: '全部历史' };
+
+/* ================= 区间选择（点选：第一下起点、第二下终点 → 统计该区间） =================
+   选择按图表保存，跨数据刷新保持；Codex 的 used_percent 是滚动窗口值，
+   所以区间统计给的是「峰值/均值/超阈值占比」，而不是"消耗了多少额度"（余额类才是可精确求和的金额）。 */
+const selection = {};
+const pendingAnchor = {};   // 点选区间：已设起点、等待终点的图表（key = hostId）
+const STATS_HOST = { 'wrap-codex': 'stats-codex', 'wrap-ds': 'stats-ds', 'wrap-glm': 'stats-glm' };
+let brushing = false; // 鼠标按下中：暂停悬停十字准线，避免两者互相覆盖
+
+// 停滞判定阈值：超过 3 个采集间隔、且至少 10 分钟没有新数据 → 视为停滞（关机/离线）
+function gapMsFor(kind) { return Math.max(3 * Number(D.intervals?.[kind] ?? 5) * 60000, 10 * 60000); }
+
+function tsAtX(st, mx) {
+  const x = Math.min(Math.max(mx, st.P.l), st.W - st.P.r);
+  return st.t0 + (x - st.P.l) / (st.W - st.P.l - st.P.r) * (st.t1 - st.t0);
+}
+
+function drawDragOverlay(hostId, tA, tB) {  // 兼容保留：点选模式下不再用于拖拽，仅作范围预览
+  const st = charts.get(hostId);
+  if (!st || st.empty) return;
+  st.ctx.putImageData(st.base, 0, 0);
+  const xa = st.X(Math.max(Math.min(tA, tB), st.t0));
+  const xb = st.X(Math.min(Math.max(tA, tB), st.t1));
+  st.ctx.fillStyle = hexA(getVar('--accent'), 0.18);
+  st.ctx.fillRect(Math.min(xa, xb), st.P.t, Math.abs(xb - xa), st.H - st.P.t - st.P.b);
+}
+
+// 从历史序列里取变化段，转成图表标记（只给幅度足够大的段画线，避免密集时糊成一片）
+function changeMarksFor(rows, idx, maxMarks = 40) {
+  if (!rows?.length) return [];
+  const vals = rows.map(r => Number(r[idx])).filter(Number.isFinite);
+  const scale = vals.length ? Math.max(...vals) : 0;
+  const minDelta = Math.max(0.01, scale * 0.004);   // 小于余额 0.4% 的变化不画线
+  const segs = changeSegments(rows, idx, minDelta);
+  return segs.slice(-maxMarks).map(s => ({ ts: s.startTs, kind: s.kind, fromV: s.fromV }));
+}
+
+function redrawChart(hostId) {
+  const st = charts.get(hostId);
+  if (!st?.spec) return;
+  drawChart(hostId, st.spec);
+  renderRangeStats();
+}
+
+function bindBrush(hostId, cv) {
+  if (cv.__brushBound) return;
+  cv.__brushBound = true;
+  const mx = e => e.clientX - cv.getBoundingClientRect().left;
+  // 点选式区间：第一下点起点，第二下点终点，第三下重新开始。不再依赖拖拽。
+  cv.addEventListener('mousedown', e => {
+    const st = charts.get(hostId);
+    if (!st || st.empty) return;
+    brushing = true;
+    st.tip.classList.remove('on');
+    e.preventDefault();
+  });
+  cv.addEventListener('mouseup', e => {
+    const st = charts.get(hostId);
+    if (!st || st.empty || !brushing) return;
+    brushing = false;
+    const ts = tsAtX(st, mx(e));
+    const pend = pendingAnchor[hostId];
+    if (pend == null) {
+      pendingAnchor[hostId] = ts;          // 第一下：设起点
+      delete selection[hostId];
+      toastNote(`起点 ${fmtTime(ts, false)} · 再点一下选终点`);
+    } else {
+      if (Math.abs(pend - ts) < 60000) {   // 两点几乎重合 = 取消
+        delete pendingAnchor[hostId];
+      } else {
+        selection[hostId] = [Math.min(pend, ts), Math.max(pend, ts)];
+        delete pendingAnchor[hostId];
+      }
+    }
+    redrawChart(hostId);
+  });
+  cv.addEventListener('mouseleave', () => { if (brushing) { brushing = false; redrawChart(hostId); } });
+}
+
+function fmtDur(ms) {
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m} 分钟`;
+  const h = ms / 3600000;
+  return h < 48 ? `${h.toFixed(1)} 小时` : `${(ms / 86400000).toFixed(1)} 天`;
+}
+
+// 区间内「无采集」总时长：相邻采样间隔超过停滞阈值即计入（关机/离线）
+function stallMs(times, gapMs) {
+  let total = 0;
+  for (let i = 1; i < times.length; i++) {
+    const g = times[i] - times[i - 1];
+    if (g > gapMs) total += g;
+  }
+  return total;
+}
+
+// 计算并渲染区间统计
+function renderRangeStats() {
+  for (const [hostId, hostElId] of Object.entries(STATS_HOST)) {
+    const el = $(hostElId);
+    if (!el) continue;
+    const sel = selection[hostId];
+    if (!sel) { el.classList.remove('on'); el.innerHTML = ''; continue; }
+    const [t0, t1] = sel;
+    const parts = [];
+    const head = `<div class="hd"><span class="t">已选区间</span><span class="muted">${fmtTime(t0)} → ${fmtTime(t1)}（${fmtDur(t1 - t0)}）</span><button class="btn sm clear" data-clear="${hostId}">清除</button></div>`;
+
+    if (hostId === 'wrap-codex') {
+      const rows = (D.history?.codex?.[win] ?? []).filter(p => p[0] >= t0 && p[0] <= t1);
+      if (!rows.length) { el.innerHTML = head + '<div class="muted">该区间没有采样点</div>'; el.classList.add('on'); continue; }
+      const u5 = rows.map(p => Number(p[1])).filter(Number.isFinite);
+      const u7 = rows.map(p => Number(p[2])).filter(Number.isFinite);
+      const warn = D.thresholds?.codex5hWarn ?? 80;
+      const over = u5.filter(v => v >= warn).length;
+      const peak = Math.max(...u5);
+      const avg = u5.reduce((a, b) => a + b, 0) / u5.length;
+      const span = t1 - t0;
+      const avgGap = rows.length > 1 ? (rows[rows.length - 1][0] - rows[0][0]) / (rows.length - 1) : 0;
+      const stall = stallMs(rows.map(p => p[0]), gapMsFor('codex'));
+      parts.push(['5h 峰值已用', `${Math.round(peak)}%`, `（最低剩余 ${Math.max(0, 100 - Math.round(peak))}%）`]);
+      parts.push(['5h 平均已用', `${avg.toFixed(1)}%`, '']);
+      if (u7.length) parts.push(['7 天峰值已用', `${Math.round(Math.max(...u7))}%`, '']);
+      parts.push([`≥${warn}% 的时长`, fmtDur(over / rows.length * span), `（占 ${(over / rows.length * 100).toFixed(0)}%）`]);
+      parts.push(['采样点', `${rows.length}`, avgGap ? `（平均间隔 ${(avgGap / 60000).toFixed(1)} 分钟）` : '']);
+      if (stall > 0) parts.push(['无采集时长', fmtDur(stall), `（占 ${(stall / span * 100).toFixed(0)}%）`]);
+    } else {
+      const key = hostId === 'wrap-ds' ? 'deepseek' : 'glm';
+      const idx = 1;
+      const rows = (D.history?.[key]?.[win] ?? []).filter(p => p[0] >= t0 && p[0] <= t1);
+      if (rows.length < 2) { el.innerHTML = head + '<div class="muted">该区间采样点不足</div>'; el.classList.add('on'); continue; }
+      let spend = 0;
+      for (let i = 1; i < rows.length; i++) {
+        const a = Number(rows[i - 1][idx]), b = Number(rows[i][idx]);
+        if (Number.isFinite(a) && Number.isFinite(b) && b < a) spend += a - b;
+      }
+      const first = Number(rows[0][idx]), last = Number(rows[rows.length - 1][idx]);
+      const span = t1 - t0;
+      const days = Math.max(span / 86400000, 1 / 24);
+      const perDay = spend / days;
+      const avgGap = (rows[rows.length - 1][0] - rows[0][0]) / (rows.length - 1);
+      const stall = stallMs(rows.map(p => p[0]), gapMsFor('balance'));
+      parts.push(['余额变化', `¥${first.toFixed(2)} → ¥${last.toFixed(2)}`, spend > 0 ? `（净消耗 ¥${spend.toFixed(2)}）` : '（无下降段）']);
+      parts.push(['日均消耗', `¥${perDay.toFixed(2)}`, '']);
+      parts.push(['按此速率可用', last > 0 ? `${Math.max(0, Math.floor(last / perDay))} 天` : '已耗尽', '']);
+      parts.push(['采样点', `${rows.length}`, `（平均间隔 ${(avgGap / 60000).toFixed(1)} 分钟）`]);
+      if (stall > 0) parts.push(['无采集时长', fmtDur(stall), `（占 ${(stall / span * 100).toFixed(0)}%）`]);
+    }
+
+    el.innerHTML = head + '<div class="kvs">' + parts.map(([k, v, note]) =>
+      `<span><span class="k">${esc(k)}</span><b>${esc(v)}</b>${note ? ` <span class="muted">${esc(note)}</span>` : ''}</span>`).join('') + '</div>';
+    el.classList.add('on');
+  }
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-clear]');
+  if (!b) return;
+  delete selection[b.dataset.clear];
+  redrawChart(b.dataset.clear);
+});
+
+/* ================= 平台跳转（卡片↗按钮 / 快捷键 1-3 / 通知「去充值」） ================= */
+const PLATFORMS = ['codex', 'deepseek', 'glm'];
+
+function openPlatform(key, which = 'usage') {
+  const l = D.links?.[key];
+  const url = which === 'topup' ? (l?.topup ?? l?.usage) : l?.usage;
+  if (!url) { toastNote(`未配置 ${key} 的页面地址（config.json → links）`); return false; }
+  window.open(url, '_blank', 'noopener');
+  toastNote(`已打开 ${l?.name ?? key} ${which === 'topup' ? '充值' : '官方'}页面`);
+  return true;
+}
+
+function openLinkHtml(key, n) {
+  const l = D.links?.[key];
+  if (!l?.usage) return '';
+  return `<a class="btn sm open" href="${esc(l.usage)}" target="_blank" rel="noopener"
+    title="打开 ${esc(l.name)} 官方页面（快捷键 ${n}）">↗</a>`;
+}
+
+function toastNote(msg) {
+  const el = $('toolNote');
+  if (!el) return;
+  el.textContent = msg;
+  clearTimeout(toastNote._t);
+  toastNote._t = setTimeout(() => { el.textContent = ''; }, 6000);
+}
+
+// 通用排序：dir < 0 为降序；中文项目名按 zh-CN 比较
+let modelSort = { key: 'turns', dir: -1 };
+function sortRows(list, sort, getters) {
+  const get = getters[sort.key];
+  if (!get) return list;
+  return [...list].sort((a, b) => {
+    const va = get(a), vb = get(b);
+    if (typeof va === 'string' || typeof vb === 'string') return String(va).localeCompare(String(vb), 'zh-CN') * sort.dir;
+    return ((va ?? 0) - (vb ?? 0)) * sort.dir;
+  });
+}
+
+// 表头单元格：可点击排序，带升降序指示
+function sortHead(label, key, sort, attr) {
+  const on = sort.key === key;
+  const arrow = on ? (sort.dir < 0 ? '▾' : '▴') : '▾';
+  return `<span class="so ${on ? 'on' : ''}" data-${attr}="${key}" title="点击按「${label}」排序">${label}<i>${arrow}</i></span>`;
+}
+
+/* ================= 额度去向（按项目归因 Codex 用量） ================= */
+let attrDays = 7;   // 7 | 30 | 'all'
+let attrSort = { key: 'tokens', dir: -1 };
+// 整行色带用 rgba 分量的形式，便于按项目序号取色
+const ATTR_RGB = ['79,140,255', '62,207,142', '245,166,35', '255,92,92', '167,139,250', '34,211,238', '244,114,182', '132,204,22', '56,189,248', '250,204,21'];
+
+function renderAttr() {
+  const a = D.attribution;
+  const box = $('attrBars'), hint = $('attrHint');
+  if (!box) return;
+  if (!a?.projects?.length) {
+    box.innerHTML = '<div class="muted">暂无归因数据（每小时维护时解析本地 Codex 会话文件生成）</div>';
+    hint.textContent = '';
+    $('attrNote').textContent = '';
+    return;
+  }
+  const pick = attrDays === 'all' ? { key: 'tokensAll', total: a.totalAll } : { key: attrDays === 30 ? 'tokens30' : 'tokens7', total: attrDays === 30 ? a.total30 : a.total7 };
+  const { key, total } = pick;
+  const sorted = [...a.projects].sort((x, y) => (y[key] ?? 0) - (x[key] ?? 0));
+  const list0 = sorted.filter(p => (p[key] ?? 0) > 0);
+  const list = sortRows(list0, attrSort, {
+    name: p => p.project,
+    tc: p => p.thinCoderSessions ?? 0,
+    tokens: p => p[key] ?? 0,
+    pct: p => total > 0 ? (p[key] ?? 0) / total : 0,
+  });
+  const max = Math.max(...list.map(p => p[key]), 1);
+  const fmtTokens = t => t >= 1e6 ? `${(t / 1e6).toFixed(1)}M` : t >= 1e3 ? `${(t / 1e3).toFixed(0)}K` : String(t);
+  const spanText = a.coverage?.fromMs ? `${new Date(a.coverage.fromMs).toLocaleDateString('zh-CN')} 起` : '';
+  const months = a.coverage?.fromMs ? Math.max(1, Math.round((Date.now() - a.coverage.fromMs) / (30 * 86400000))) : 0;
+
+  // 表头与数据行共用同一套网格列（subgrid 继承，因此天然对齐）
+  // 两个操作各自独立成列（文件夹 / 启动），不再挤在同一个单元格里
+  const head = `<div class="arow head"><span class="name so ${attrSort.key === 'name' ? 'on' : ''}" data-attr-sort="name" title="点击按项目名排序">项目（${list.length} 个）<i>${attrSort.key === 'name' ? (attrSort.dir < 0 ? '▾' : '▴') : '▾'}</i></span>`
+    + `<span class="tcc ${attrSort.key === 'tc' ? 'on' : ''} so" data-attr-sort="tc" title="点击按 ThinCoder 会话数排序">ThinCoder<i>${attrSort.key === 'tc' ? (attrSort.dir < 0 ? '▾' : '▴') : '▾'}</i></span>`
+    + `<span class="num so ${attrSort.key === 'tokens' ? 'on' : ''}" data-attr-sort="tokens" title="点击按用量排序">用量<i>${attrSort.key === 'tokens' ? (attrSort.dir < 0 ? '▾' : '▴') : '▾'}</i></span>`
+    + `<span class="pct so ${attrSort.key === 'pct' ? 'on' : ''}" data-attr-sort="pct" title="点击按占比排序">占比<i>${attrSort.key === 'pct' ? (attrSort.dir < 0 ? '▾' : '▴') : '▾'}</i></span>`
+    + `<span class="acts">文件夹</span><span class="acts">启动</span></div>`;
+  box.innerHTML = head + list.map((p, i) => {
+    const pct = total > 0 ? (p[key] / total * 100) : 0;
+    const rgb = ATTR_RGB[i % ATTR_RGB.length];
+    const cwd = p.cwd ?? '';
+    const enc = encodeURIComponent(cwd);
+    const hasTc = cwd && p.thinCoderSessions > 0;
+    const folderCell = cwd
+      ? `<span class="acts"><a href="aiquotaboard://openpath?path=${esc(enc)}" title="在资源管理器中打开：${esc(cwd)}">📁 打开</a></span>`
+      : `<span class="acts"><span class="na">—</span></span>`;
+    const tcCellAct = hasTc
+      ? `<span class="acts"><a class="tc" href="aiquotaboard://opentc?path=${esc(enc)}" title="在此项目目录启动 ThinCoder 工作台">⌨ 启动</a></span>`
+      : `<span class="acts"><span class="na">—</span></span>`;
+    // ThinCoder 列：有会话 → 醒目徽标；无 → 淡点（方便竖向扫读哪些项目用过 ThinCoder）
+    const tcCell = hasTc
+      ? `<span class="tcc"><span class="on" title="该项目有 ${p.thinCoderSessions} 个 ThinCoder 会话">⌨ ${p.thinCoderSessions}</span></span>`
+      : `<span class="tcc"><span class="off" title="该项目没有 ThinCoder 会话">·</span></span>`;
+    return `<div class="arow" style="--c:${rgb};--w:${Math.max(1, (p[key] / max) * 100).toFixed(1)}%">
+      <span class="name" title="${esc(cwd || p.project)}">${esc(p.project)}</span>
+      ${tcCell}
+      <span class="num">${fmtTokens(p[key])}</span>
+      <span class="pct">${pct.toFixed(1)}%</span>
+      ${folderCell}
+      ${tcCellAct}
+    </div>`;
+  }).join('');
+  $('attrNote').textContent = `解析 ${a.scannedFiles} 个会话文件 · 合计 ${fmtTokens(total)} tokens${attrDays === 'all' && spanText ? ` · ${spanText}` : ''}`;
+  hint.textContent = attrDays === 'all'
+    ? `全部历史（${spanText}，约 ${months} 个月）。点击表头可排序（项目名 / ThinCoder / 用量 / 占比）。📁 打开项目文件夹，⌨ 在该目录启动 ThinCoder 工作台。`
+    : '点击表头可排序（项目名 / ThinCoder / 用量 / 占比）。📁 打开项目文件夹，⌨ 在该目录启动 ThinCoder 工作台。';
+}
+
+/* 5h 窗口状态（实测语义，见 CHANGELOG 0.7.0）：
+   Codex 的 reset_at 是「当前活动窗口的结束时刻」。窗口从"上次结束后你的第一次请求"开始计时，
+   不使用时会冻结——此时 reset_at 落在过去，而 usedPercent 是那个已结束窗口的最后用量。
+   直接显示一个过去的"刷新时刻"会误导，所以这里区分两种状态。 */
+function windowStatus(c) {
+  const fh = c.fiveHour ?? {};
+  const resetAt = fh.resetAt;
+  if (!resetAt) return '滑动 5 小时';
+  if (resetAt <= Date.now()) {
+    return '<span title="上一个 5 小时窗口已结束；窗口在你下次使用 Codex 时重新开始计时。当前显示的用量是那个窗口的最终值。">滑动 5 小时 · <b>窗口已结束</b>（下次使用重新计时）</span>';
+  }
+  const mins = Math.round((resetAt - Date.now()) / 60000);
+  const left = mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分` : `${mins} 分钟`;
+  return `滑动 5 小时 · ${esc(fh.resetText ?? '—')} 刷新（剩 ${left}）`;
+}
+/* ================= 余额变化拐点 ================= */
+// 把余额序列切成「变化段」：连续同向变化归为一段，段首即拐点（"什么时候开始变的"）。
+// 持平（|Δ| < minDelta）或方向反转即收段；只有总变化 ≥ minDelta 的段才算数。
+function changeSegments(rows, idx, minDelta = 0.01) {
+  const pts = rows.map(r => ({ ts: r[0], v: Number(r[idx]) })).filter(p => Number.isFinite(p.v));
+  const segs = [];
+  let i = 0;
+  while (i < pts.length - 1) {
+    const start = pts[i];
+    let j = i + 1, dir = null, lastV = start.v;
+    while (j < pts.length) {
+      const d = pts[j].v - lastV;
+      if (Math.abs(d) < minDelta) break;        // 持平 → 段结束
+      const k = d < 0 ? 'down' : 'up';
+      if (dir && k !== dir) break;              // 方向反转 → 段结束
+      dir = k; lastV = pts[j].v; j += 1;
+    }
+    if (dir && Math.abs(lastV - start.v) >= minDelta) {
+      segs.push({ startTs: start.ts, endTs: pts[j - 1].ts, fromV: start.v, toV: lastV, delta: lastV - start.v, kind: dir });
+      i = Math.max(i + 1, j - 1);
+    } else i += 1;
+  }
+  return segs;
+}
+
+// 余额卡下方的「最近变化」列表：给出起始时刻、方向与金额、起止余额
+function renderChanges(hostElId, rows, idx, unit = '¥') {
+  const el = $(hostElId);
+  if (!el) return;
+  if (!rows?.length) { el.innerHTML = ''; return; }
+  const segs = changeSegments(rows, idx, 0.005);
+  if (!segs.length) {
+    el.innerHTML = `<div class="seg-sum">所选区间内余额没有变化</div>`;
+    return;
+  }
+  const recent = segs.slice(-4).reverse();
+  const nf = v => unit + Math.abs(v).toFixed(2);
+  el.innerHTML = `<div class="seg-sum">最近 ${recent.length} 次变化（${WIN_LABEL[win] ?? win}）</div>` +
+    recent.map(s => `<div class="seg-row">
+      <span class="k ${s.kind}">${s.kind === 'down' ? '↓ 下降' : '↑ 回升'}</span>
+      <span class="t">${fmtTime(s.startTs)} 起</span>
+      <span class="d ${s.kind}">${s.kind === 'down' ? '-' : '+'}${nf(s.delta)}</span>
+      <span class="r">${unit}${s.fromV.toFixed(2)} → ${unit}${s.toV.toFixed(2)}</span>
+    </div>`).join('');
+}
+
+/* ================= 配置入口（平台开关 / 密钥 / 向导） =================
+   为什么要有：小白用户根本不知道要改 JSON、也不知道改哪个文件。
+   实测新用户痛点：不知道要建 secrets.json、不知道该开哪几个平台、装完不知道成没成。
+   这里把这三件事变成可点的按钮：平台开关走协议写 config.json，密钥走配置向导（不回显输入）。 */
+const PLATFORM_META = [
+  { id: 'codex', name: 'Codex' },
+  { id: 'deepseek', name: 'DeepSeek' },
+  { id: 'glm', name: 'GLM' },
+];
+
+function platInfo(id) {
+  const d = D[id];
+  const on = D.platforms?.[id] !== false;      // 缺省 = 开启（与后端语义一致）
+  let state = '未配置', tone = 'warn';
+  if (d?.disabled) { state = '已关闭'; tone = 'off'; }
+  else if (d?.unconfigured) { state = '未配置（缺密钥）'; tone = 'warn'; }
+  else if (d?.ok) { state = '正常'; tone = 'ok'; }
+  else if (d) { state = '采集失败'; tone = 'bad'; }
+  return { on, state, tone, keySource: d?.keySource ?? null };
+}
+
+// 凭据来源说人话：让人知道"密钥是从哪儿读到的"
+function keySourceText(id, info) {
+  if (info.tone === 'off') return '已关闭，不采集';
+  if (info.tone === 'warn') return id === 'codex' ? '需要先安装并登录 Codex' : '需要填密钥（secrets.json）';
+  const s = info.keySource;
+  if (!s) return '—';
+  if (id === 'codex') return '来自 Codex 登录文件 ~/.codex/auth.json';
+  if (s === 'secrets.json') return '来自 secrets.json';
+  if (s === 'ThinCoder 配置') return '来自 ThinCoder 配置';
+  if (s.startsWith('环境变量')) return `来自${s}`;
+  return `来自 ${s}`;
+}
+
+function renderConfigPanel() {
+  const el = $('cfgPanel');
+  if (!el || el.dataset.open !== '1') return;
+  const rows = PLATFORM_META.map(m => {
+    const info = platInfo(m.id);
+    const toggle = info.on
+      ? `<a class="btn sm danger" href="aiquotaboard://config?set=platforms.${m.id}:false" title="关闭后不采集、不参与提醒，看板上仍保留卡片">关闭</a>`
+      : `<a class="btn sm" href="aiquotaboard://config?set=platforms.${m.id}:true" title="开启后下一次采集生效">开启</a>`;
+    const fix = info.tone === 'warn'
+      ? `<button class="btn sm" data-setup-open title="打开配置向导，补上这家需要的凭据">去配置…</button>`
+      : '';
+    return `<div class="cp-row">
+      <span class="cp-name">${esc(m.name)}</span>
+      <span class="cp-state">${info.tone === 'ok' ? '✓' : info.tone === 'bad' ? '✗' : '○'} <b>${esc(info.state)}</b> · ${esc(keySourceText(m.id, info))}</span>
+      <span class="cp-acts">${fix}${toggle}</span>
+    </div>`;
+  }).join('');
+  el.innerHTML = `<h3>配置</h3>
+    <p class="cp-sub">平台开关会写入项目目录的 <code>config.json</code>，<b>下一次采集生效</b>（最多 1 分钟；也可用「刷新」手动触发）。</p>
+    ${rows}
+    <div class="cp-sec">
+      <button class="btn sm" data-setup-open>打开配置向导</button>
+      <a class="btn sm" data-fallback href="aiquotaboard://setup">老式向导</a>
+      <a class="btn sm" data-fallback href="aiquotaboard://openfile?name=secrets">编辑密钥文件</a>
+      <a class="btn sm" data-fallback href="aiquotaboard://openfile?name=config">编辑配置文件</a>
+      <span class="cp-sub" style="margin:0">提醒阈值在页面底部「工具区」里改。</span>
+    </div>`;
+}
+
+// 配置检查横幅：有平台没配好时提醒一下（可隐藏；状态变了会重新出现）
+function renderSetupBar() {
+  const el = $('setupBar');
+  if (!el) return;
+  const need = PLATFORM_META.map(m => ({ m, info: platInfo(m.id) }))
+    .filter(x => x.info.tone === 'warn' || x.info.tone === 'off');
+  if (!need.length) { el.style.display = 'none'; return; }
+  const sig = need.map(x => `${x.m.id}:${x.info.tone}`).join(',');
+  let hidden = null;
+  try { hidden = localStorage.getItem('quota-setupbar-hidden'); } catch { /* 存储不可用 */ }
+  if (hidden === sig) { el.style.display = 'none'; return; }
+  const label = need.map(x => `${x.m.name}（${x.info.tone === 'off' ? '已关闭' : x.info.tone === 'warn' ? '缺密钥' : '异常'}）`).join('· ');
+  el.innerHTML = `<span class="sb-warn">⚙</span>
+    <span><b>${need.length} 个平台没在用</b>：${esc(label)}</span>
+    <span class="muted">—— 想用就补上，不想用可以忽略；也可以在配置向导里一次改完</span>
+    <span class="spacer"></span>
+    <button class="btn sm" id="sbOpen">打开配置</button>
+    <button class="btn sm" id="sbHide">隐藏</button>`;
+  el.style.display = '';
+  $('sbOpen').onclick = () => { toggleConfig(true); };
+  $('sbHide').onclick = () => { try { localStorage.setItem('quota-setupbar-hidden', sig); } catch {} el.style.display = 'none'; };
+}
+
+function toggleConfig(force) {
+  const el = $('cfgPanel');
+  if (!el) return;
+  const open = force === true ? true : el.dataset.open !== '1';
+  el.dataset.open = open ? '1' : '0';
+  el.style.display = open ? '' : 'none';
+  if (open) { renderConfigPanel(); el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+}
+
+function renderCfg() { renderSetupBar(); renderConfigPanel(); }
+
+/* ================= 配置向导（看板内首次配置） =================
+   目标：不懂技术的用户只在这个页面里完成「选平台 → 填密钥 → 写配置 → 试采 → 让它自动采」。
+   密钥纪律（NFR-1）：密钥只在 password 输入框 → 单个临时对象 → 立即写盘 → 立即清空；
+   绝不进 URL / iframe src / 存储 API / console / 日志。
+   写盘 = 目录句柄（File System Access，只写所选目录）；系统动作 = aiquotaboard:// 协议（隐藏 iframe）。
+   打开前不创建任何 DOM（首屏零代价）；打开为同步渲染（T31 依赖）。 */
+const SETUP_STEPS = ['选项目文件夹', '检测本机能力', '选要监控的平台', '填密钥', '保存配置', '试采一次', '让它在后台自己采', '完成'];
+const SETUP_TIMEOUTS = { probeMs: 10000, collectMs: 90000, pollMs: 600, installWaitMs: 3000 };
+const setupWait = ms => new Promise(r => setTimeout(r, ms));
+const setupSrcName = s => (!s ? '—' : s === 'secrets.json' ? '本机密钥文件' : s);
+let setupStep = 0, setupDir = null, setupStatus = null, setupKeys = null, setupSel = null, setupBusy = false, setupProbe = null;
+
+function fireProtocol(url) {
+  // 隐藏 iframe 触发协议，避免页面跳转（saveConfigEdits / runBackup 共用）
+  const f = document.createElement('iframe');
+  f.style.display = 'none';
+  f.src = url;
+  document.body.appendChild(f);
+  setTimeout(() => f.remove(), 2000);
+}
+function hasFsaAccess() { return typeof window.showDirectoryPicker === 'function'; }
+function setupPageDirName() { try { return decodeURIComponent(location.pathname).replace(/\/+$/, '').split('/').pop(); } catch { return ''; } }
+function setupSay(id, cls, html) { const el = $(id); if (el) { el.className = 'msg' + (cls ? ' ' + cls : ''); el.innerHTML = html; } }
+function setupGoStep(n) { setupStep = n; setupStepRender(n); }
+function setupErrText(e, id) {
+  const n = String(e?.name ?? '');
+  if (n === 'NotAllowedError' || n === 'SecurityError') return '没有写入权限（文件夹可能被移动了、或者系统权限不足）——重新选一次文件夹试试';
+  if (n === 'NotFoundError') return '文件夹或文件不在了（可能被移动或改了名）——重新选一次文件夹';
+  const s = String(e?.message ?? e ?? '原因不明');
+  // 原始错误翻成人话（口径同 tools/first-run-check.mjs 的 friendlyError）：用户不该看到状态码这类黑话
+  if (/40[13]|验证不正确|Authentication Fails|令牌已过期/i.test(s)) return id === 'codex' ? '登录状态可能过期了：打开 Codex 客户端登录一次' : '密钥没通过验证（可能粘贴时少了字符，或已经失效）';
+  if (/429/.test(s)) return '请求太频繁了，过几分钟再试';
+  if (/5\d\d/.test(s)) return '对方服务暂时不可用，过一会儿再试';
+  if (/网络|代理|fetch failed|socket hang up|timeout|ECONN|ENOTFOUND/i.test(s)) return id === 'codex' ? '网络没连上（Codex 通常要开着代理）' : '网络没连上';
+  return s.slice(0, 120);
+}
+
+function setupWizardOpen() {
+  let ov = $('setupOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'setupOverlay';
+    ov.className = 'overlay';
+    ov.innerHTML = '<div class="modal wz"><div style="display:flex;align-items:center;gap:10px">'
+      + '<h3 style="flex:1">配置向导</h3><button class="btn sm" data-close="setupOverlay">关闭</button></div>'
+      + '<div class="muted-note" id="setupStepNote" style="margin:6px 0 10px"></div><div id="setupBody"></div></div>';
+    document.body.appendChild(ov);
+  }
+  ov.classList.add('on');
+  if (!hasFsaAccess()) { setupFallbackPanel(); return; }
+  if (!setupKeys) setupKeys = {};          // 密钥临时对象：关闭向导即释放
+  setupStepRender(setupStep);
+  setupRestoreHandle();                     // 尽力而为（open-1）：取不到就等用户重选，流程不依赖
+}
+
+function setupWizardClose() {
+  setupKeys = null;                         // 立即释放密钥临时对象
+  const ov = $('setupOverlay');
+  if (ov) { ov.classList.remove('on'); ov.querySelectorAll('input').forEach(i => { i.value = ''; }); }
+}
+
+function setupFallbackPanel() {
+  const b = $('setupBody');
+  if (!b) return;
+  $('setupStepNote').textContent = '';
+  b.innerHTML = `<div id="setupFallback">
+    <div class="msg">这个浏览器不能在页面里直接写文件（用 Edge 或 Chrome 就没有这个限制）。还有两条路可以走：</div>
+    <div class="srow"><span class="nm">记事本填写</span><span class="st">打开密钥文件，把密钥自己填进去 <button class="btn sm" id="setupFallbackNotepad">打开密钥文件</button></span></div>
+    <div class="srow"><span class="nm">老式向导</span><span class="st">一问一答地完成配置（会打开一个黑色窗口） <button class="btn sm" id="setupFallbackConsole">打开</button></span></div></div>`;
+  $('setupFallbackNotepad').onclick = () => fireProtocol('aiquotaboard://openfile?name=secrets');
+  $('setupFallbackConsole').onclick = () => fireProtocol('aiquotaboard://setup');
+}
+
+function setupIdb() {
+  try {
+    const r = indexedDB.open('quota-setup', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('h');
+    return r;
+  } catch { return null; }
+}
+function setupSaveHandle(h) {
+  const r = setupIdb();                    // 尽力而为：存不进就算了，流程不依赖它
+  if (!r) return;
+  r.onsuccess = () => { try { r.result.transaction('h', 'readwrite').objectStore('h').put(h, 'dir'); } catch { /* 忽略 */ } };
+}
+function setupRestoreHandle() {
+  const r = setupIdb();
+  if (!r) return;
+  r.onsuccess = () => {
+    try {
+      const g = r.result.transaction('h').objectStore('h').get('dir');
+      g.onsuccess = () => { if (g.result) setupAfterPick(g.result).catch(() => {}); };
+    } catch { /* 忽略 */ }
+  };
+}
+
+function setupStepRender(n) {
+  const b = $('setupBody');
+  if (!b) return;
+  $('setupStepNote').textContent = `第 ${n + 1} 步 / 共 ${SETUP_STEPS.length} 步：${SETUP_STEPS[n]}`;
+  [setupRender0, setupRender1, setupRender2, setupRender3, setupRender4, setupRender5, setupRender6, setupRender7][n]();
+}
+
+function setupRender0() {
+  $('setupBody').innerHTML = `<div class="msg">先选一次项目文件夹（就是本页所在的文件夹）。向导只把配置写进这里，别的地方一律不动。</div>
+    <div class="msg" id="setupMsg0"></div>
+    <div class="actions"><button class="btn primary" id="setupPick">选择项目文件夹</button></div>`;
+  $('setupPick').onclick = setupPickFolder;
+}
+async function setupPickFolder() {
+  try {
+    await setupAfterPick(await window.showDirectoryPicker({ mode: 'readwrite' }));
+  } catch (e) {
+    if (e?.name === 'AbortError') setupSay('setupMsg0', '', '还没选文件夹。准备好了再点一次「选择项目文件夹」就行。');
+    else setupSay('setupMsg0', 'bad', `没能打开文件夹：${esc(setupErrText(e))}`);
+  }
+}
+async function setupAfterPick(h) {
+  if (!h || setupDir || setupStep !== 0) return;
+  let names = [];
+  try { for await (const e of h.values()) names.push(e.name); }
+  catch { setupSay('setupMsg0', 'bad', '读不了这个文件夹（可能被移动或改过名）——请重新选择。'); return; }
+  const miss = ['collect.mjs', 'dashboard.html'].filter(n => !names.includes(n));
+  if (miss.length) { setupSay('setupMsg0', 'bad', `这不是本项目目录（里面没有 ${miss.join('、')}）——没有写任何东西，请选本页所在的文件夹。`); return; }
+  // 二段能力检测：目录句柄没有 createWritable，可写性看它给出的文件句柄
+  const fh = await h.getFileHandle('dashboard.html').catch(() => null);
+  if (typeof fh?.createWritable !== 'function') { setupFallbackPanel(); return; }
+  setupDir = h;
+  const here = setupPageDirName();
+  if (h.name && here && h.name !== here) {
+    setupSay('setupMsg0', 'warn', `这个文件夹叫「${esc(h.name)}」，和本页所在的「${esc(here)}」不一样——确认是同一份看板吗？`
+      + `<span style="display:inline-flex;gap:8px;margin-left:8px"><button class="btn sm" id="setupGo">确认，继续</button><button class="btn sm" id="setupRe">重选</button></span>`);
+    $('setupGo').onclick = () => { setupSaveHandle(h); setupGoStep(1); };
+    $('setupRe').onclick = setupPickFolder;
+    return;
+  }
+  setupSaveHandle(h);
+  setupGoStep(1);
+}
+
+function setupRender1() {
+  $('setupBody').innerHTML = `<div class="msg" id="setupMsg1">正在检测这台电脑已有的能力…（几秒钟；没反应会给出备选出口）</div>
+    <div id="setupProbe"></div>
+    <div class="actions" id="setupAct1"></div>`;
+  setupAct1('probing');
+  setupProbeFlow();
+}
+function setupAct1(mode) {
+  const el = $('setupAct1');
+  if (!el) return;
+  if (mode === 'ok') {
+    el.innerHTML = '<button class="btn primary" id="setupNext1">下一步</button>';
+    $('setupNext1').onclick = () => setupGoStep(2);
+  } else if (mode === 'timeout') {
+    el.innerHTML = '<button class="btn" id="setupRecheck">重新检测</button><button class="btn" id="setupSkip">跳过检测，手动选择</button>';
+    $('setupRecheck').onclick = () => { setupSay('setupMsg1', '', '正在重新检测…'); setupAct1('probing'); setupProbeFlow(); };
+    $('setupSkip').onclick = () => { setupStatus = null; setupGoStep(2); };
+  } else {
+    el.innerHTML = '<button class="btn primary" id="setupNext1" disabled>下一步</button>';
+  }
+}
+async function setupProbeCore() {
+  if (setupProbe) return setupProbe;      // 在途检测直接复用：并发点击不会被当成「超时」
+  setupProbe = (async () => {
+    const startedAt = Date.now();
+    fireProtocol('aiquotaboard://setupcheck');
+    const st = await setupWaitStatus(startedAt, SETUP_TIMEOUTS.probeMs);
+    setupStatus = st;
+    setupProbe = null;
+    return st;
+  })();
+  return setupProbe;
+}
+async function setupProbeFlow() {
+  const st = await setupProbeCore();
+  if (!$('setupProbe')) return;             // 用户已经离开这一步
+  if (!st) {
+    $('setupProbe').innerHTML = '<div class="msg warn" data-guide="vbs">检测没有回应。先双击项目里的「启用自动采集.vbs」把系统侧装好（没有黑色窗口，装完会弹一个中文提示），再点「重新检测」；也可以直接跳过。</div>';
+    setupSay('setupMsg1', 'warn', '系统侧还没启用——这一步可以先跳过，最后一步还会再帮你开。');
+    setupAct1('timeout');
+    return;
+  }
+  setupSay('setupMsg1', '', '检测完成。下面的建议只是参考，随时可以改。');
+  setupRenderProbe();
+  setupAct1('ok');
+}
+async function setupWaitStatus(startedAt, ms) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const st = await setupReadStatus();
+    if (st && Number(st.checkedAtMs) >= startedAt) return st;
+    if (Date.now() >= until) return null;
+    await setupWait(SETUP_TIMEOUTS.pollMs);
+  }
+}
+async function setupReadStatus() {
+  try {
+    const dh = await setupDir.getDirectoryHandle('data');
+    const fh = await dh.getFileHandle('setup-status.json');
+    return JSON.parse(await (await fh.getFile()).text());
+  } catch { return null; }
+}
+function setupRenderProbe() {
+  const box = $('setupProbe');
+  if (!box) return;
+  const st = setupStatus;
+  const row = (id, name) => {
+    const d = (id === 'codex' ? st.codex : st[id]) ?? {};
+    const txt = id === 'codex'
+      ? (d.found ? '已检测到登录信息' : '还没检测到登录')
+      : (d.found ? `已找到密钥（来源：${esc(setupSrcName(d.source))}）` : '还没有密钥');
+    return `<div class="srow" data-plat="${id}"><span class="nm">${name}</span><span class="st">${txt}</span></div>`;
+  };
+  box.innerHTML = row('codex', 'Codex') + row('deepseek', 'DeepSeek') + row('glm', 'GLM')
+    + (st.config?.parse === 'broken'
+      ? '<div class="msg bad" id="setupCfgBroken">配置文件读不出来了（内容坏了）——现在按默认设置在跑，你的自定义设置暂时失效，采集还在继续。下一步保存时会先留一份备份、再写一份新的。</div>' : '');
+}
+
+function setupRowState(id) {
+  if (!setupStatus) return { state: 'unknown', on: true, hint: '还没检测过这台电脑——可以点「重新检测」，也可以直接手动选。' };
+  const on = setupStatus.platforms?.[id] !== false;
+  const d = (id === 'codex' ? setupStatus.codex : setupStatus[id]) ?? {};
+  if (!on) return { state: 'off', on: false, hint: '当前是关着的。' };
+  if (d.found) return { state: 'ready', on: true, src: d.source, hint: id === 'codex' ? '已检测到 Codex 登录信息，建议保持开启。' : `已找到密钥（来源：${esc(setupSrcName(d.source))}），建议保持开启。` };
+  return { state: 'missing', on: true, hint: id === 'codex' ? '还没检测到 Codex 登录——建议先安装并登录 Codex 客户端（不影响其他两家）。' : '还没有密钥——下一步可以填，也可以先跳过。' };
+}
+function setupRender2() {
+  const rows = PLATFORM_META.map(m => {
+    const s = setupRowState(m.id);
+    return `<div class="srow" data-plat="${m.id}" data-setup-state="${s.state}"${s.src ? ` data-src="${esc(s.src)}"` : ''}>`
+      + `<label class="nm"><input type="checkbox" id="setupPlat-${m.id}"${s.on ? ' checked' : ''}> ${m.name}</label>`
+      + `<span class="st">${s.hint}</span></div>`;
+  }).join('');
+  $('setupBody').innerHTML = `<div class="msg">想监控哪几家就留哪几家——没选的不会被采集、也不会提醒。</div>${rows}
+    <div class="msg" id="setupMsg2"></div>
+    <div class="actions"><button class="btn" id="setupRecheck2">重新检测</button><button class="btn primary" id="setupNext2">下一步</button></div>`;
+  $('setupNext2').onclick = () => { setupSel = setupReadSel(); setupGoStep(3); };
+  $('setupRecheck2').onclick = () => setupGoStep(1);   // 手动模式（跳过检测）后也能回去重测（M1 的行内入口）
+  $('setupBody').onchange = setupSelWarn;
+  setupSelWarn();
+}
+function setupReadSel() { const sel = {}; for (const m of PLATFORM_META) sel[m.id] = !!$('setupPlat-' + m.id)?.checked; return sel; }
+function setupSelWarn() {
+  const msg = $('setupMsg2');
+  if (!msg) return;
+  const anyOn = PLATFORM_META.some(m => $('setupPlat-' + m.id)?.checked);
+  msg.className = 'msg' + (anyOn ? '' : ' warn');
+  msg.dataset.sel = anyOn ? 'has-on' : 'all-off';
+  msg.innerHTML = anyOn ? '' : '三家都关着 = 采不到任何数据（采集照常运行，但没有东西可采）。把想用的打开，或者继续——之后随时能改。';
+  $('setupNext2').textContent = anyOn ? '下一步' : '仍要保存';
+}
+
+function setupRender3() {
+  const sel = setupSel ?? {};
+  const rows = PLATFORM_META.filter(m => sel[m.id]).map(m => {
+    if (m.id === 'codex') {
+      const found = !!setupStatus?.codex?.found;
+      return `<div class="srow" data-plat="codex"><span class="nm">Codex</span><span class="st">${found ? '它用你的登录信息，不用填密钥——已经检测到了。' : '它读的是 Codex 客户端的登录信息，不用在这里填——先安装并登录 Codex 客户端就会自动生效。'}</span></div>`;
+    }
+    const d = setupStatus?.[m.id] ?? {};
+    return d.found
+      ? `<div class="srow" data-plat="${m.id}"><span class="nm">${m.name}</span><span class="st">已找到密钥（来源：${esc(setupSrcName(d.source))}）<button class="btn sm" id="setupRe-${m.id}">重新填写</button></span></div>`
+      : `<div class="srow" data-plat="${m.id}"><span class="nm">${m.name}</span><input type="password" autocomplete="off" id="setupKey-${m.id}" placeholder="把密钥粘贴到这里（保存前不会显示）"></div>`;
+  }).join('') || '<div class="msg">这一步没有要填的密钥，直接下一步。</div>';
+  $('setupBody').innerHTML = `<div class="msg">粘贴后不会显示、也不会进日志；留空 = 这家先不用，之后随时能补。</div>${rows}
+    <div class="actions"><button class="btn primary" id="setupNext3">下一步</button></div>`;
+  for (const m of PLATFORM_META) {
+    const r = $('setupRe-' + m.id);
+    if (r) r.onclick = () => { r.parentElement.innerHTML = `<input type="password" autocomplete="off" id="setupKey-${m.id}" placeholder="粘贴新的密钥（会覆盖原来的）">`; };
+  }
+  $('setupNext3').onclick = () => { setupGrabKeys(); setupGoStep(4); };
+}
+function setupGrabKeys() {
+  setupKeys = setupKeys ?? {};
+  for (const id of ['deepseek', 'glm']) {
+    const el = $('setupKey-' + id);
+    if (!el) continue;
+    const v = el.value.trim();
+    if (v) setupKeys[id] = v;
+    el.value = '';                 // 输入框立刻清空：密钥只留在临时对象里
+  }
+}
+
+function setupRender4() {
+  $('setupBody').innerHTML = `<div class="msg">点「保存」：平台开关写进 <code>config.json</code>，新密钥写进 <code>secrets.json</code>——这两个文件里已有的其它内容会原样保留。</div>
+    <div class="msg" id="setupMsg4"></div>
+    <div class="actions" id="setupAct4"><button class="btn primary" id="setupSave">保存</button></div>`;
+  $('setupSave').onclick = setupSaveAll;
+}
+async function setupReadJson(name) {
+  let fh;
+  try { fh = await setupDir.getFileHandle(name); }
+  catch (e) { if (e?.name === 'NotFoundError') return { data: {}, exists: false, broken: false, text: null }; throw e; }
+  const text = await (await fh.getFile()).text();
+  try {
+    const j = JSON.parse(text);
+    return (j && typeof j === 'object' && !Array.isArray(j)) ? { data: j, exists: true, broken: false, text } : { data: {}, exists: true, broken: true, text };
+  } catch { return { data: {}, exists: true, broken: true, text }; }
+}
+async function setupWriteJson(name, obj, prevText) {
+  const fh = await setupDir.getFileHandle(name, { create: true });
+  const text = JSON.stringify(obj, null, 1);
+  try {
+    const w = await fh.createWritable();
+    await w.write(text);
+    await w.close();
+    return;
+  } catch (e) {
+    // 无原子替换可用（File System Access 没有 rename）：失败时把原内容写回去
+    let rb = 'none';
+    if (prevText != null) {
+      try { const w2 = await fh.createWritable(); await w2.write(prevText); await w2.close(); rb = 'ok'; }
+      catch { rb = 'failed'; }
+    }
+    e.setupRollback = rb;
+    throw e;
+  }
+}
+async function setupSaveAll() {
+  if (setupBusy) return;
+  setupBusy = true;
+  setupSay('setupMsg4', '', '正在写入…');
+  try {
+    const prev = {}, broken = [];
+    for (const name of ['config.json', 'secrets.json']) {
+      const r = await setupReadJson(name);
+      if (r.broken) broken.push([name, r]); else prev[name] = r;
+    }
+    if (broken.length) setupRebuildUI(broken);      // 不点「备份并重建」= 零写入
+    else await setupWriteAll(prev);
+  } catch (e) { setupSaveError(e); }
+  setupBusy = false;
+}
+async function setupWriteAll(prev) {
+  const sel = setupSel ?? {};
+  const cfg = prev['config.json'] ?? await setupReadJson('config.json');
+  const next = { ...cfg.data, platforms: { ...(cfg.data.platforms && typeof cfg.data.platforms === 'object' ? cfg.data.platforms : {}), ...sel } };
+  await setupWriteJson('config.json', next, cfg.text);
+  const back = await setupReadJson('config.json');    // 回读核对：说的和存的一致才算数
+  const bad = PLATFORM_META.filter(m => (back.data.platforms?.[m.id] !== false) !== !!sel[m.id]);
+  if (bad.length) throw new Error(`平台开关没写进去：${bad.map(m => m.name).join('、')}`);
+  const lines = [`平台开关：${PLATFORM_META.map(m => `${m.name} ${sel[m.id] ? '开' : '关'}`).join(' · ')}`];
+  const keys = setupKeys ?? {};
+  const kn = Object.keys(keys);
+  if (kn.length) {
+    const sec = prev['secrets.json'] ?? await setupReadJson('secrets.json');
+    await setupWriteJson('secrets.json', { ...sec.data, ...keys }, sec.text);
+    const b2 = await setupReadJson('secrets.json');
+    for (const n of kn) if (b2.data[n] !== keys[n]) throw new Error(`${n} 的密钥没存进去`);
+    lines.push(`新密钥已存好：${kn.map(id => (PLATFORM_META.find(m => m.id === id) ?? { name: id }).name).join('、')}（只存在本机，不上传）`);
+    setupKeys = null;                                  // 写盘完成，立即释放
+  } else {
+    lines.push('这次没有新的密钥要写');
+  }
+  setupSay('setupMsg4', 'ok', `✓ ${lines.join('<br>✓ ')}<br>下一次采集（约 1 分钟内）生效。`);
+  $('setupAct4').innerHTML = '<button class="btn primary" id="setupNext4">下一步：试采一次</button>';
+  $('setupNext4').onclick = () => setupGoStep(5);
+}
+function setupRebuildUI(broken) {
+  $('setupBody').innerHTML = `<div class="msg bad">${broken.map(x => `「${x[0]}」读不出来了（内容坏了）。`).join('')}点下面的按钮：先把原文件留一份备份，再写一份新的干净配置；不点就什么都不写。</div>
+    <div class="msg" id="setupMsg4"></div>
+    <div class="actions" id="setupAct4"><button class="btn primary" id="setupRebuild">备份并重建</button></div>`;
+  $('setupRebuild').onclick = async () => {
+    setupSay('setupMsg4', '', '正在备份并重建…');
+    try {
+      for (const [n, r] of broken) {
+        const dh = await setupDir.getDirectoryHandle('data', { create: true });
+        const bh = await dh.getFileHandle(n + '.broken.bak', { create: true });
+        const w = await bh.createWritable();
+        await w.write(String(r.text ?? ''));
+        await w.close();
+      }
+      await setupWriteAll({});
+    } catch (e) { setupSaveError(e); }
+  };
+}
+function setupSaveError(e) {
+  const msg = $('setupMsg4');
+  if (!msg) return;
+  const rb = e?.setupRollback ?? 'none';
+  msg.className = 'msg bad';
+  msg.dataset.rollback = rb;
+  msg.innerHTML = `保存没成功${rb === 'failed' ? '，而且原来的内容也写不回去了——这几个文件可能已经读不出来' : rb === 'ok' ? '（已尝试把原来的内容写回去）' : '（那个文件本来是新建的）'}：${esc(setupErrText(e))}<br>怎么办：点「重试」再存一次；还不行就把项目文件夹换个位置，或改用「老式向导」（配置面板里有入口）。`;
+  $('setupAct4').innerHTML = '<button class="btn primary" id="setupRetry4">重试</button>';
+  $('setupRetry4').onclick = setupSaveAll;
+}
+
+function setupRender5() {
+  $('setupBody').innerHTML = `<div class="msg">配置已保存。现在试采一次，看看是不是真能拿到数据（要联网，最多一分半）。</div>
+    <div class="msg" id="setupMsg5"></div>
+    <div id="setupCollectRows"></div>
+    <div class="actions" id="setupAct5"><button class="btn primary" id="setupCollect">试采一次</button></div>`;
+  $('setupCollect').onclick = setupCollectTest;
+}
+async function setupReadPayload() {
+  try {
+    const fh = await setupDir.getFileHandle('dashboard-data.js');
+    const text = await (await fh.getFile()).text();
+    const i = text.indexOf('{'), j = text.lastIndexOf('}');
+    return i >= 0 && j > i ? JSON.parse(text.slice(i, j + 1)) : null;
+  } catch { return null; }
+}
+async function setupCollectTest() {
+  if (setupBusy) return;
+  setupBusy = true;
+  setupSay('setupMsg5', '', '正在采集…（等结果，最多一分半；先别关页面）');
+  $('setupCollectRows').innerHTML = '';
+  const before = await setupReadPayload();
+  const base = before && Number.isFinite(Number(before.collectedAtMs)) ? Number(before.collectedAtMs) : null;
+  fireProtocol('aiquotaboard://collect');
+  const until = Date.now() + SETUP_TIMEOUTS.collectMs;
+  for (;;) {
+    await setupWait(SETUP_TIMEOUTS.pollMs);
+    const p = await setupReadPayload();
+    const at = p ? Number(p.collectedAtMs) : 0;
+    if (at && (base == null || at > base)) { setupCollectDone(p); break; }
+    if (Date.now() >= until) { setupCollectTimeout(); break; }
+  }
+  setupBusy = false;
+}
+function setupCollectDone(p) {
+  $('setupCollectRows').innerHTML = PLATFORM_META.map(m => {
+    const r = p[m.id] ?? {};
+    let state = 'ok', text = '已经能采到数据了', fix = '';
+    if (r.disabled) { state = 'off'; text = '已关闭（这次没选它，想用就在向导里打开）'; }
+    else if (r.unconfigured || !r.ok) {
+      state = r.unconfigured ? 'unconfigured' : 'fail';
+      text = m.id === 'codex'
+        ? 'Codex 暂时采不到：先安装并登录 Codex 客户端'
+        : (r.unconfigured ? '这家还没有密钥：回到向导补一下就行' : `这次没采到：${esc(setupErrText(r.error ?? '原因不明', m.id))}`);
+      fix = m.id === 'codex' ? 'login-codex' : 'rekey';
+    }
+    return `<div class="srow" data-plat="${m.id}" data-state="${state}"${fix ? ` data-fix="${fix}"` : ''}><span class="nm">${m.name}</span><span class="st">${text}</span></div>`;
+  }).join('');
+  const allOff = setupSel && !PLATFORM_META.some(m => setupSel[m.id]);
+  setupSay('setupMsg5', allOff ? 'warn' : 'ok', allOff ? '三家都关着，采不到任何数据——想采就回上一步打开至少一家。' : '试采完成。没成功的按提示处理就好。');
+  const msg = $('setupMsg5');
+  msg.dataset.sum = allOff ? 'all-off' : 'done';
+  $('setupAct5').innerHTML = '<button class="btn primary" id="setupNext5">下一步：自动采集</button>';
+  $('setupNext5').onclick = () => setupGoStep(6);
+}
+function setupCollectTimeout() {
+  setupSay('setupMsg5', 'warn', '没等到结果（可能网络慢，或采集还没跑起来）。可以点「重试」；也可以双击项目里的「运行采集.vbs」马上采一次（没有窗口），再回来看。');
+  const msg = $('setupMsg5');
+  msg.dataset.sum = 'timeout';
+  msg.dataset.manual = 'vbs';
+  $('setupAct5').innerHTML = '<button class="btn primary" id="setupRetry5">重试</button><button class="btn" id="setupNext5">跳过，下一步</button>';
+  $('setupRetry5').onclick = setupCollectTest;
+  $('setupNext5').onclick = () => setupGoStep(6);
+}
+
+function setupRender6() {
+  const st = setupStatus, state = !st ? 'unknown' : st.autoRun?.taskRegistered ? 'on' : 'off';
+  $('setupBody').innerHTML = `<div class="msg">让它自己在后台采集——装一次就不用管了。</div>
+    <div class="srow" data-plat="autorun"><span class="nm">自动采集</span><span class="st" id="setupAutoState" data-auto="${state}">${state === 'on' ? '已开启：它每隔几分钟自己采一次' : state === 'off' ? '还没开启' : '状态未知（这次跳过了检测）'}</span></div>
+    <div class="msg" id="setupMsg6"></div>
+    ${state === 'on' ? '' : `<div class="msg" data-guide="vbs">没装上？双击项目里的「启用自动采集.vbs」也行（没有黑色窗口，装完会弹一个中文提示）——装完点下面的「重新检测」。</div>
+    <div class="actions" style="margin-top:10px"><button class="btn" id="setupRecheck6">重新检测</button></div>`}
+    <div class="actions" id="setupAct6">${state === 'on' ? '' : '<button class="btn primary" id="setupInstall">一键开启</button>'}<button class="btn primary" id="setupNext6">下一步</button></div>`;
+  const ins = $('setupInstall');
+  if (ins) ins.onclick = setupInstall;
+  $('setupNext6').onclick = () => setupGoStep(7);
+  const rc = $('setupRecheck6');
+  if (rc) rc.onclick = async () => {
+    setupSay('setupMsg6', '', '正在重新检测…');
+    const st2 = await setupProbeCore();
+    setupStepRender(6);
+    setupSay('setupMsg6', st2?.autoRun?.taskRegistered ? 'ok' : 'warn', st2
+      ? (st2.autoRun?.taskRegistered ? '✓ 已开启：以后它会自己采。' : '还是没开启——点「一键开启」，或双击「启用自动采集.vbs」。')
+      : '还是没回应：稍等一下再试，或双击「启用自动采集.vbs」。');
+  };
+}
+async function setupInstall() {
+  if (setupBusy) return;
+  setupBusy = true;
+  setupSay('setupMsg6', '', '正在开启…（要几十秒，装完这里会变成「已开启」）');
+  fireProtocol('aiquotaboard://setupinstall');
+  await setupWait(SETUP_TIMEOUTS.installWaitMs);
+  setupBusy = false;
+  const st = await setupProbeCore();
+  setupStepRender(6);
+  setupSay('setupMsg6', st?.autoRun?.taskRegistered ? 'ok' : 'warn', st?.autoRun?.taskRegistered
+    ? '✓ 已开启：以后它会自己采。'
+    : '还没看到它开启（可能还在装）。点「重新检测」再看看；或者双击项目里的「安装定时任务.bat」看详细输出。');
+}
+
+function setupRender7() {
+  $('setupBody').innerHTML = `<div class="msg ok">配置完成。以后它自己采，约 1 分钟后本页会出现数据；也可以现在就点「刷新」。</div>
+    <div class="msg">想改哪一家：右上角「配置」→「打开配置向导」。密钥只留在本机，不上传、不进日志。</div>
+    <div class="actions"><button class="btn primary" id="setupDone">完成</button></div>`;
+  $('setupDone').onclick = () => { setupWizardClose(); refreshData(true); };
+}
+
+/* ================= AI 能力构成（模型使用画像） =================
+   接口只能告诉你"哪些模型可用"；这里回答"实际在用哪个、用在哪、什么时候换的"——
+   数据来自本地 Codex 会话每轮的 turn_context.model，属于只有本地能证出来的信息。 */
+function renderModels() {
+  const list = D.attribution?.models ?? [];
+  const box = $('modelBars'), hint = $('modelHint');
+  if (!box) return;
+  if (!list.length) {
+    box.innerHTML = '<div class="muted">暂无模型使用记录</div>';
+    hint.textContent = ''; $('modelSummary').textContent = ''; $('modelNote').textContent = '';
+    return;
+  }
+  const total = list.reduce((s, m) => s + m.turns, 0);
+  const maxTurns = Math.max(...list.map(m => m.turns), 1);
+  const avail = Object.entries(D.models?.available ?? {}).filter(([, v]) => v?.available).map(([k]) => k);
+  const fmtDay = ms => ms ? new Date(ms).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace('/', '-') : '—';
+  const totalTokens = list.reduce((s, m) => s + m.tokens, 0);
+
+  const head = `<div class="arow head"><span class="name">模型（${list.length} 个）</span><span class="n so" data-model-sort="turns">调用<i>${modelSort.key === 'turns' ? (modelSort.dir < 0 ? '▾' : '▴') : '▾'}</i></span><span class="n">用量</span><span class="pct">占比</span><span class="span2">活跃区间</span><span class="mid">主要用在</span></div>`;
+  const rows = sortRows(list, modelSort, { turns: m => m.turns, tokens: m => m.tokens, last: m => m.lastMs || 0, name: m => m.model });
+  box.innerHTML = head + rows.map(m => {
+    const pct = total > 0 ? (m.turns / total * 100) : 0;
+    const isAvail = avail.includes(m.model);
+    const top = m.topProjects?.[0];
+    const tok = m.tokens >= 1e6 ? `${(m.tokens / 1e6).toFixed(1)}M` : `${(m.tokens / 1e3).toFixed(0)}K`;
+    return `<div class="arow" style="--w:${Math.max(2, (m.turns / maxTurns) * 100).toFixed(1)}%">
+      <span class="name" title="${esc(m.model)}${isAvail ? '（接口报告当前可用）' : ''}">${esc(m.model)}${isAvail ? ' <span class="pill ok">当前可用</span>' : ''}</span>
+      <span class="n strong">${m.turns}</span>
+      <span class="n">${tok}</span>
+      <span class="pct">${pct.toFixed(1)}%</span>
+      <span class="span2">${fmtDay(m.firstMs)} → ${fmtDay(m.lastMs)}</span>
+      <span class="mid" title="共用在 ${m.projectCount} 个项目">${top ? esc(top.project) + ' <b>' + top.turns + '</b>' : '—'}${m.projectCount > 1 ? ` <span class="muted">（共 ${m.projectCount} 个项目）</span>` : ''}</span>
+    </div>`;
+  }).join('');
+
+  $('modelNote').textContent = `${total} 次调用 · ${(totalTokens / 1e6).toFixed(0)}M tokens`;
+  $('modelSummary').textContent = `实际使用过 ${list.length} 个模型 · 接口当前报告可用：${avail.length ? avail.join('、') : '（无）'}`;
+  hint.textContent = '「调用」= 该模型被调用的 API 次数（一次任务回合里可能包含多次）。「活跃区间」= 首次与最近一次使用的时间，能看出模型切换的轨迹。点表头可排序。';
+  renderUsageStyle();
+}
+
+/* 使用方式画像：你实际是怎么用它跑活的（放权程度 / 沙箱策略 / 推理强度 / 单轮规模） */
+const STYLE_LABELS = {
+  approval: { never: '全放权（不询问）', 'on-request': '按需确认', '(未知)': '未知', '(未设置)': '未设置' },
+  sandbox: { 'danger-full-access': '完全访问', 'workspace-write': '工作区可写', 'read-only': '只读', '(未知)': '未知', '(未设置)': '未设置' },
+  effort: { xhigh: '极高', high: '高', medium: '中', low: '低', minimal: '极低' },
+};
+function renderUsageStyle() {
+  const el = $('usageStyle');
+  if (!el) return;
+  const u = D.attribution?.usageStyle;
+  if (!u?.turns) { el.innerHTML = ''; return; }
+  const row = (title, dim, note) => {
+    const entries = Object.entries(u[dim] ?? {}).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) return '';
+    const sum = entries.reduce((s, [, v]) => s + v, 0);
+    const items = entries.map(([k, v]) =>
+      `<span class="it"><b>${v}</b>${esc(STYLE_LABELS[dim]?.[k] ?? k)}<span class="pct"> ${(v / sum * 100).toFixed(0)}%</span></span>`).join('');
+    return `<span class="k">${esc(title)}</span><span class="v">${items}${note ? ` <span class="pct">${note}</span>` : ''}</span>`;
+  };
+  const perTurn = u.avgTokensPerTurn != null ? `${(u.avgTokensPerTurn / 1000).toFixed(0)}K tokens` : '—';
+  el.innerHTML = `<div class="sh">使用方式（基于本地记录的 ${u.turns} 次任务回合）</div>`
+    + row('权限模式', 'approval')
+    + row('沙箱策略', 'sandbox')
+    + row('推理强度', 'effort')
+    + `<span class="k">单轮规模</span><span class="v"><span class="it"><b>${perTurn}</b>平均每轮消耗</span></span>`;
+}
+
+/* ================= ThinCoder 项目（独立模块） =================
+   数据来自 ~/.thincoder/sessions 的会话索引（与 Codex 归因同一批维护任务生成）。
+   与「额度去向」的区别：这里覆盖**只用了 ThinCoder、没用 Codex** 的项目。 */
+let tcDays = 7;   // 7 | 30 | 'all'
+let tcSort = { key: 'last', dir: -1 };
+
+function renderTc() {
+  const tc = D.attribution?.thinCoder;
+  const box = $('tcBars'), hint = $('tcHint');
+  if (!box) return;
+  if (!tc?.projects?.length) {
+    box.innerHTML = '<div class="muted">暂无 ThinCoder 会话记录</div>';
+    hint.textContent = ''; $('tcSummary').textContent = ''; $('tcNote').textContent = '';
+    return;
+  }
+  const sKey = tcDays === 'all' ? 'sessions' : tcDays === 30 ? 'sessions30' : 'sessions7';
+  const tKey = tcDays === 'all' ? 'turns' : tcDays === 30 ? 'turns30' : 'turns7';
+  const cutoff = tcDays === 'all' ? 0 : Date.now() - (tcDays === 30 ? 30 : 7) * 86400000;
+  const list = sortRows(tc.projects.filter(p => p.lastMs >= cutoff), tcSort, {
+    name: p => p.project,
+    sessions: p => p[sKey] ?? 0,
+    turns: p => p[tKey] ?? 0,
+    last: p => p.lastMs ?? 0,
+  });
+  const totalSessions = list.reduce((s, p) => s + (p[sKey] ?? 0), 0);
+  const maxTurns = Math.max(...list.map(p => p[tKey] ?? 0), 1);
+  const fmtWhen = ms => {
+    if (!ms) return '—';
+    const d = new Date(ms);
+    const hh = String(d.getHours()).padStart(2, '0'), mi = String(d.getMinutes()).padStart(2, '0');
+    // 注意：不能用「距今 <24 小时」当"今天"——昨天 15:36 距今也可能不到 24 小时。按自然日比较才准。
+    const sameDay = d.toDateString() === new Date().toDateString();
+    if (sameDay) return `今天 ${hh}:${mi}`;
+    const y = new Date(Date.now() - 86400000).toDateString() === d.toDateString();
+    if (y) return `昨天 ${hh}:${mi}`;
+    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hh}:${mi}`;
+  };
+
+  const head = `<div class="arow head">${sortHead(`项目（${list.length} 个）`, 'name', tcSort, 'tc-sort')}`
+    + `<span class="n so ${tcSort.key === 'sessions' ? 'on' : ''}" data-tc-sort="sessions" title="点击按会话数排序">会话<i>${tcSort.key === 'sessions' ? (tcSort.dir < 0 ? '▾' : '▴') : '▾'}</i></span>`
+    + `<span class="n so ${tcSort.key === 'turns' ? 'on' : ''}" data-tc-sort="turns" title="点击按轮次排序">轮次<i>${tcSort.key === 'turns' ? (tcSort.dir < 0 ? '▾' : '▴') : '▾'}</i></span>`
+    + `<span class="last so ${tcSort.key === 'last' ? 'on' : ''}" data-tc-sort="last" title="点击按最近使用时间排序">最近使用<i>${tcSort.key === 'last' ? (tcSort.dir < 0 ? '▾' : '▴') : '▾'}</i></span>`
+    + `<span class="acts">文件夹</span><span class="acts">启动</span></div>`;
+  box.innerHTML = head + list.map(p => {
+    const enc = encodeURIComponent(p.cwd);
+    const canAct = p.cwd && !p.unknown;
+    const folderCell = canAct
+      ? `<span class="acts"><a href="aiquotaboard://openpath?path=${esc(enc)}" title="在资源管理器中打开：${esc(p.cwd)}">📁 打开</a></span>`
+      : `<span class="acts"><span class="na">—</span></span>`;
+    const tcCell = canAct
+      ? `<span class="acts"><a class="tc" href="aiquotaboard://opentc?path=${esc(enc)}" title="在此项目目录启动 ThinCoder 工作台">⌨ 启动</a></span>`
+      : `<span class="acts"><span class="na">—</span></span>`;
+    return `<div class="arow" style="--w:${Math.max(2, ((p[tKey] ?? 0) / maxTurns) * 100).toFixed(1)}%">
+      <span class="name" title="${esc(p.cwd || p.project)}">${esc(p.project)}</span>
+      <span class="n">${p[sKey] ?? 0}</span>
+      <span class="n strong">${p[tKey] ?? 0}</span>
+      <span class="last">${fmtWhen(p.lastMs)}</span>
+      ${folderCell}
+      ${tcCell}
+    </div>`;
+  }).join('');
+
+  $('tcNote').textContent = `共 ${tc.projects.length} 个项目 · ${tc.totalAll} 个会话 · 会话目录 ${tc.sessionDir}`;
+  $('tcSummary').textContent = `当前范围：${list.length} 个项目 · ${totalSessions} 个会话`;
+  hint.textContent = '点击表头可按 会话 / 轮次 / 最近使用 / 项目名 排序（再点一次反向）。📁 打开文件夹，⌨ 在该目录启动 ThinCoder 工作台。'
+    + (tc.projects.some(p => p.unknown) ? '「（无路径记录）」是仅有 manifest、会话正文文件缺失的记录，无法定位项目目录。' : '');
+}
+
+/* ================= 采集健康（近 24 小时） ================= */
+function renderHealth() {
+  const box = $('healthList');
+  if (!box) return;
+  const h = D.health24h?.platforms;
+  if (!h) { box.innerHTML = '<div class="muted">暂无统计数据（重启采集后开始累计）</div>'; $('healthHint').textContent = ''; return; }
+  const names = { codex: 'Codex', deepseek: 'DeepSeek', glm: 'GLM' };
+  const rows = PLATFORMS.map(p => {
+    const v = h[p];
+    if (!v?.runs) return `<div class="health-row"><span>${MARK[p]} ${names[p]}</span><span class="sub">暂无采样</span><span class="sub">—</span></div>`;
+    const rate = v.ok / v.runs * 100;
+    const avgMs = Math.round(v.ms / v.runs);
+    const cls = rate >= 99 ? 'ok' : rate >= 90 ? 'warn' : 'bad';
+    const color = cls === 'ok' ? 'var(--ok)' : cls === 'warn' ? 'var(--warn)' : 'var(--bad)';
+    return `<div class="health-row">
+      <span>${MARK[p]} ${names[p]}</span>
+      <span class="sub">${v.ok}/${v.runs} 次成功 · 平均 ${avgMs}ms${v.fail ? ` · <b style="color:var(--bad)">失败 ${v.fail}</b>` : ''}</span>
+      <span class="rate" style="color:${color}">${rate.toFixed(1)}%</span>
+    </div>`;
+  }).join('');
+  box.innerHTML = rows;
+  const lastErr = D.health?.lastErrors ?? {};
+  const errs = Object.entries(lastErr).filter(([, v]) => v).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`);
+  $('healthHint').textContent = errs.length ? `最近错误 —— ${errs.join(' · ')}` : '近 24 小时无采集错误。';
+}
+
+/* ================= 快捷键与浮层 ================= */
+const WINDOW_ORDER = ['h24', 'd7', 'd30', 'all'];
+
+function closeOverlayEl(el) { if (el.id === 'setupOverlay') setupWizardClose(); else el.classList.remove('on'); }
+function closeOverlays() { document.querySelectorAll('.overlay.on').forEach(closeOverlayEl); }
+
+function buildConfigEditor() {
+  const grid = $('cfgGrid');
+  const th = D.thresholds ?? {}, pr = D.predict ?? {}, an = D.anomaly ?? {};
+  const fields = [
+    ['thresholds.codex5hWarn', 'Codex 5h 提醒阈值（已用 %）', th.codex5hWarn ?? 80],
+    ['thresholds.codex5hCritical', 'Codex 5h 紧急阈值（已用 %）', th.codex5hCritical ?? 95],
+    ['thresholds.codexWeekWarn', 'Codex 7 天提醒阈值（已用 %）', th.codexWeekWarn ?? 80],
+    ['thresholds.dsLow', 'DeepSeek 余额偏低（¥）', th.dsLow ?? 20],
+    ['thresholds.dsCritical', 'DeepSeek 余额紧急（¥）', th.dsCritical ?? 10],
+    ['thresholds.glmLow', 'GLM 余额偏低（¥）', th.glmLow ?? 5],
+    ['thresholds.glmCritical', 'GLM 余额紧急（¥）', th.glmCritical ?? 2],
+    ['predict.warnMinutes', '触顶预警提前量（分钟）', pr.warnMinutes ?? 30],
+    ['predict.minUsedPercent', '触顶预测起步用量（%）', pr.minUsedPercent ?? 40],
+    ['anomaly.factor', '异常消耗倍数（vs 7 日均值）', an.factor ?? 3],
+    ['anomaly.minAmount', '异常消耗最小金额（¥）', an.minAmount ?? 5],
+  ];
+  grid.innerHTML = fields.map(([k, label, v]) =>
+    `<label for="cfg-${k}">${esc(label)}</label><input id="cfg-${k}" data-key="${k}" type="number" step="any" value="${esc(String(v))}">`).join('');
+}
+
+function saveConfigEdits() {
+  const pairs = [...document.querySelectorAll('#cfgGrid input')]
+    .map(i => `${i.dataset.key}:${i.value}`).join(',');
+  if (!pairs) return;
+  // file:// 页面不能直接写文件：走 aiquotaboard:// 协议（隐藏 iframe 触发，避免页面跳转）
+  fireProtocol(`aiquotaboard://config?set=${encodeURIComponent(pairs)}`);
+  closeOverlays();
+  toastNote('已提交配置修改，下一次采集生效');
+}
+
+function runBackup() {
+  fireProtocol('aiquotaboard://backup');
+  toastNote('备份已开始，完成后在 backups/ 目录查看');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches?.('input, textarea, select')) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const k = e.key;
+  const lower = k.toLowerCase();
+  if (k === '1' || k === '2' || k === '3') { openPlatform(PLATFORMS[Number(k) - 1]); return; }
+  if (lower === 'r') { refreshData(true); toastNote('正在刷新…'); return; }
+  if (k === ' ') { e.preventDefault(); $('pauseBtn').click(); return; }
+  if (lower === 't') { $('themeBtn').click(); return; }
+  if (lower === 'w') {
+    const next = WINDOW_ORDER[(WINDOW_ORDER.indexOf(win) + 1) % WINDOW_ORDER.length];
+    document.querySelector(`[data-win="${next}"]`)?.click();
+    toastNote(`时间窗口：${WIN_LABEL[next]}`);
+    return;
+  }
+  if (k === 'Escape') {
+    const anyOpen = document.querySelector('.overlay.on');
+    if (anyOpen) { closeOverlays(); return; }
+    Object.keys(selection).forEach(h => delete selection[h]);
+    Object.keys(pendingAnchor).forEach(h => delete pendingAnchor[h]);
+    Object.keys(STATS_HOST).forEach(redrawChart);
+    return;
+  }
+  if (k === '?') { $('helpOverlay').classList.toggle('on'); return; }
+});
+
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-close]');
+  if (c) { closeOverlayEl($(c.dataset.close)); return; }
+  if (e.target.classList?.contains('overlay')) { closeOverlayEl(e.target); return; }
+  if (e.target.closest?.('[data-setup-open]')) { setupWizardOpen(); return; }
+  const a = e.target.closest('[data-attr]');
+  if (a) {
+    attrDays = a.dataset.attr === 'all' ? 'all' : Number(a.dataset.attr);
+    document.querySelectorAll('#attrSeg button').forEach(b => b.classList.toggle('on', b === a));
+    renderAttr();
+  }
+  const t = e.target.closest('[data-tc]');
+  if (t) {
+    tcDays = t.dataset.tc === 'all' ? 'all' : Number(t.dataset.tc);
+    document.querySelectorAll('#tcSeg button').forEach(b => b.classList.toggle('on', b === t));
+    renderTc();
+  }
+  // 表头排序：同一个键再点一次 = 反向；换列则按该列默认方向（数值降序、名称升序）
+  const ts = e.target.closest('[data-tc-sort]');
+  if (ts) {
+    const k = ts.dataset.tcSort;
+    tcSort = { key: k, dir: tcSort.key === k ? -tcSort.dir : (k === 'name' ? 1 : -1) };
+    renderTc();
+  }
+  const as = e.target.closest('[data-attr-sort]');
+  if (as) {
+    const k = as.dataset.attrSort;
+    attrSort = { key: k, dir: attrSort.key === k ? -attrSort.dir : (k === 'name' ? 1 : -1) };
+    renderAttr();
+  }
+  const ms = e.target.closest('[data-model-sort]');
+  if (ms) {
+    const k = ms.dataset.modelSort;
+    modelSort = { key: k, dir: modelSort.key === k ? -modelSort.dir : (k === 'name' ? 1 : -1) };
+    renderModels();
+  }
+});
+/* ================= 每日热力图 ================= */
+let heatMetric = 'codex';
+const HEAT_META = {
+  codex: { rgb: [79, 140, 255], fmt: v => `${Math.round(v * 10) / 10}%`, label: 'Codex 当日 5h 用量峰值', fixedMax: 100 },
+  deepseek: { rgb: [245, 166, 35], fmt: v => `¥${Number(v).toFixed(2)}`, label: 'DeepSeek 当日消耗', fixedMax: null },
+  glm: { rgb: [255, 92, 92], fmt: v => `¥${Number(v).toFixed(2)}`, label: 'GLM 当日消耗', fixedMax: null },
+};
+
+function heatValue(day, metric) {
+  const d = day?.[metric];
+  if (!d) return null;
+  return metric === 'codex' ? (d.max5h ?? null) : (d.spend ?? null);
+}
+
+function renderHeat() {
+  const daily = D.daily ?? {};
+  const keys = Object.keys(daily).sort();
+  const wrap = $('heat');
+  if (!keys.length) {
+    wrap.innerHTML = '<div class="muted" style="padding:6px">暂无按日聚合数据（下次维护后生成）</div>';
+    $('heatFoot').innerHTML = ''; $('heatSummary').textContent = ''; $('heatNote').textContent = '';
+    return;
+  }
+  const meta = HEAT_META[heatMetric];
+  const vals = keys.map(k => heatValue(daily[k], heatMetric)).filter(v => v != null && v > 0);
+  const vmax = meta.fixedMax ?? Math.max(...vals, 0.01);
+
+  // 网格：从首日所在周（周一）到本周；不足 MIN_WEEKS 周时向左补齐，
+  // 让热力图从一开始就是"一张网格"的样子（左侧补的日期会标为「尚未开始记录」，与"关机/离线"区分）
+  const MIN_WEEKS = 8;
+  const [y0, m0, d0] = keys[0].split('-').map(Number);
+  const firstDataKey = keys[0];
+  const cur = new Date(Date.UTC(y0, m0 - 1, d0));
+  cur.setUTCDate(cur.getUTCDate() - ((cur.getUTCDay() + 6) % 7));
+  const todayKey = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+  const cols = [];
+  while (cur.toISOString().slice(0, 10) <= todayKey) {
+    const col = [];
+    for (let i = 0; i < 7; i++) { col.push(cur.toISOString().slice(0, 10)); cur.setUTCDate(cur.getUTCDate() + 1); }
+    cols.push(col);
+  }
+  while (cols.length < MIN_WEEKS) {
+    const first = new Date(Date.parse(cols[0][0] + 'T00:00:00Z'));
+    const col = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(first);
+      d.setUTCDate(d.getUTCDate() - (i + 1));
+      col.push(d.toISOString().slice(0, 10));
+    }
+    cols.unshift(col);
+  }
+
+  let html = '';
+  let n = 0, sum = 0, peak = 0, peakDay = null;
+  const colMonths = [];   // 每列归属的月份（用于顶部月份标签）
+  for (const col of cols) {
+    html += '<div class="hcol">';
+    // 该列的月份以「这一列的周四」为准（跨月的周不会被拆开）
+    const thu = col[3];
+    colMonths.push(Number(thu.slice(5, 7)));
+    for (const k of col) {
+      if (k > todayKey) { html += '<div class="hcell" style="visibility:hidden"></div>'; continue; } // 未来日期：占位但不显示
+      const v = heatValue(daily[k], heatMetric);
+      const isToday = k === todayKey ? ' today' : '';
+      if (v == null) {
+        const why = k < firstDataKey ? '尚未开始记录' : '无采集（关机/离线）';
+        html += `<div class="hcell empty${isToday}" data-k="${k}" data-v="${why}"></div>`;
+        continue;
+      }
+      const lvl = v <= 0 ? 0 : Math.min(5, Math.ceil(v / vmax * 5));
+      const alpha = [0.08, 0.22, 0.4, 0.6, 0.8, 1][lvl];
+      html += `<div class="hcell${isToday}" data-k="${k}" data-v="${esc(meta.fmt(v))}" style="background:rgba(${meta.rgb.join(',')},${alpha})"></div>`;
+      n++; sum += v;
+      if (v > peak) { peak = v; peakDay = k; }
+    }
+    html += '</div>';
+  }
+  wrap.innerHTML = html;
+
+  // 坐标：左侧星期（与行严格同高同距）+ 顶部月份（宽度按列数折算，与列对齐）
+  $('heatDays').innerHTML = ['一', '二', '三', '四', '五', '六', '日'].map(d => `<span>${d}</span>`).join('');
+  const COL_PITCH = 17;  // 14px 格子 + 3px 间隔
+  let monthsHtml = '', i = 0;
+  while (i < colMonths.length) {
+    let j = i;
+    while (j < colMonths.length && colMonths[j] === colMonths[i]) j += 1;
+    const w = (j - i) * COL_PITCH - 3;
+    // 不足一格宽度时也要能放下标签，否则标签会被挤掉
+    monthsHtml += `<span style="width:${Math.max(w, 26)}px">${colMonths[i]} 月</span>`;
+    i = j;
+  }
+  $('heatMonths').innerHTML = monthsHtml;
+
+  const spanDays = Math.round((Date.parse(todayKey) - Date.parse(keys[0])) / 86400000) + 1;
+  $('heatNote').textContent = `${keys[0]} ~ ${todayKey} · 共 ${spanDays} 天（有数据 ${n} 天）`
+    + (spanDays < 28 ? ' · 数据积累中，格子会随时间自动扩展' : '');
+  $('heatSummary').textContent = n
+    ? `${meta.label}：峰值 ${meta.fmt(peak)}（${peakDay}）· 日均 ${meta.fmt(sum / n)}`
+    : `${meta.label}：暂无数据`;
+
+  const steps = [0.08, 0.22, 0.4, 0.6, 0.8, 1].map(a => `<i style="background:rgba(${meta.rgb.join(',')},${a})"></i>`).join('');
+  $('heatFoot').innerHTML = `<span>少</span><span class="scale">${steps}</span><span>多</span>` +
+    `<span class="muted">· 空心格 = 无数据（未开始记录 / 关机离线）· 深色边框 = 今天 · 悬停查看当天数值</span>`;
+}
+
+// 热力图悬停提示
+(function bindHeatTip() {
+  const wrap = $('heatWrap'), tip = $('heatTip');
+  if (!wrap) return;
+  wrap.addEventListener('mouseover', e => {
+    const c = e.target.closest('.hcell');
+    if (!c) { tip.classList.remove('on'); return; }
+    tip.innerHTML = `<div class="tt">${esc(c.dataset.k)} ${'日一二三四五六'[new Date(c.dataset.k + 'T00:00:00Z').getUTCDay()]}</div><div class="row2"><span>${HEAT_META[heatMetric].label}</span><b style="margin-left:auto">${esc(c.dataset.v)}</b></div>`;
+    tip.classList.add('on');
+    const wrapRect = wrap.getBoundingClientRect(), r = c.getBoundingClientRect();
+    const left = Math.min(r.left - wrapRect.left, Math.max(0, wrap.clientWidth - tip.offsetWidth - 4));
+    tip.style.left = Math.max(0, left) + 'px';
+    tip.style.top = Math.max(0, r.top - wrapRect.top - tip.offsetHeight - 6) + 'px';
+  });
+  wrap.addEventListener('mouseleave', () => tip.classList.remove('on'));
+})();
+
+$('heatSeg').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  heatMetric = b.dataset.heat;
+  document.querySelectorAll('#heatSeg button').forEach(x => x.classList.toggle('on', x === b));
+  renderHeat();
+});
+
+function renderCharts() {
+  const H = D.history ?? {};
+  const pick = k => ((H[k] ?? {})[win] ?? []);
+  // 压缩点格式：[ts, 值] 或 [ts, 已用5h, 已用7d]
+  const c = pick('codex'), ds = pick('deepseek'), glm = pick('glm');
+  const th = D.thresholds ?? {};
+  const markers = (D.recentAlerts ?? []).map(a => ({ ts: a.ts, level: a.level }));
+  // Codex 一律以「剩余额度」作图：剩余 = 100 − 已用
+  const remain = (arr, idx) => arr.filter(p => p[idx] != null).map(p => ({ ts: p[0], v: Math.max(0, 100 - Number(p[idx])) })).filter(p => Number.isFinite(p.v));
+  const bal = (arr, idx) => arr.filter(p => p[idx] != null).map(p => ({ ts: p[0], v: Number(p[idx]) })).filter(p => Number.isFinite(p.v));
+  const warnRemain = 100 - (th.codex5hWarn ?? 80);
+
+  drawChart('wrap-codex', {
+    series: [
+      { name: '5h 剩余', color: '#4f8cff', points: remain(c, 1) },
+      { name: '7 天剩余', color: '#3ecf8e', points: remain(c, 2) },
+    ],
+    thresholds: [{ v: warnRemain, label: `告警：剩余 ${warnRemain}%`, color: getVar('--warn') }],
+    markers,
+    minSpan: 25, // 至少 25 个百分点跨度，避免小数值被视觉放大
+    yMax: 100,
+    gapMs: gapMsFor('codex'),
+    selectable: true, // 支持拖拽框选统计区间用量
+    yFmt: (v, span) => v.toFixed(span < 2 ? 1 : 0) + '%',
+    vFmt: v => v.toFixed(0) + '%',
+  });
+  $('cap-codex').textContent = `${c.length} 个采样点 · ${WIN_LABEL[win] ?? win}`;
+
+  drawChart('wrap-ds', {
+    series: [{ name: 'DeepSeek 余额', color: '#f5a623', fill: true, points: bal(ds, 1) }],
+    gapMs: gapMsFor('balance'),
+    selectable: true,
+    changeMarks: changeMarksFor(ds, 1),
+    yFmt: (v, span) => '¥' + v.toFixed(span < 5 ? 2 : 0), vFmt: v => '¥' + v.toFixed(2),
+  });
+  if (ds.length) $('cap-ds').textContent = `¥${fmtMoney(ds[0][1])} → ¥${fmtMoney(ds.at(-1)[1])}`;
+  renderChanges('changes-ds', ds, 1);
+
+  drawChart('wrap-glm', {
+    series: [{ name: 'GLM 余额', color: '#ff5c5c', fill: true, points: bal(glm, 1) }],
+    gapMs: gapMsFor('balance'),
+    selectable: true,
+    changeMarks: changeMarksFor(glm, 1),
+    yFmt: (v, span) => '¥' + v.toFixed(span < 5 ? 2 : 0), vFmt: v => '¥' + v.toFixed(2),
+  });
+  if (glm.length) $('cap-glm').textContent = `¥${fmtMoney(glm[0][1])} → ¥${fmtMoney(glm.at(-1)[1])}`;
+  renderChanges('changes-glm', glm, 1);
+}
+
+/* ================= 表格 ================= */
+function renderPacks() {
+  const tb = document.querySelector('#packs-table tbody');
+  const packs = D.glm?.packs ?? [];
+  tb.innerHTML = packs.length ? packs.map(p => {
+    const st = p.daysLeft <= 0 ? '<span class="pill bad">已过期</span>'
+      : p.daysLeft <= 7 ? `<span class="pill warn">${p.daysLeft} 天后到期</span>`
+        : `<span class="pill ok">有效 ${p.daysLeft} 天</span>`;
+    return `<tr><td>¥${fmtMoney(p.amount)}</td><td>${esc(p.paidAt ?? '—')}</td><td>${esc(p.expiryTime ?? '—')}</td><td>${st}</td></tr>`;
+  }).join('') : '<tr><td colspan="4" class="muted">暂无充值记录</td></tr>';
+}
+
+function renderAlerts() {
+  const tb = document.querySelector('#alerts-table tbody');
+  const list = D.recentAlerts ?? [];
+  tb.innerHTML = list.length ? list.map(a =>
+    `<tr><td><span class="lv ${esc(a.level)}">${esc(a.level)}</span></td><td class="mono">${fmtTime(a.ts)}</td><td><b>${esc(a.title)}</b>${a.body ? ' — ' + esc(a.body) : ''}</td></tr>`
+  ).join('') : '<tr><td colspan="3" class="muted">暂无提醒记录</td></tr>';
+  const cnt = $('alertCount');
+  if (cnt) cnt.textContent = list.length ? `最多 40 条 · 当前 ${list.length} 条` : '最多 40 条';
+}
+
+/* ================= 交互 ================= */
+function syncWinButtons() {
+  document.querySelectorAll('#winSeg button').forEach(b => b.classList.toggle('on', b.dataset.win === win));
+}
+$('winSeg').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  win = b.dataset.win;
+  syncWinButtons();
+  renderCharts();
+});
+$('refreshBtn').addEventListener('click', () => refreshData(true));
+$('pauseBtn').addEventListener('click', () => {
+  paused = !paused;
+  $('pauseBtn').textContent = paused ? '继续' : '暂停';
+  $('pauseBtn').classList.toggle('primary', paused);
+});
+$('themeBtn').addEventListener('click', () => {
+  // 三态循环：自动 →（换成反色）→ 再换 → 回到自动；每点一次画面都变化
+  if (manualTheme === null) manualTheme = resolveTheme() === 'dark' ? 'light' : 'dark';
+  else if (manualTheme === 'dark') manualTheme = 'light';
+  else manualTheme = null;
+  try {
+    if (manualTheme) localStorage.setItem('quota-theme', manualTheme);
+    else localStorage.removeItem('quota-theme');
+  } catch { /* 存储不可用时仅本次会话有效 */ }
+  applyTheme();
+});
+$('exportBtn').addEventListener('click', () => {
+  const H = D.history ?? {};
+  const map = new Map();
+  const put = (k, fn) => { for (const p of ((H[k] ?? {})[win] ?? [])) { const r = map.get(p[0]) ?? { ts: p[0] }; fn(r, p); map.set(p[0], r); } };
+  put('codex', (r, p) => { r.r5 = p[1] != null ? (100 - Number(p[1])).toFixed(0) : ''; r.r7 = p[2] != null ? (100 - Number(p[2])).toFixed(0) : ''; });
+  put('deepseek', (r, p) => { r.ds = p[1] ?? ''; });
+  put('glm', (r, p) => { r.glm = p[1] ?? ''; });
+  const rows = [...map.values()].sort((a, b) => a.ts - b.ts);
+  if (!rows.length) { alert('当前时间窗没有数据'); return; }
+  // 采样间隔：便于事后识别「数据停滞（关机/离线）」时段
+  const head = 'time,codex_5h_remaining_pct,codex_7d_remaining_pct,deepseek_balance_cny,glm_balance_cny,gap_minutes';
+  const body = rows.map((r, i) => {
+    const gap = i ? ((r.ts - rows[i - 1].ts) / 60000).toFixed(1) : '';
+    return [fmtTime(r.ts), r.r5 ?? '', r.r7 ?? '', r.ds ?? '', r.glm ?? '', gap].join(',');
+  }).join('\n');
+  const blob = new Blob(['\ufeff' + head + '\n' + body], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `quota-${win}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+});
+window.addEventListener('resize', () => { if (D.history) renderCharts(); });
+
+// 初始化热力图指标开关
+document.querySelectorAll('#heatSeg button').forEach(b => b.classList.toggle('on', b.dataset.heat === heatMetric));
+// 初始化额度去向时间范围开关
+document.querySelectorAll('#attrSeg button').forEach(b => b.classList.toggle('on', b.dataset.attr === String(attrDays)));
+// 初始化 ThinCoder 范围开关
+document.querySelectorAll('#tcSeg button').forEach(b => b.classList.toggle('on', b.dataset.tc === String(tcDays)));
+
+// 工具按钮
+$('cfgPanelBtn').addEventListener('click', () => toggleConfig());
+$('cfgBtn').addEventListener('click', () => { buildConfigEditor(); $('cfgOverlay').classList.add('on'); });
+$('cfgSave').addEventListener('click', saveConfigEdits);
+$('backupBtn').addEventListener('click', runBackup);
+$('helpBtn').addEventListener('click', () => $('helpOverlay').classList.toggle('on'));
+
+// 首帧即应用已保存的主题（避免先闪一下默认主题）
+applyTheme();
+
+// 静态区（图表标题等）中的平台标识占位填充
+document.querySelectorAll('[data-mark]').forEach(el => { el.innerHTML = MARK[el.dataset.mark] ?? ''; });
+
+refreshData();
+</script>
+</body>
+</html>
