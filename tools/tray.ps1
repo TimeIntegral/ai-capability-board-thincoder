@@ -13,6 +13,11 @@ $dataDir = Join-Path $root 'data'
 $stateFile = Join-Path $dataDir 'state.json'
 $icoFile = Join-Path $root 'icon.ico'
 $dash = Join-Path $root 'dashboard.html'
+$nodeExe = Join-Path $root 'runtime\node.exe'
+if (-not (Test-Path -LiteralPath $nodeExe)) { $nodeExe = 'node' }
+$updateFile = Join-Path $dataDir 'update-status.json'
+$noticeFile = Join-Path $dataDir 'update-notified.json'
+$lastUpdateCheck = [DateTime]::MinValue
 
 function Get-Config {
   try {
@@ -46,17 +51,18 @@ function Get-Status {
 
 function Wait-Task {
   try {
-    Get-ScheduledTask -TaskName 'AI-Capability-Board-Collect' -ErrorAction SilentlyContinue | Start-ScheduledTask -ErrorAction SilentlyContinue
+    $task = Get-ScheduledTask -TaskName 'AI-Capability-Board-Collect' -ErrorAction Stop
+    $task | Start-ScheduledTask -ErrorAction Stop
     return
   } catch { }
-  Start-Process -FilePath 'node' -ArgumentList 'collect.mjs' -WorkingDirectory $root -WindowStyle Hidden
+  Start-Process -FilePath $nodeExe -ArgumentList 'collect.mjs' -WorkingDirectory $root -WindowStyle Hidden
 }
 
 function Invoke-Node {
   param([string]$Script, [string]$Args = '')
   $argList = @($Script)
   if ($Args) { $argList += $Args.Split(' ') }
-  Start-Process -FilePath 'node' -ArgumentList $argList -WorkingDirectory $root -WindowStyle Hidden
+  Start-Process -FilePath $nodeExe -ArgumentList $argList -WorkingDirectory $root -WindowStyle Hidden
 }
 
 # ---- 托盘图标 ----
@@ -69,6 +75,9 @@ $miOpen = $menu.Items.Add('打开看板（双击图标）')
 $miOpen.add_Click({ Start-Process $dash })
 $miCollect = $menu.Items.Add('立即采集一次')
 $miCollect.add_Click({ Wait-Task })
+$null = $menu.Items.Add('-')
+$miUpdate = $menu.Items.Add('检查更新与反馈')
+$miUpdate.add_Click({ Invoke-Node 'tools/update.mjs' 'check'; Start-Process (([Uri]$dash).AbsoluteUri + '#support') })
 $null = $menu.Items.Add('-')
 $miMute2 = $menu.Items.Add('静音 2 小时')
 $miMute2.add_Click({ Invoke-Node 'mute.mjs' '120m' })
@@ -91,6 +100,27 @@ function Update-Tray {
   # NotifyIcon.Text 上限 63 字符
   if ($text.Length -gt 62) { $text = $text.Substring(0, 62) }
   $notify.Text = $text
+  if (([DateTime]::Now - $script:lastUpdateCheck).TotalHours -ge 1) {
+    $script:lastUpdateCheck = [DateTime]::Now
+    Invoke-Node 'tools/update.mjs' 'auto'
+  }
+  try {
+    if (Test-Path -LiteralPath (Join-Path $dataDir 'upgrade-transaction.json')) {
+      $notify.Visible = $false
+      [System.Windows.Forms.Application]::Exit()
+      return
+    }
+    $u = Get-Content -LiteralPath $updateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($u.available -and $u.notifications -ne $false -and $u.snoozeUntil -lt [DateTimeOffset]::Now.ToUnixTimeMilliseconds()) {
+      $seen = if (Test-Path -LiteralPath $noticeFile) { Get-Content -LiteralPath $noticeFile -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+      if ($seen.version -ne $u.manifest.version) {
+        $notify.BalloonTipTitle = '看板有新版本 v' + $u.manifest.version
+        $notify.BalloonTipText = '打开看板，在帮助与反馈中查看更新。配置与历史会保留。'
+        $notify.ShowBalloonTip(6000)
+        @{version=$u.manifest.version} | ConvertTo-Json | Set-Content -LiteralPath $noticeFile -Encoding UTF8
+      }
+    }
+  } catch { }
 }
 
 $menu.add_Opening({ Update-Tray })

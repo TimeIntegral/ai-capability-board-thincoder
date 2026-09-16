@@ -551,6 +551,9 @@ function parseArgs(argv) {
 function main() {
   const opt = parseArgs(process.argv.slice(2));
   if (opt.help) { usage(); return 0; }
+  if (!opt.dry && execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8', windowsHide: true }).trim()) {
+    die('工作区还有未提交改动：先保存提交，再运行 node release/prepare.mjs。预审仍可使用 --dry。');
+  }
   if (opt.version !== null && !/^\d+\.\d+\.\d+$/.test(opt.version)) {
     die(`--version 需要一个 x.y.z 形式的版本号，收到的是「${opt.version || '(空)'}」`);
   }

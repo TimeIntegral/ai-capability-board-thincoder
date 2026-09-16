@@ -8,7 +8,8 @@
 // 机制：把 dashboard.html 复制到 data/__test-dashboard__/run-<id>/，在主页本前注入测试引导脚本
 // （插桩 / 桩 showDirectoryPicker / 短超时 / 驱动点击），用 --headless=new --virtual-time-budget --dump-dom 回读结果节点。
 // 纪律：不得依赖 IndexedDB（无头 file:// 下 indexedDB.open 的回调不返回）；
-//       测试夹具里的「密钥」一律是带连字符的哨兵串，不长成真密钥的形状（发布闸门会扫本文件）。
+//       测试夹具里的「密钥」一律是带连字符的哨兵串，不长成真密钥的形状（发布闸门会扫本文件）——
+//       哨兵值固定放在桩的 secrets.json 里：向导必须既不读也不写它（T6 / T11）。
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -89,7 +90,7 @@ const BOOT = String.raw`
   function fileHandle(node, name) {
     return {
       name: name, kind: 'file',
-      getFile: function () { return Promise.resolve({ text: function () { return Promise.resolve(node.files[name].text); } }); },
+      getFile: function () { out.ops.push({ op: 'read', file: node.path + name }); return Promise.resolve({ text: function () { return Promise.resolve(node.files[name].text); } }); },
       createWritable: function () {
         var key = node.path + name;
         var n = (writeTries[key] = (writeTries[key] || 0) + 1);
@@ -128,12 +129,16 @@ const BOOT = String.raw`
   else window.showDirectoryPicker = function () { out.counts.sdp++; return Promise.resolve(dirHandle(root)); };
   // ---- 「系统侧」模拟：协议触发时写状态文件 / 更新看板数据 ----
   var payloads = (C.collectPayloads || []).slice();
+  // status / installStatus 传数组 = 每次探测依次取一份（最后一份反复用）：用于「重新检查后状态变了」的用例
+  var statusSeq = Array.isArray(C.status) ? C.status.slice() : null;
+  var installSeq = Array.isArray(C.installStatus) ? C.installStatus.slice() : null;
+  function nextOf(seq, one) { return seq ? (seq.length > 1 ? seq.shift() : seq[0]) : one; }
   function writeStatus(tpl) { var o = {}; for (var k in tpl) o[k] = tpl[k]; o.checkedAtMs = Date.now(); put('data/setup-status.json', JSON.stringify(o)); out.ops.push({ op: 'status', task: !!o.autoRun && !!o.autoRun.taskRegistered }); }
   function onProtocol(url) {
     var act = String(url).split('://')[1] || '';
     act = act.split('?')[0].replace(/\/+$/, '');
-    if (act === 'setupcheck' && C.status) writeStatus(C.status);
-    else if (act === 'setupinstall' && C.installStatus) writeStatus(C.installStatus);
+    if (act === 'setupcheck' && (C.status || statusSeq)) writeStatus(nextOf(statusSeq, C.status));
+    else if (act === 'setupinstall' && (C.installStatus || installSeq)) writeStatus(nextOf(installSeq, C.installStatus));
     else if (act === 'collect' && payloads.length) put('dashboard-data.js', 'window.DASHBOARD_DATA = ' + JSON.stringify(payloads.shift()) + ';\n');
   }
   // ---- 驱动辅助 ----
@@ -197,7 +202,7 @@ function runCase(c, asBaseline = false) {
   const dir = path.join(TMP, 'run-' + (asBaseline ? 'base-' : '') + c.id);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
-  const html = fs.readFileSync(asBaseline ? BASELINE : PAGE, 'utf8');
+  const html = fs.readFileSync(PAGE, 'utf8').replace(/\r\n/g, '\n');
   const marker = '<script>\nconst $ = id =>';
   if (!html.includes(marker)) throw new Error('注入锚点丢失：主页本开头不是预期文本');
   fs.writeFileSync(path.join(dir, 'dashboard.html'), html.replace(marker, bootstrap(c) + marker));
@@ -256,7 +261,7 @@ function colOk(at = 900001) { return { collectedAtMs: at, codex: { ok: true }, d
 // 打开向导：无数据页走 #setupStartBtn；有数据时走「配置」面板里的入口（两条真实路径）
 const OPEN_WIZARD = `
   if (!t.has('#setupStartBtn')) { t.click('#cfgPanelBtn'); await t.untilSel('[data-setup-open]'); }
-  t.click(t.has('#setupStartBtn') ? '#setupStartBtn' : '[data-setup-open]');
+  t.click(t.has('#setupStartBtn') ? '#setupStartBtn' : '[data-setup-open]'); t.click('#legacyConnections');
   await t.untilSel('#setupPick');
 `;
 const TO_STEP2 = OPEN_WIZARD + `
@@ -280,13 +285,17 @@ function pageCfg(c) {
 }
 
 const CASES = [
+  { id: 'T38', desc: '本机连接入口无需浏览器文件权限',
+    page: { sdp: 'none', driver: `t.click('#setupStartBtn'); t.snapshot({ panel: t.has('#connectionPanel.on'), picker: t.has('#setupPick'), input: t.count('#connectionPanel input') }); t.click('#openConnections'); await t.wait(50); t.snapshot({ urls: t.ops('iframe').map(o => o.url) });` },
+    check: r => [['连接面板可见', r.res.snap.panel], ['不要求目录权限、不接收密钥', !r.res.snap.picker && r.res.snap.input === 0], ['只发送固定连接动作', r.res.snap.urls.length === 1 && r.res.snap.urls[0] === 'aiquotaboard://connect']]
+  },
   {
     id: 'T1', desc: '无数据开屏主入口',
     page: { sdp: 'ok', driver: `
       t.snapshot({ noData: t.has('#noData'), startBtn: t.has('#setupStartBtn'), fallbackMarked: t.count('#noData [data-fallback]') });
       var bad = [].filter.call(document.querySelectorAll('#noData a, #noData button'), function (el) { return el.id !== 'setupStartBtn' && !el.closest('[data-fallback]'); });
       t.snapshot({ unmarked: bad.length });
-      t.click('#setupStartBtn');
+      t.click('#setupStartBtn'); t.click('#legacyConnections');
       await t.untilSel('#setupOverlay.on');
       t.snapshot({ overlayDisplay: getComputedStyle(document.querySelector('#setupOverlay')).display });
     ` },
@@ -298,7 +307,7 @@ const CASES = [
   },
   {
     id: 'T2', desc: '能力检测通过 → 选文件夹步',
-    page: { sdp: 'ok', driver: `t.click('#setupStartBtn'); await t.untilSel('#setupPick'); t.snapshot({ pick: t.has('#setupPick'), fallback: t.has('#setupFallback'), sdp: t.ops().length });` },
+    page: { sdp: 'ok', driver: `t.click('#setupStartBtn'); t.click('#legacyConnections'); await t.untilSel('#setupPick'); t.snapshot({ pick: t.has('#setupPick'), fallback: t.has('#setupFallback'), sdp: t.ops().length });` },
     check: r => [
       ['进入选文件夹步（#setupPick）', r.res.snap.pick],
       ['未误报能力不足面板', r.res.snap.fallback === false],
@@ -308,7 +317,7 @@ const CASES = [
   {
     id: 'T3A', desc: '能力检测不通过（无 showDirectoryPicker）',
     page: { sdp: 'none', driver: `
-      t.click('#setupStartBtn');
+      t.click('#setupStartBtn'); t.click('#legacyConnections');
       await t.untilSel('#setupFallback');
       t.click('#setupFallbackNotepad'); t.click('#setupFallbackConsole');
       await t.wait(50);
@@ -323,7 +332,7 @@ const CASES = [
   {
     id: 'T3B', desc: '能力检测不通过（选中句柄不可写）',
     page: { sdp: 'nowrite', files: FS_OK, driver: `
-      t.click('#setupStartBtn'); await t.untilSel('#setupPick'); t.click('#setupPick');
+      t.click('#setupStartBtn'); t.click('#legacyConnections'); await t.untilSel('#setupPick'); t.click('#setupPick');
       await t.untilSel('#setupFallback');
       t.click('#setupFallbackNotepad'); t.click('#setupFallbackConsole'); await t.wait(50);
       t.snapshot({ fb: t.has('#setupFallback'), writes: t.unwritten() });
@@ -337,7 +346,7 @@ const CASES = [
   {
     id: 'T4', desc: '目录校验通过 → 进入检测步',
     page: { sdp: 'ok', status: STATUS_OK, files: FS_OK, driver: `
-      t.click('#setupStartBtn'); await t.untilSel('#setupPick'); t.click('#setupPick');
+      t.click('#setupStartBtn'); t.click('#legacyConnections'); await t.untilSel('#setupPick'); t.click('#setupPick');
       await t.untilSel('#setupProbe');
       t.snapshot({ probe: t.has('#setupProbe'), msg0bad: (t.attr('#setupMsg0', 'class') || '').indexOf('bad') >= 0 });
     ` },
@@ -349,7 +358,7 @@ const CASES = [
   {
     id: 'T5', desc: '选错文件夹 → 拒绝且零写入',
     page: { sdp: 'ok', files: [['dashboard.html', '<html></html>']], driver: `
-      t.click('#setupStartBtn'); await t.untilSel('#setupPick'); t.click('#setupPick');
+      t.click('#setupStartBtn'); t.click('#legacyConnections'); await t.untilSel('#setupPick'); t.click('#setupPick');
       await t.untilSel('#setupMsg0.bad');
       t.snapshot({ rejected: t.attr('#setupMsg0', 'class'), writes: t.unwritten() });
     ` },
@@ -359,139 +368,140 @@ const CASES = [
     ],
   },
   {
-    id: 'T6', desc: '合并写密钥（旧密钥与未知字段保留）',
+    id: 'T6', desc: '保存只写 config.json：密钥文件一字未动',
     page: {
       sdp: 'ok', status: PLAT_STATUS,
       files: [...FS_OK, ['config.json', '{"thresholds":{"glmLow":7},"theme":"dark"}'], ['secrets.json', '{"deepseek":"OLD-DS-KEY-1","custom":"keep-me"}']],
-      driver: TO_STEP3 + `
-      t.set('#setupKey-glm', 'SENTINEL-GLM-2');
-      t.click('#setupNext3'); await t.untilSel('#setupSave');
+      driver: TO_STEP4 + `
       t.click('#setupSave');
       await t.untilSel('#setupNext4');
-      t.snapshot({ sec: t.read('secrets.json'), cfg: t.read('config.json'), rows: t.opCount('writeOk', 'secrets.json') });
+      t.snapshot({ sec: t.read('secrets.json'), secWrites: t.opCount('writeStart', 'secrets.json'), secReads: t.opCount('read', 'secrets.json'), cfg: t.read('config.json') });
     ` },
     check: r => {
-      const sec = JSON.parse(r.res.snap.sec || '{}'), cfg = JSON.parse(r.res.snap.cfg || '{}');
+      const cfg = JSON.parse(r.res.snap.cfg || '{}');
       return [
-        ['两家密钥都在（合并）', sec.deepseek === 'OLD-DS-KEY-1' && sec.glm === 'SENTINEL-GLM-2', JSON.stringify(sec)],
-        ['未知字段保留', sec.custom === 'keep-me'],
+        ['密钥文件内容一字未动（旧密钥与未知字段都在）', r.res.snap.sec === '{"deepseek":"OLD-DS-KEY-1","custom":"keep-me"}', String(r.res.snap.sec).slice(0, 60)],
+        ['密钥文件零写入、零读取（向导不碰它）', r.res.snap.secWrites === 0 && r.res.snap.secReads === 0, 'w=' + r.res.snap.secWrites + ' r=' + r.res.snap.secReads],
         ['config 其它字段未被动', cfg.thresholds && cfg.thresholds.glmLow === 7 && cfg.theme === 'dark'],
         ['platforms 按选择写入', cfg.platforms && cfg.platforms.codex === true && cfg.platforms.glm === true],
       ];
     },
   },
   {
-    id: 'T7', desc: '空输入 = 跳过该平台',
+    id: 'T7', desc: '第 4 步：没找到密钥 → 引导装 ThinCoder（无输入框、给官方地址）',
     page: {
-      sdp: 'ok', status: PLAT_STATUS,
-      files: [...FS_OK, ['secrets.json', '{}']],
+      sdp: 'ok', status: [MISS_STATUS, PLAT_STATUS], files: FS_OK,
       driver: TO_STEP3 + `
-      t.set('#setupKey-glm', 'SENTINEL-GLM-3');
-      t.click('#setupNext3'); await t.untilSel('#setupSave'); t.click('#setupSave'); await t.untilSel('#setupNext4');
-      t.snapshot({ sec: t.read('secrets.json') });
+      t.snapshot({ pw: t.pw().length, keyInputs: t.count('[id^=setupKey-]'), guide: t.count('[data-guide=thincoder]'),
+                   href: t.attr('#setupTcLink', 'href'), privacy: t.has('#setupPrivacy') });
+      t.click('#setupRecheck3');
+      await t.untilSel('[data-plat=deepseek][data-key=found]');
+      t.snapshot({ after: [t.attr('[data-plat=deepseek]', 'data-key'), t.attr('[data-plat=glm]', 'data-key')], guide2: t.count('[data-guide=thincoder]') });
     ` },
-    check: r => {
-      const sec = JSON.parse(r.res.snap.sec || '{}');
-      return [
-        ['只写填了的那一家', sec.glm === 'SENTINEL-GLM-3'],
-        ['没填的那家不新增键', !('deepseek' in sec), JSON.stringify(sec)],
-      ];
-    },
+    check: r => [
+      ['第 4 步没有任何密钥输入框', r.res.snap.pw === 0 && r.res.snap.keyInputs === 0, 'pw=' + r.res.snap.pw + ' key=' + r.res.snap.keyInputs],
+      ['没找到密钥时出现 ThinCoder 引导入口', r.res.snap.guide >= 1 && r.res.snap.href === 'https://thincoder.com/install.html', r.res.snap.guide + '/' + r.res.snap.href],
+      ['本步含「不会上传到任何地方」的安全承诺行', r.res.snap.privacy === true],
+      ['「重新检查」按新状态重渲染（DeepSeek 变 found / GLM 仍 missing）', JSON.stringify(r.res.snap.after) === '["found","missing"]', JSON.stringify(r.res.snap.after)],
+      ['仍有缺密钥的平台 → 引导还在', r.res.snap.guide2 >= 1, String(r.res.snap.guide2)],
+    ],
   },
   {
-    id: 'T8', desc: '显式覆盖（重新填写）',
+    id: 'T8', desc: '已有密钥：不引导装 ThinCoder（老用户不被烦）',
     page: {
       sdp: 'ok', status: STATUS_OK,
-      files: [...FS_OK, ['secrets.json', '{"deepseek":"OLD-DS-KEY-1"}']],
+      files: [...FS_OK, ['secrets.json', '{"deepseek":"OLD-DS-KEY-1","glm":"OLD-GLM-KEY"}']],
       driver: TO_STEP3 + `
-      t.click('#setupRe-deepseek');
-      await t.untilSel('#setupKey-deepseek');
-      t.set('#setupKey-deepseek', 'SENTINEL-DS-NEW');
-      t.click('#setupNext3'); await t.untilSel('#setupSave'); t.click('#setupSave'); await t.untilSel('#setupNext4');
-      t.snapshot({ sec: t.read('secrets.json') });
+      t.snapshot({ keys: [t.attr('[data-plat=deepseek]', 'data-key'), t.attr('[data-plat=glm]', 'data-key')],
+                   src: t.q('[data-plat=deepseek] .st').textContent,
+                   guide: t.count('[data-guide=thincoder]'), tcLink: t.has('#setupTcLink'),
+                   writes: t.unwritten(), sec: t.read('secrets.json') });
     ` },
-    check: r => {
-      const sec = JSON.parse(r.res.snap.sec || '{}');
-      return [['同名键以新值优先', sec.deepseek === 'SENTINEL-DS-NEW', JSON.stringify(sec)]];
-    },
+    check: r => [
+      ['两家都标为 found（用的是已有密钥）', JSON.stringify(r.res.snap.keys) === '["found","found"]', JSON.stringify(r.res.snap.keys)],
+      ['行内显示来源标签', /已经有密钥了（来自：/.test(r.res.snap.src || ''), r.res.snap.src],
+      ['不出现 ThinCoder 引导（也不提下载）', r.res.snap.guide === 0 && r.res.snap.tcLink === false, 'guide=' + r.res.snap.guide],
+      ['旧密钥文件保持原样且零写入', r.res.snap.sec === '{"deepseek":"OLD-DS-KEY-1","glm":"OLD-GLM-KEY"}' && r.res.snap.writes === 0, String(r.res.snap.sec).slice(0, 60)],
+    ],
   },
   {
-    id: 'T9', desc: '坏 JSON → 备份并重建',
+    id: 'T9', desc: '坏 JSON → 备份并重建（只备份坏掉的那一个文件）',
     page: {
       sdp: 'ok', status: PLAT_STATUS,
-      files: [...FS_OK, ['secrets.json', '{broken'], ['config.json', '{"theme":"dark"}']],
-      driver: TO_STEP3 + `
-      t.set('#setupKey-glm', 'SENTINEL-GLM-4');
-      t.click('#setupNext3'); await t.untilSel('#setupSave'); t.click('#setupSave');
+      files: [...FS_OK, ['config.json', '{broken'], ['secrets.json', '{"deepseek":"OLD-DS-KEY-1"}']],
+      driver: TO_STEP4 + `
+      t.click('#setupSave');
       await t.untilSel('#setupRebuild');
       t.snapshot({ writesBefore: t.unwritten() });
       t.click('#setupRebuild');
       await t.untilSel('#setupNext4');
-      t.snapshot({ ops: t.ops().map(function (o) { return o.op + ':' + (o.file || ''); }), bak: t.read('data/secrets.json.broken.bak'), sec: t.read('secrets.json') });
+      t.snapshot({ ops: t.ops().map(function (o) { return o.op + ':' + (o.file || ''); }), bak: t.read('data/config.json.broken.bak'), cfg: t.read('config.json'), sec: t.read('secrets.json') });
     ` },
     check: r => {
       const ops = r.res.snap.ops || [];
-      const iBak = ops.indexOf('writeOk:data/secrets.json.broken.bak'), iSec = ops.indexOf('writeOk:secrets.json');
+      const iBak = ops.indexOf('writeOk:data/config.json.broken.bak'), iCfg = ops.indexOf('writeOk:config.json');
+      const cfg = JSON.parse(r.res.snap.cfg || '{}');
       return [
         ['不点按钮前零写入', r.res.snap.writesBefore === 0],
-        ['先写备份、再写干净版', iBak >= 0 && iSec > iBak, JSON.stringify(ops)],
+        ['先写备份、再写干净版', iBak >= 0 && iCfg > iBak, JSON.stringify(ops.slice(0, 10))],
         ['备份内容 = 原坏文件', r.res.snap.bak === '{broken'],
-        ['干净版含新密钥', JSON.parse(r.res.snap.sec || '{}').glm === 'SENTINEL-GLM-4'],
+        ['干净版按选择写入平台开关', cfg.platforms && cfg.platforms.codex === true && cfg.platforms.glm === true, JSON.stringify(cfg)],
+        ['密钥文件不进备份面、也不被碰', !ops.some(o => /secrets/.test(o)) && r.res.snap.sec === '{"deepseek":"OLD-DS-KEY-1"}', JSON.stringify(ops.filter(o => /secrets/.test(o)))],
       ];
     },
   },
   {
-    id: 'T10', desc: '写失败 → 回滚原内容',
+    id: 'T10', desc: '写失败 → 回滚原内容（config.json）',
     page: {
       sdp: 'ok', status: PLAT_STATUS,
-      files: [...FS_OK, ['secrets.json', '{"deepseek":"OLD-DS-KEY-1"}']],
-      failWrite: { 'secrets.json': 1 },
-      driver: TO_STEP3 + `
-      t.set('#setupKey-glm', 'SENTINEL-GLM-5');
-      t.click('#setupNext3'); await t.untilSel('#setupSave'); t.click('#setupSave');
+      files: [...FS_OK, ['config.json', '{"thresholds":{"glmLow":7}}']],
+      failWrite: { 'config.json': 1 },
+      driver: TO_STEP4 + `
+      t.click('#setupSave');
       await t.untilSel('#setupMsg4[data-rollback]');
       await t.wait(50);
-      t.snapshot({ rb: t.attr('#setupMsg4', 'data-rollback'), tries: t.opCount('writeStart', 'secrets.json'), sec: t.read('secrets.json'), retry: t.has('#setupRetry4') });
+      t.snapshot({ rb: t.attr('#setupMsg4', 'data-rollback'), tries: t.opCount('writeStart', 'config.json'), cfg: t.read('config.json'), retry: t.has('#setupRetry4') });
     ` },
     check: r => [
       ['失败后尝试回滚（等于第二次写）', r.res.snap.tries === 2, 'tries=' + r.res.snap.tries],
       ['UI 标记回滚成功', r.res.snap.rb === 'ok', r.res.snap.rb],
-      ['原内容已写回', r.res.snap.sec === '{"deepseek":"OLD-DS-KEY-1"}', String(r.res.snap.sec).slice(0, 60)],
+      ['原内容已写回', r.res.snap.cfg === '{"thresholds":{"glmLow":7}}', String(r.res.snap.cfg).slice(0, 60)],
       ['给出重试出口', r.res.snap.retry === true],
     ],
   },
   {
-    id: 'T11', desc: '密钥不外泄（桩内：存储 / iframe / console / DOM）',
+    id: 'T11', desc: '密钥不外泄（桩内：密钥文件不被读、不被写；存储 / iframe / console / DOM 无密钥串）',
     page: {
-      sdp: 'ok', status: MISS_STATUS,
-      files: [...FS_OK, ['secrets.json', '{}']],
+      sdp: 'ok', status: PLAT_STATUS,
+      files: [...FS_OK, ['secrets.json', '{"deepseek":"SENTINEL-DS-LEAK","glm":"SENTINEL-GLM-LEAK"}'], ['config.json', '{"theme":"dark"}']],
       redact: true,
-      status_collect: true,
-      driver: TO_STEP3 + `
-      t.set('#setupKey-glm', 'SENTINEL-GLM-LEAK');
-      t.set('#setupKey-deepseek', 'SENTINEL-DS-LEAK');
-      t.click('#setupNext3'); await t.untilSel('#setupSave'); t.click('#setupSave'); await t.untilSel('#setupNext4');
-      t.snapshot({ inputsAfterSave: t.pw().join('|'), secretLen: (t.ops('writeOk')[0] || {}).len || 0 });
+      driver: TO_STEP4 + `
+      t.snapshot({ pw: t.pw().length });
+      t.click('#setupSave'); await t.untilSel('#setupNext4');
       t.click('#setupNext4'); await t.untilSel('#setupCollect');
       t.click('#setupCollect');
       await t.untilSel('#setupNext5');
-      t.snapshot({ urls: t.ops('iframe').map(function (o) { return o.url; }) });
+      t.snapshot({ urls: t.ops('iframe').map(function (o) { return o.url; }),
+                   secReads: t.opCount('read', 'secrets.json'), secWrites: t.opCount('writeStart', 'secrets.json'),
+                   cfg: t.read('config.json') || '' });
     `,
       collectPayloads: [colOk()],
     },
     check: r => {
       const dom = r.dump.replace(/<script[\s\S]*?<\/script>/g, '');
-      const dumpHas = dom.includes('SENTINEL-GLM-LEAK') || dom.includes('SENTINEL-DS-LEAK');
-      const urlsLeak = (r.res.snap.urls || []).some(u => /SENTINEL/.test(u));
-      const consoleLeak = (r.res.console || []).some(l => /SENTINEL/.test(l));
-      const wrote = (r.res.snap.secretLen || 0) > 0;
+      const sentinel = /SENTINEL-(DS|GLM)-LEAK/;
+      const domLeak = sentinel.test(dom);
+      const urlsLeak = (r.res.snap.urls || []).some(u => sentinel.test(u));
+      const consoleLeak = (r.res.console || []).some(l => sentinel.test(l));
       return [
-        ['保存确实发生（哨兵写入过桩文件）', wrote],
-        ['保存后输入框全空', (r.res.snap.inputsAfterSave || '') === '', r.res.snap.inputsAfterSave],
+        ['保存确实发生（config.json 已写入平台开关）', /"platforms"/.test(r.res.snap.cfg), String(r.res.snap.cfg).slice(0, 60)],
+        ['向导全程未读取密钥文件', r.res.snap.secReads === 0, 'reads=' + r.res.snap.secReads],
+        ['向导全程未写入密钥文件', r.res.snap.secWrites === 0, 'writes=' + r.res.snap.secWrites],
+        ['页面里没有任何密钥输入框', r.res.snap.pw === 0, 'pw=' + r.res.snap.pw],
         ['存储 API 无写入', (r.res.counts || {}).storeSet === 0, 'storeSet=' + (r.res.counts || {}).storeSet],
-        ['iframe src 不含密钥', !urlsLeak],
-        ['console 不含密钥', !consoleLeak],
-        ['DOM 不含密钥', !dumpHas],
+        ['iframe src 不含密钥串', !urlsLeak],
+        ['console 不含密钥串', !consoleLeak],
+        ['DOM 不含密钥串', !domLeak],
       ];
     },
   },
@@ -538,14 +548,15 @@ const CASES = [
       });
       t.click('#setupNext2');
       await t.untilSel('#setupNext3');
-      t.snapshot({ keyGlm: t.has('#setupKey-glm'), keyDs: t.has('#setupKey-deepseek'), codexPw: t.count('[data-plat=codex] input[type=password]') });
+      t.snapshot({ pw: t.pw().length, keyInputs: t.count('[id^=setupKey-]'), guide: t.count('[data-guide=thincoder]'), guideText: (document.querySelector('[data-guide=thincoder]') || {}).textContent || '', codexInputs: t.count('[data-plat=codex] input') });
     ` },
     check: r => [
       ['Codex: missing + 勾选', JSON.stringify(r.res.snap.codex) === '["missing",true]', JSON.stringify(r.res.snap.codex)],
       ['DeepSeek: ready + 来源标签 + 勾选', JSON.stringify(r.res.snap.ds) === '["ready","secrets.json",true]', JSON.stringify(r.res.snap.ds)],
       ['GLM: missing + 勾选', JSON.stringify(r.res.snap.glm) === '["missing",true]', JSON.stringify(r.res.snap.glm)],
-      ['步骤 3 只对 GLM 出输入框', r.res.snap.keyGlm === true && r.res.snap.keyDs === false],
-      ['Codex 行无密码输入框', r.res.snap.codexPw === 0],
+      ['步骤 4 无任何密钥输入框', r.res.snap.pw === 0 && r.res.snap.keyInputs === 0, 'pw=' + r.res.snap.pw + ' key=' + r.res.snap.keyInputs],
+      ['缺密钥的 GLM 触发 ThinCoder 引导且点名 GLM', r.res.snap.guide === 1 && /GLM/.test(r.res.snap.guideText), r.res.snap.guide + '/' + String(r.res.snap.guideText).slice(0, 40)],
+      ['Codex 行无输入控件', r.res.snap.codexInputs === 0],
     ],
   },
   {
@@ -555,7 +566,7 @@ const CASES = [
       timeouts: { probeMs: 400, pollMs: 50, collectMs: 500, installWaitMs: 50 },
       collectPayloads: [colOk()],
       driver: `
-      t.click('#setupStartBtn'); await t.untilSel('#setupPick'); t.click('#setupPick');
+      t.click('#setupStartBtn'); t.click('#legacyConnections'); await t.untilSel('#setupPick'); t.click('#setupPick');
       await t.untilSel('#setupRecheck');
       t.snapshot({ guide: t.count('[data-guide=vbs]'), skip: t.has('#setupSkip') });
       t.click('#setupSkip');
@@ -631,9 +642,8 @@ const CASES = [
       dataJs: 'window.DASHBOARD_DATA = {"collectedAtMs":1};\n',
       collectPayloads: [colOk(900002)],
       timeouts: { collectMs: 8000, pollMs: 50 },
-      driver: TO_STEP3 + `
-      t.set('#setupKey-glm', 'SENTINEL-GLM-6');
-      t.click('#setupNext3'); await t.untilSel('#setupSave'); t.click('#setupSave'); await t.untilSel('#setupNext4');
+      driver: TO_STEP4 + `
+      t.click('#setupSave'); await t.untilSel('#setupNext4');
       t.click('#setupNext4'); await t.untilSel('#setupCollect'); t.click('#setupCollect'); await t.untilSel('#setupNext5');
       t.click('#setupNext5'); await t.untilSel('#setupNext6'); t.click('#setupNext6'); await t.untilSel('#setupDone');
     ` },
@@ -644,7 +654,7 @@ const CASES = [
     page: {
       sdp: 'ok', status: { ...PLAT_STATUS, config: { parse: 'broken' } }, files: FS_OK,
       driver: `
-      t.click('#setupStartBtn'); await t.untilSel('#setupPick'); t.click('#setupPick');
+      t.click('#setupStartBtn'); t.click('#legacyConnections'); await t.untilSel('#setupPick'); t.click('#setupPick');
       await t.untilSel('#setupNext1:not([disabled])');
       t.snapshot({ broken: t.has('#setupCfgBroken'), next: t.has('#setupNext1') });
     ` },
@@ -657,11 +667,10 @@ const CASES = [
     id: 'T29', desc: '写失败且回滚也失败 → 明确告知可能读不出来',
     page: {
       sdp: 'ok', status: PLAT_STATUS,
-      files: [...FS_OK, ['secrets.json', '{"deepseek":"OLD-DS-KEY-1"}']],
-      failWrite: { 'secrets.json': 'always' },
-      driver: TO_STEP3 + `
-      t.set('#setupKey-glm', 'SENTINEL-GLM-7');
-      t.click('#setupNext3'); await t.untilSel('#setupSave'); t.click('#setupSave');
+      files: [...FS_OK, ['config.json', '{"theme":"dark"}']],
+      failWrite: { 'config.json': 'always' },
+      driver: TO_STEP4 + `
+      t.click('#setupSave');
       await t.untilSel('#setupMsg4[data-rollback=failed]');
       t.snapshot({ rb: t.attr('#setupMsg4', 'data-rollback'), retry: t.has('#setupRetry4') });
     ` },
@@ -702,12 +711,12 @@ const CASES = [
       await t.untilSel('#setupStartBtn', 8000);
       var t0 = performance.now();
       document.querySelector('#setupStartBtn').click();
-      var disp = getComputedStyle(document.querySelector('#setupOverlay')).display;
+      var disp = getComputedStyle(document.querySelector('#connectionPanel')).display;
       var dt = performance.now() - t0;
-      t.snapshot({ disp: disp, ms: dt, pick: !!document.querySelector('#setupPick') });
+      t.snapshot({ disp: disp, ms: dt, pick: !!document.querySelector('#openConnections') });
     ` },
     check: r => [
-      ['点击后 #setupOverlay 同步可见', r.res.snap.disp === 'flex', String(r.res.snap.disp)],
+      ['点击后连接面板同步可见', r.res.snap.disp === 'flex', String(r.res.snap.disp)],
       ['同步段 < 200ms', r.res.snap.ms < 200, Number(r.res.snap.ms).toFixed(1) + 'ms'],
       ['同一同步段里已渲染首屏内容', r.res.snap.pick === true],
     ],
@@ -715,7 +724,7 @@ const CASES = [
   {
     id: 'T33', desc: '用户取消文件夹选择',
     page: { sdp: 'abort', files: FS_OK, driver: `
-      t.click('#setupStartBtn'); await t.untilSel('#setupPick'); t.click('#setupPick');
+      t.click('#setupStartBtn'); t.click('#legacyConnections'); await t.untilSel('#setupPick'); t.click('#setupPick');
       await t.untilSel('#setupMsg0');
       await t.wait(30);
       t.snapshot({ cls: t.attr('#setupMsg0', 'class'), repick: t.has('#setupPick'), writes: t.unwritten() });
@@ -729,7 +738,7 @@ const CASES = [
   {
     id: 'T34', desc: '目录名与本页不同 → 软警告，可继续',
     page: { sdp: 'ok', dirName: 'some-other-folder', files: FS_OK, status: STATUS_OK, driver: `
-      t.click('#setupStartBtn'); await t.untilSel('#setupPick'); t.click('#setupPick');
+      t.click('#setupStartBtn'); t.click('#legacyConnections'); await t.untilSel('#setupPick'); t.click('#setupPick');
       await t.untilSel('#setupGo');
       t.snapshot({ go: t.has('#setupGo'), re: t.has('#setupRe') });
       t.click('#setupGo');
@@ -785,20 +794,25 @@ const CASES = [
       t.snapshot({ noAsk: [t.has('#setupKey-deepseek'), t.has('#setupRe-deepseek'), t.has('#setupKey-glm')] });
       t.esc();
       await t.until(function () { return !document.querySelector('#setupOverlay.on'); }, 3000, 'overlay closed');
-      t.click('#setupStartBtn');
+      t.click('#setupStartBtn'); t.click('#legacyConnections');
       await t.untilSel('#setupNext3');
       t.snapshot({ again: [t.has('#setupKey-deepseek'), t.has('#setupRe-deepseek'), t.has('#setupKey-glm')], writes2: t.unwritten() });
     ` },
     check: r => [
       ['第一次打开显示既有状态', r.res.snap.firstReady === 'ready', r.res.snap.firstReady],
-      ['已找到的不重复问（无输入框，可显式重填）', JSON.stringify(r.res.snap.noAsk) === '[false,true,true]', JSON.stringify(r.res.snap.noAsk)],
-      ['第二次打开仍是既有现状（不倒退、不重复问）', JSON.stringify(r.res.snap.again) === '[false,true,true]', JSON.stringify(r.res.snap.again)],
+      ['已找到的不重复问（无输入框、无重填入口）', JSON.stringify(r.res.snap.noAsk) === '[false,false,false]', JSON.stringify(r.res.snap.noAsk)],
+      ['第二次打开仍是既有现状（不倒退、不重复问）', JSON.stringify(r.res.snap.again) === '[false,false,false]', JSON.stringify(r.res.snap.again)],
       ['两次打开零写入', r.res.snap.writes1 === 0 && r.res.snap.writes2 === 0],
     ],
   },
 ];
 
-// ---------- T32：首屏无影响（与开工前快照对比） ----------
+// ---------- T32：首屏无影响（与本文件写死的期望清单对比） ----------
+// 为什么不用「开工前快照文件」：快照放在 data/__test-dashboard__/（不进仓库），
+// 新克隆的机器上没有 → T32 整组（5 条断言）静默跳过 → 报“全过”是假绿（隔离副本尤其如此）。
+// 改成写死期望清单：① 永远会跑；② 谁改了首屏，这里就红，必须显式改这份清单（意图可见）。
+// 更新方法：跑 node tools/test-dashboard.mjs，失败信息会列出「多出/少了」，核对后改这里。
+const T32_EXPECTED_IDS = ['alertCount','alerts-table','attrBars','attrHint','attrNote','attrSeg','backupBtn','bg1','cap-codex','cap-ds','cap-glm','cards','cfgBtn','cfgGrid','cfgOverlay','cfgPanel','cfgPanelBtn','cfgSave','changes-ds','changes-glm','chartHint','dashboard-data-script','exportBtn','fresh','healthHint','healthList','heat','heatDays','heatFoot','heatMonths','heatNote','heatSeg','heatSummary','heatTip','heatWrap','helpBtn','helpOverlay','hint-codex','intervalNote','modelBars','modelHint','modelNote','modelSummary','mute','packs-table','pauseBtn','refreshBtn','ring','ringTxt','setupBar','stats-codex','stats-ds','stats-glm','strip','supportBtn','tcBars','tcHint','tcNote','tcSeg','tcSummary','themeBtn','toolNote','updated','usageStyle','winSeg','wrap-codex','wrap-ds','wrap-glm'];
 const T32_FIXTURE = JSON.stringify({
   generatedAtMs: 1, collectedAtMs: 900000, collectedAtText: '2026-09-15 00:00',
   health: null, mute: { active: false }, suppression: {}, config: { refreshSeconds: 0, defaultWindow: 'h24', theme: 'auto', staleMinutes: 15 },
@@ -811,19 +825,14 @@ const T32_FIXTURE = JSON.stringify({
   links: {}, predict: {}, anomaly: {}, attribution: null, recentAlerts: [], daily: {}, history: {},
 });
 function runT32(browser) {
-  if (!fs.existsSync(BASELINE)) {
-    console.log('  （未找到开工前快照 data/__test-dashboard__/baseline-dashboard.html，T32 跳过——该快照是本机产物、不随仓库走）');
-    return;
-  }
-  const base = { id: 'T32', page: { sdp: 'ok', files: FS_OK, driver: 'void 0;' }, dataJs: `window.DASHBOARD_DATA = ${T32_FIXTURE};\n`, browser };
-  const a = runCase({ ...base }, true);     // 对照 = 开工前快照
-  const b = runCase(base, false);           // 改造后
-  const idsA = idsOf(a.res), idsB = idsOf(b.res);
-  const onlyNew = [...idsB].filter(x => !idsA.has(x)), onlyBase = [...idsA].filter(x => !idsB.has(x));
-  check('T32', '首屏元素 id 集合一致', onlyNew.length === 0 && onlyBase.length === 0, `仅新版:${onlyNew.join(',')} | 仅旧版:${onlyBase.join(',')}`);
-  const lc = b.res.loadCounts, la = a.res.loadCounts;
+  const b = runCase({ id: 'T32', page: { sdp: 'ok', files: FS_OK, driver: 'void 0;' }, dataJs: `window.DASHBOARD_DATA = ${T32_FIXTURE};\n`, browser }, false);
+  const ids = idsOf(b.res);
+  const onlyNew = [...ids].filter(x => !T32_EXPECTED_IDS.includes(x));
+  const onlyGone = T32_EXPECTED_IDS.filter(x => !ids.has(x));
+  check('T32', '首屏元素 id 集合与期望清单一致', onlyNew.length === 0 && onlyGone.length === 0, `多出:${onlyNew.join(',')} | 少了:${onlyGone.join(',')}`);
+  const lc = b.res.loadCounts;
   check('T32', '加载期 IndexedDB / iframe / 选择器调用为 0', lc.idb === 0 && lc.iframe === 0 && lc.sdp === 0, JSON.stringify(lc));
-  check('T32', '加载期存储访问与快照一致', lc.storeGet === la.storeGet && lc.storeSet === la.storeSet, `新=${JSON.stringify(lc)} 旧=${JSON.stringify(la)}`);
+  check('T32', '加载期不写任何存储（读取只用于主题）', lc.storeSet === 0 && lc.storeGet <= 4, `storeGet=${lc.storeGet} storeSet=${lc.storeSet}`);
   check('T32', '向导 DOM 懒创建（#setupOverlay / #setupFallback 不在 DOM）', !b.res.present.overlay && !b.res.present.fallback, JSON.stringify(b.res.present));
   check('T32', '加载期无 JS 错误', b.res.errors.length === 0, JSON.stringify(b.res.errors.slice(0, 3)));
 }
@@ -846,7 +855,7 @@ for (const c of CASES) {
   for (const [name, cond, detail] of c.check(out)) check(c.id, name, cond, detail);
 }
 if (!ONLY) {
-  console.log(`\n=== T32 首屏无影响（与开工前快照对比） ===`);
+  console.log(`\n=== T32 首屏无影响（与期望清单对比） ===`);
   runT32(browser);
 }
 console.log(`\n=== 结果：${pass} 通过 / ${fail} 失败 ===`);

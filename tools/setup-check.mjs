@@ -34,7 +34,7 @@ function detectKey(name, cfg) {
   } catch (e) {
     if (e?.code === 'NO_KEY') {
       const broken = /解析失败/.test(String(e?.message ?? ''));
-      return { found: false, note: broken ? '密钥文件坏了、读不出来（向导里可以重新填）' : '没找到密钥' };
+      return { found: false, note: broken ? '密钥文件坏了、读不出来（按向导第 4 步的提示处理）' : '没找到密钥' };
     }
     return { found: false, note: `密钥读取出错：${maskSecrets(e?.message ?? e)}`.slice(0, 120) };
   }

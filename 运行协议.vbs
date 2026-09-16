@@ -60,7 +60,18 @@ For Each kv In Split(params, "&")
   End If
 Next
 
-If action = "suppress" Then
+If Left(action, 7) = "update-" Then
+  ' Fixed action allowlist; never accept a URL or executable path from the browser.
+  v = Mid(action, 8)
+  Select Case v
+    Case "check", "install", "later", "auto-on", "auto-off", "notify-on", "notify-off"
+      sh.CurrentDirectory = dir
+      sh.Run Chr(34) & nodeExe & Chr(34) & " " & Chr(34) & dir & "\tools\update.mjs" & Chr(34) & " " & v, 0, False
+    Case Else
+      WScript.Quit
+  End Select
+  WScript.Quit
+ElseIf action = "suppress" Then
   cmdline = "cmd /c " & nodeExe & " """ & dir & "\balance-mute.mjs"" suppress " & platform & " >> """ & dir & "\data\protocol.log"" 2>&1"
 ElseIf action = "resume" Then
   cmdline = "cmd /c " & nodeExe & " """ & dir & "\balance-mute.mjs"" off " & platform & " >> """ & dir & "\data\protocol.log"" 2>&1"
@@ -79,6 +90,10 @@ ElseIf action = "openfile" Then
   ' The node side only accepts fixed names, never a path -- no arbitrary-file-open surface.
   If nameval = "" Then WScript.Quit
   cmdline = "cmd /c " & nodeExe & " """ & dir & "\tools\open-config-file.mjs"" " & nameval & " >> """ & dir & "\data\protocol.log"" 2>&1"
+ElseIf action = "connect" Then
+  sh.CurrentDirectory = dir
+  sh.Run Chr(34) & nodeExe & Chr(34) & " " & Chr(34) & dir & "\tools\connections.mjs" & Chr(34), 0, False
+  WScript.Quit
 ElseIf action = "setup" Then
   ' launch the first-run setup wizard in a VISIBLE window -- it is interactive,
   ' so unlike every other action this one must not run hidden.

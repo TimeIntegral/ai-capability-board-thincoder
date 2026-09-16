@@ -6,6 +6,7 @@ config.json
 
 # ---- 生成物（含真实用量数据；每个用户本地生成）----
 dashboard-data.js
+update-data.js
 
 # ---- 工具与系统 ----
 node_modules/
@@ -23,3 +24,13 @@ dist/
 *.zip
 runtime/
 release/audit-rules.local.json
+
+# ---- 散落的私人素材（截图、联系方式图片等；误放进仓库根目录也不外传）----
+# 2026-09-16：发现「个人微信联系方式.png」零引用地躺在根目录且会被提交，先兜住这一类。
+# 若确实要公开某张图片，请移入 assets/ 并在此行之前用 !assets/xxx.png 显式放行。
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.webp
+/*.pdf

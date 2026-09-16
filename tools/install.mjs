@@ -15,17 +15,26 @@ const NODE = process.execPath;
 // 项目于 2026-09-13 从「额度看板」更名为「能力看板」，任务名与快捷方式随之更新；
 // 旧名会在安装时被清理，避免两个任务同时跑。
 const TASK_NAME = 'AI-Capability-Board-Collect';
+if (fs.existsSync(path.join(ROOT, '.git'))) {
+  console.error('开发目录不注册后台任务。请使用独立安装版。');
+  process.exit(1);
+}
 const LEGACY_TASK_NAMES = ['AI-Quota-Board-Collect'];
 const SHORTCUT_NAME = 'AI 能力看板';
 const LEGACY_SHORTCUT_NAMES = ['AI 额度看板'];
+if (!fs.existsSync(path.join(ROOT, 'config.json'))) {
+  fs.writeFileSync(path.join(ROOT, 'config.json'), JSON.stringify({ platforms: { codex: false, deepseek: false, glm: false } }, null, 2));
+}
 const cfg = loadConfig();
 const codexIv = Number(cfg.intervals?.codexMinutes) || 5;
 const balanceIv = Number(cfg.intervals?.balanceMinutes) || 5;
 const minutes = Math.max(1, Math.min(codexIv, balanceIv));
 
 function ps(script, timeout = 60000) {
+  const env = { ...process.env }; delete env.PSModulePath;
+  script = script.replaceAll(ROOT, ROOT.replace(/'/g, "''"));
   const b64 = Buffer.from(`$ProgressPreference='SilentlyContinue'\n${script}`, 'utf16le').toString('base64');
-  return execFileSync('powershell.exe', ['-NoProfile', '-EncodedCommand', b64], { encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'ignore'] });
+  return execFileSync('powershell.exe', ['-NoProfile', '-EncodedCommand', b64], { env, encoding: 'utf8', timeout, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
 }
 
 let failed = 0;
@@ -63,7 +72,7 @@ step('图标已就绪', () => {
 
 // 3) 桌面快捷方式（旧名一并清理，避免桌面留两个图标）
 step('桌面快捷方式已创建', () => {
-  const dash = path.join(ROOT, 'dashboard.html');
+  const dash = path.join(ROOT, 'start.vbs');
   const ico = path.join(ROOT, 'icon.ico');
   const icon = fs.existsSync(ico) ? ico : '%SystemRoot%\\System32\\imageres.dll,106';
   const out = ps(`
@@ -115,7 +124,7 @@ $lnk.Description = '${SHORTCUT_NAME}托盘图标（开机自动启动）'
 $lnk.Save()
 # 立即启动一份（已在运行则先结束旧的，保证用的是最新脚本）
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -like '*tray.ps1*' } |
+  Where-Object { $_.CommandLine -and $_.CommandLine.Contains('"${path.join(ROOT, 'tools', 'tray.ps1')}"') } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Process 'wscript.exe' -ArgumentList '"${vbs}"' -WorkingDirectory '${ROOT}' -WindowStyle Hidden
 Write-Output $startup

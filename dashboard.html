@@ -238,7 +238,6 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   .srow:first-of-type { border-top: 0; }
   .srow .nm { width: 76px; font-weight: 600; flex: 0 0 auto; }
   .srow .st { flex: 1; min-width: 150px; color: var(--muted); font-size: 12px; }
-  .srow input[type=password] { flex: 1; min-width: 140px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
   .msg { font-size: 12.5px; color: var(--muted); line-height: 1.8; margin: 8px 0; }
   .msg.ok { color: var(--ok); }
   .msg.warn { color: var(--warn); }
@@ -456,6 +455,7 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
       <button class="btn" id="cfgBtn">编辑阈值与预警</button>
       <button class="btn" id="backupBtn">一键备份</button>
       <button class="btn" id="helpBtn">快捷键帮助</button>
+      <button class="btn" id="supportBtn">帮助与反馈 · 检查更新</button>
       <span class="muted" id="toolNote" style="font-size:12px"></span>
     </div>
   </div>
@@ -563,10 +563,10 @@ function showNoData() {
     el.className = 'card nodata';
     el.innerHTML = `
       <div class="nd-t">还没有采集数据</div>
-      <div class="nd-s">看板的数据全部来自本机采集，不会联网获取你的账号信息。点「开始配置」，两三分钟就能看到数据。</div>
+      <div class="nd-s">看板在本机保存数据，联网查询已连接平台的额度或余额。点「开始配置」连接你使用的平台。</div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px">
         <button class="btn primary" id="setupStartBtn" data-setup-open>开始配置</button>
-        <span class="muted-note">选平台 → 填密钥 → 试采看结果，全程在这个页面里</span>
+        <span class="muted-note">选平台 → 自动复用账号或补充密钥 → 验证连接</span>
       </div>
       <details class="nd-fb">
         <summary class="nd-s" style="cursor:pointer;margin:0">我更想自己动手（备选方式）</summary>
@@ -688,9 +688,9 @@ function platState(x) {
 // 关闭/未配置时的中性占位块（用于顶部状态条）
 // 提示文案必须分平台：Codex 的凭据来自它的登录文件，不走 secrets.json（曾经三个平台共用一句错误提示）
 const IDLE_HINT = {
-  codex: { need: '先安装并登录 Codex（生成 ~/.codex/auth.json）', off: '在 config.json → platforms 中重新开启' },
-  deepseek: { need: '在 secrets.json 中填写密钥', off: '在 config.json → platforms 中重新开启' },
-  glm: { need: '在 secrets.json 中填写密钥', off: '在 config.json → platforms 中重新开启' },
+  codex: { need: '先安装并登录 Codex（生成 ~/.codex/auth.json）', off: '点击连接平台，重新启用' },
+  deepseek: { need: '点击连接平台，补充密钥', off: '点击连接平台，重新启用' },
+  glm: { need: '点击连接平台，补充密钥', off: '点击连接平台，重新启用' },
 };
 function idleTile(mark, name, x, platform) {
   const isOff = x?.disabled;
@@ -846,15 +846,8 @@ function errCard(name, d, note, mark = '') {
 function idleCard(name, x, mark = '', platform = '') {
   const off = x?.disabled;
   const isCodex = platform === 'codex';
-  // 分平台给解法：Codex 靠登录文件，其余两家靠 secrets.json
-  const how = isCodex
-    ? '安装 Codex 客户端并登录后，它会在用户目录生成 <code>.codex/auth.json</code>，采集会自动读它。若不用 Codex，可在 <code>config.json → platforms</code> 里把 <code>codex</code> 设为 <code>false</code>。'
-    : `在项目根目录建一个 <code>secrets.json</code>，写入 <code>{&quot;${platform}&quot;:&quot;你的密钥&quot;}</code>；不打算用这个平台，就在 <code>config.json → platforms</code> 里把它设为 <code>false</code>。`;
-  return `<div class="card idle">
-    <h2>${mark} ${name} <span class="tag">${off ? '已关闭' : '未配置'}</span></h2>
-    <div class="sub">${off ? '已在 <code>config.json → platforms</code> 中关闭，不再采集、不参与提醒（不影响其他平台）' : '还没有可用的凭据，采集已跳过（不影响其他平台）'}</div>
-    <div class="hint">${off ? `想重新启用：把 <code>config.json → platforms</code> 中对应项改为 <code>true</code>，再跑一次 <code>node collect.mjs --all</code>` : how}</div>
-  </div>`;
+  const how = isCodex ? '先在 Codex 客户端登录，再连接。' : '已有密钥自动复用，没有的话粘贴一次即可。';
+  return `<div class="card idle"><h2>${mark} ${name} <span class="tag">${off ? '未启用' : '未连接'}</span></h2><div class="sub">${how} 不影响其他平台使用。</div><div class="hint"><button class="btn sm" data-setup-open>${off ? '启用平台' : '连接平台'}</button></div></div>`;
 }
 
 /* ================= 图表引擎（含悬停 tooltip） ================= */
@@ -1479,7 +1472,8 @@ function renderChanges(hostElId, rows, idx, unit = '¥') {
 /* ================= 配置入口（平台开关 / 密钥 / 向导） =================
    为什么要有：小白用户根本不知道要改 JSON、也不知道改哪个文件。
    实测新用户痛点：不知道要建 secrets.json、不知道该开哪几个平台、装完不知道成没成。
-   这里把这三件事变成可点的按钮：平台开关走协议写 config.json，密钥走配置向导（不回显输入）。 */
+   这里把这三件事变成可点的按钮：平台开关走协议写 config.json；密钥只管「有没有、从哪来」
+   （ThinCoder 配置 / secrets.json / 环境变量，见 lib/common.mjs 的 resolveApiKey），不由本页填写。 */
 const PLATFORM_META = [
   { id: 'codex', name: 'Codex' },
   { id: 'deepseek', name: 'DeepSeek' },
@@ -1500,7 +1494,7 @@ function platInfo(id) {
 // 凭据来源说人话：让人知道"密钥是从哪儿读到的"
 function keySourceText(id, info) {
   if (info.tone === 'off') return '已关闭，不采集';
-  if (info.tone === 'warn') return id === 'codex' ? '需要先安装并登录 Codex' : '需要填密钥（secrets.json）';
+  if (info.tone === 'warn') return id === 'codex' ? '需要先安装并登录 Codex' : '需要连接平台';
   const s = info.keySource;
   if (!s) return '—';
   if (id === 'codex') return '来自 Codex 登录文件 ~/.codex/auth.json';
@@ -1574,16 +1568,18 @@ function toggleConfig(force) {
 function renderCfg() { renderSetupBar(); renderConfigPanel(); }
 
 /* ================= 配置向导（看板内首次配置） =================
-   目标：不懂技术的用户只在这个页面里完成「选平台 → 填密钥 → 写配置 → 试采 → 让它自动采」。
-   密钥纪律（NFR-1）：密钥只在 password 输入框 → 单个临时对象 → 立即写盘 → 立即清空；
-   绝不进 URL / iframe src / 存储 API / console / 日志。
-   写盘 = 目录句柄（File System Access，只写所选目录）；系统动作 = aiquotaboard:// 协议（隐藏 iframe）。
+   目标：不懂技术的用户只在这个页面里完成「选平台 → 准备密钥 → 写配置 → 试采 → 让它自动采」。
+   密钥纪律（NFR-1，2026-09-17 用户裁定改口径）：向导不接收、不保存、不显示密钥值——密钥只存在于
+   ThinCoder 配置 / secrets.json / 环境变量（由 ThinCoder 或用户自行维护），本页只读「有没有、从哪来」。
+   所以这里没有密钥输入框，也不写、不读 secrets.json；密钥永不进 URL / iframe src / 存储 API / console / 日志。
+   写盘 = 目录句柄（File System Access，只写所选目录的 config.json）；系统动作 = aiquotaboard:// 协议（隐藏 iframe）。
    打开前不创建任何 DOM（首屏零代价）；打开为同步渲染（T31 依赖）。 */
-const SETUP_STEPS = ['选项目文件夹', '检测本机能力', '选要监控的平台', '填密钥', '保存配置', '试采一次', '让它在后台自己采', '完成'];
+const SETUP_STEPS = ['看板在哪儿', '检查哪几家能用', '选要看哪几家', '准备密钥', '保存', '先拉一次数据', '让它自己更新', '完成'];
+const THINCODER_SETUP_URL = 'https://thincoder.com/install.html';   // 密钥统一由 ThinCoder 管（一处存放）：本页只引导，不接触密钥值
 const SETUP_TIMEOUTS = { probeMs: 10000, collectMs: 90000, pollMs: 600, installWaitMs: 3000 };
 const setupWait = ms => new Promise(r => setTimeout(r, ms));
-const setupSrcName = s => (!s ? '—' : s === 'secrets.json' ? '本机密钥文件' : s);
-let setupStep = 0, setupDir = null, setupStatus = null, setupKeys = null, setupSel = null, setupBusy = false, setupProbe = null;
+const setupSrcName = s => (!s ? '—' : s === 'secrets.json' ? '你之前填的' : s);
+let setupStep = 0, setupDir = null, setupStatus = null, setupSel = null, setupBusy = false, setupProbe = null;
 
 function fireProtocol(url) {
   // 隐藏 iframe 触发协议，避免页面跳转（saveConfigEdits / runBackup 共用）
@@ -1595,41 +1591,57 @@ function fireProtocol(url) {
 }
 function hasFsaAccess() { return typeof window.showDirectoryPicker === 'function'; }
 function setupPageDirName() { try { return decodeURIComponent(location.pathname).replace(/\/+$/, '').split('/').pop(); } catch { return ''; } }
+// 本页所在文件夹的完整路径（file:// 下从 location.pathname 还原）——第 1 步直接给用户路径，省得他在弹出框里翻找
+function setupPageDirPath() {
+  try {
+    const p = decodeURIComponent(location.pathname).replace(/^\//, '').replace(/\/[^/]*$/, '');
+    return /^[A-Za-z]:/.test(p) ? p.replace(/\//g, '\\') : p;
+  } catch { return ''; }
+}
 function setupSay(id, cls, html) { const el = $(id); if (el) { el.className = 'msg' + (cls ? ' ' + cls : ''); el.innerHTML = html; } }
 function setupGoStep(n) { setupStep = n; setupStepRender(n); }
 function setupErrText(e, id) {
   const n = String(e?.name ?? '');
-  if (n === 'NotAllowedError' || n === 'SecurityError') return '没有写入权限（文件夹可能被移动了、或者系统权限不足）——重新选一次文件夹试试';
-  if (n === 'NotFoundError') return '文件夹或文件不在了（可能被移动或改了名）——重新选一次文件夹';
+  if (n === 'NotAllowedError' || n === 'SecurityError') return '系统不让程序改这个文件夹（可能它被移动了，或者权限不足）——重新选一次试试';
+  if (n === 'NotFoundError') return '这个文件夹找不到了（可能被移动或改过名）——重新选一次';
   const s = String(e?.message ?? e ?? '原因不明');
   // 原始错误翻成人话（口径同 tools/first-run-check.mjs 的 friendlyError）：用户不该看到状态码这类黑话
-  if (/40[13]|验证不正确|Authentication Fails|令牌已过期/i.test(s)) return id === 'codex' ? '登录状态可能过期了：打开 Codex 客户端登录一次' : '密钥没通过验证（可能粘贴时少了字符，或已经失效）';
-  if (/429/.test(s)) return '请求太频繁了，过几分钟再试';
-  if (/5\d\d/.test(s)) return '对方服务暂时不可用，过一会儿再试';
-  if (/网络|代理|fetch failed|socket hang up|timeout|ECONN|ENOTFOUND/i.test(s)) return id === 'codex' ? '网络没连上（Codex 通常要开着代理）' : '网络没连上';
+  if (/40[13]|验证不正确|Authentication Fails|令牌已过期/i.test(s)) return id === 'codex' ? 'Codex 的登录可能过期了：打开 Codex 客户端重新登录一次' : '密钥没通过（可能配错了，或者已经失效了）';
+  if (/429/.test(s)) return '问得太频繁了，过几分钟再试';
+  if (/5\d\d/.test(s)) return '对方服务器暂时没响应，过一会儿再试';
+  if (/网络|代理|fetch failed|socket hang up|timeout|ECONN|ENOTFOUND/i.test(s)) return id === 'codex' ? '网络连不上（Codex 一般要开着代理工具）' : '网络连不上';
   return s.slice(0, 120);
 }
 
 function setupWizardOpen() {
+  let panel = $('connectionPanel');
+  if (!panel) {
+    panel = document.createElement('div'); panel.id = 'connectionPanel'; panel.className = 'overlay';
+    panel.innerHTML = '<div class="modal"><h3>连接平台</h3><p>在本机窗口中选择平台，已有账号自动复用；缺少的密钥只需填写一次。</p><p>Codex 显示订阅额度；DeepSeek 和 GLM 显示 API 余额，不代表聊天订阅或 Coding Plan 额度。</p><p class="muted-note">连接后自动开始采集。若窗口没有出现，请通过安装版的桌面入口打开看板，或双击「连接平台」。</p><div class="actions"><button class="btn primary" id="openConnections">打开连接窗口</button><button class="btn" data-close="connectionPanel">返回看板</button><button class="btn" id="legacyConnections">高级：旧版配置</button></div></div>';
+    document.body.appendChild(panel);
+    $('openConnections').onclick = () => fireProtocol('aiquotaboard://connect');
+    $('legacyConnections').onclick = () => { panel.classList.remove('on'); setupLegacyWizardOpen(); };
+  }
+  panel.classList.add('on');
+}
+function setupLegacyWizardOpen() {
   let ov = $('setupOverlay');
   if (!ov) {
     ov = document.createElement('div');
     ov.id = 'setupOverlay';
     ov.className = 'overlay';
     ov.innerHTML = '<div class="modal wz"><div style="display:flex;align-items:center;gap:10px">'
-      + '<h3 style="flex:1">配置向导</h3><button class="btn sm" data-close="setupOverlay">关闭</button></div>'
+      + '<h3 style="flex:1">设置向导</h3><button class="btn sm" data-close="setupOverlay">关闭</button></div>'
       + '<div class="muted-note" id="setupStepNote" style="margin:6px 0 10px"></div><div id="setupBody"></div></div>';
     document.body.appendChild(ov);
   }
   ov.classList.add('on');
   if (!hasFsaAccess()) { setupFallbackPanel(); return; }
-  if (!setupKeys) setupKeys = {};          // 密钥临时对象：关闭向导即释放
   setupStepRender(setupStep);
   setupRestoreHandle();                     // 尽力而为（open-1）：取不到就等用户重选，流程不依赖
 }
 
 function setupWizardClose() {
-  setupKeys = null;                         // 立即释放密钥临时对象
   const ov = $('setupOverlay');
   if (ov) { ov.classList.remove('on'); ov.querySelectorAll('input').forEach(i => { i.value = ''; }); }
 }
@@ -1639,9 +1651,9 @@ function setupFallbackPanel() {
   if (!b) return;
   $('setupStepNote').textContent = '';
   b.innerHTML = `<div id="setupFallback">
-    <div class="msg">这个浏览器不能在页面里直接写文件（用 Edge 或 Chrome 就没有这个限制）。还有两条路可以走：</div>
-    <div class="srow"><span class="nm">记事本填写</span><span class="st">打开密钥文件，把密钥自己填进去 <button class="btn sm" id="setupFallbackNotepad">打开密钥文件</button></span></div>
-    <div class="srow"><span class="nm">老式向导</span><span class="st">一问一答地完成配置（会打开一个黑色窗口） <button class="btn sm" id="setupFallbackConsole">打开</button></span></div></div>`;
+    <div class="msg">这个浏览器不能在页面里替你存设置（用 Edge 或 Chrome 就没这个限制）。还有两条路：</div>
+    <div class="srow"><span class="nm">自己填</span><span class="st">用记事本打开密钥文件，把密钥粘进去 <button class="btn sm" id="setupFallbackNotepad">打开密钥文件</button></span></div>
+    <div class="srow"><span class="nm">老式方式</span><span class="st">一步一步问着来（会打开一个黑色窗口） <button class="btn sm" id="setupFallbackConsole">打开</button></span></div></div>`;
   $('setupFallbackNotepad').onclick = () => fireProtocol('aiquotaboard://openfile?name=secrets');
   $('setupFallbackConsole').onclick = () => fireProtocol('aiquotaboard://setup');
 }
@@ -1677,16 +1689,23 @@ function setupStepRender(n) {
 }
 
 function setupRender0() {
-  $('setupBody').innerHTML = `<div class="msg">先选一次项目文件夹（就是本页所在的文件夹）。向导只把配置写进这里，别的地方一律不动。</div>
+  const here = setupPageDirPath();
+  $('setupBody').innerHTML = `<div class="msg">先授权一次：让看板能保存设置。<br>点下面的按钮，选中这个文件夹就对了：</div>
+    ${here ? `<div class="msg" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><code id="setupHerePath" style="user-select:all;word-break:break-all">${esc(here)}</code><button class="btn sm" id="setupCopyPath">复制</button><span class="muted" style="font-size:12px">（在弹出框里粘贴这条路径，回车就到）</span></div>` : ''}
     <div class="msg" id="setupMsg0"></div>
-    <div class="actions"><button class="btn primary" id="setupPick">选择项目文件夹</button></div>`;
+    <div class="actions"><button class="btn primary" id="setupPick">选择文件夹</button></div>`;
+  const cp = $('setupCopyPath');
+  if (cp) cp.onclick = async () => {
+    try { await navigator.clipboard.writeText(here); cp.textContent = '已复制 ✓'; setTimeout(() => { cp.textContent = '复制路径'; }, 1500); }
+    catch { const el = $('setupHerePath'); if (el) { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); cp.textContent = '已选中，按 Ctrl+C'; } }
+  };
   $('setupPick').onclick = setupPickFolder;
 }
 async function setupPickFolder() {
   try {
     await setupAfterPick(await window.showDirectoryPicker({ mode: 'readwrite' }));
   } catch (e) {
-    if (e?.name === 'AbortError') setupSay('setupMsg0', '', '还没选文件夹。准备好了再点一次「选择项目文件夹」就行。');
+    if (e?.name === 'AbortError') setupSay('setupMsg0', '', '没关系，随时能重来。准备好了再点一次「选择文件夹」。');
     else setupSay('setupMsg0', 'bad', `没能打开文件夹：${esc(setupErrText(e))}`);
   }
 }
@@ -1694,16 +1713,16 @@ async function setupAfterPick(h) {
   if (!h || setupDir || setupStep !== 0) return;
   let names = [];
   try { for await (const e of h.values()) names.push(e.name); }
-  catch { setupSay('setupMsg0', 'bad', '读不了这个文件夹（可能被移动或改过名）——请重新选择。'); return; }
+  catch { setupSay('setupMsg0', 'bad', '打不开这个文件夹，可能它被移动或改过名了。请重新选一次。'); return; }
   const miss = ['collect.mjs', 'dashboard.html'].filter(n => !names.includes(n));
-  if (miss.length) { setupSay('setupMsg0', 'bad', `这不是本项目目录（里面没有 ${miss.join('、')}）——没有写任何东西，请选本页所在的文件夹。`); return; }
+  if (miss.length) { setupSay('setupMsg0', 'bad', `这里不是看板所在的文件夹（没找到看板文件）。<b>什么都没改</b>，请重新选一次。`); return; }
   // 二段能力检测：目录句柄没有 createWritable，可写性看它给出的文件句柄
   const fh = await h.getFileHandle('dashboard.html').catch(() => null);
   if (typeof fh?.createWritable !== 'function') { setupFallbackPanel(); return; }
   setupDir = h;
   const here = setupPageDirName();
   if (h.name && here && h.name !== here) {
-    setupSay('setupMsg0', 'warn', `这个文件夹叫「${esc(h.name)}」，和本页所在的「${esc(here)}」不一样——确认是同一份看板吗？`
+    setupSay('setupMsg0', 'warn', `这个文件夹叫「${esc(h.name)}」，但你现在看的看板在「${esc(here)}」。确定是同一个吗？`
       + `<span style="display:inline-flex;gap:8px;margin-left:8px"><button class="btn sm" id="setupGo">确认，继续</button><button class="btn sm" id="setupRe">重选</button></span>`);
     $('setupGo').onclick = () => { setupSaveHandle(h); setupGoStep(1); };
     $('setupRe').onclick = setupPickFolder;
@@ -1714,7 +1733,7 @@ async function setupAfterPick(h) {
 }
 
 function setupRender1() {
-  $('setupBody').innerHTML = `<div class="msg" id="setupMsg1">正在检测这台电脑已有的能力…（几秒钟；没反应会给出备选出口）</div>
+  $('setupBody').innerHTML = `<div class="msg" id="setupMsg1">正在检查：Codex 登录了吗、DeepSeek / GLM 的密钥找得到吗？（几秒钟）</div>
     <div id="setupProbe"></div>
     <div class="actions" id="setupAct1"></div>`;
   setupAct1('probing');
@@ -1727,8 +1746,8 @@ function setupAct1(mode) {
     el.innerHTML = '<button class="btn primary" id="setupNext1">下一步</button>';
     $('setupNext1').onclick = () => setupGoStep(2);
   } else if (mode === 'timeout') {
-    el.innerHTML = '<button class="btn" id="setupRecheck">重新检测</button><button class="btn" id="setupSkip">跳过检测，手动选择</button>';
-    $('setupRecheck').onclick = () => { setupSay('setupMsg1', '', '正在重新检测…'); setupAct1('probing'); setupProbeFlow(); };
+    el.innerHTML = '<button class="btn" id="setupRecheck">重新检查</button><button class="btn" id="setupSkip">先跳过，我自己选</button>';
+    $('setupRecheck').onclick = () => { setupSay('setupMsg1', '', '正在重新检查…'); setupAct1('probing'); setupProbeFlow(); };
     $('setupSkip').onclick = () => { setupStatus = null; setupGoStep(2); };
   } else {
     el.innerHTML = '<button class="btn primary" id="setupNext1" disabled>下一步</button>';
@@ -1750,12 +1769,12 @@ async function setupProbeFlow() {
   const st = await setupProbeCore();
   if (!$('setupProbe')) return;             // 用户已经离开这一步
   if (!st) {
-    $('setupProbe').innerHTML = '<div class="msg warn" data-guide="vbs">检测没有回应。先双击项目里的「启用自动采集.vbs」把系统侧装好（没有黑色窗口，装完会弹一个中文提示），再点「重新检测」；也可以直接跳过。</div>';
-    setupSay('setupMsg1', 'warn', '系统侧还没启用——这一步可以先跳过，最后一步还会再帮你开。');
+    $('setupProbe').innerHTML = '<div class="msg warn" data-guide="vbs"><b>只差一步</b>：打开看板文件夹，<b>双击「启用自动采集」</b>（不会弹黑窗口）。<br>双击后会弹个提示告诉你成功没有，完了回这里点「重新检查」。</div>';
+    setupSay('setupMsg1', '', '');
     setupAct1('timeout');
     return;
   }
-  setupSay('setupMsg1', '', '检测完成。下面的建议只是参考，随时可以改。');
+  setupSay('setupMsg1', '', '检查完了。下面的建议只是参考，你随时能改。');
   setupRenderProbe();
   setupAct1('ok');
 }
@@ -1782,22 +1801,22 @@ function setupRenderProbe() {
   const row = (id, name) => {
     const d = (id === 'codex' ? st.codex : st[id]) ?? {};
     const txt = id === 'codex'
-      ? (d.found ? '已检测到登录信息' : '还没检测到登录')
-      : (d.found ? `已找到密钥（来源：${esc(setupSrcName(d.source))}）` : '还没有密钥');
+      ? (d.found ? '已经登录了' : '还没登录')
+      : (d.found ? `已经有密钥了（来自：${esc(setupSrcName(d.source))}）` : '还没有密钥');
     return `<div class="srow" data-plat="${id}"><span class="nm">${name}</span><span class="st">${txt}</span></div>`;
   };
   box.innerHTML = row('codex', 'Codex') + row('deepseek', 'DeepSeek') + row('glm', 'GLM')
     + (st.config?.parse === 'broken'
-      ? '<div class="msg bad" id="setupCfgBroken">配置文件读不出来了（内容坏了）——现在按默认设置在跑，你的自定义设置暂时失效，采集还在继续。下一步保存时会先留一份备份、再写一份新的。</div>' : '');
+      ? '<div class="msg bad" id="setupCfgBroken">你的设置文件坏了、读不出来。现在用的是默认设置，你自己改过的那部分暂时没生效——<b>不影响看数据</b>。下一步保存时，会先把坏文件留一份备份，再写一份新的。</div>' : '');
 }
 
 function setupRowState(id) {
-  if (!setupStatus) return { state: 'unknown', on: true, hint: '还没检测过这台电脑——可以点「重新检测」，也可以直接手动选。' };
+  if (!setupStatus) return { state: 'unknown', on: true, hint: '刚才跳过了检查——可以点「重新检查」，也可以自己选。' };
   const on = setupStatus.platforms?.[id] !== false;
   const d = (id === 'codex' ? setupStatus.codex : setupStatus[id]) ?? {};
-  if (!on) return { state: 'off', on: false, hint: '当前是关着的。' };
-  if (d.found) return { state: 'ready', on: true, src: d.source, hint: id === 'codex' ? '已检测到 Codex 登录信息，建议保持开启。' : `已找到密钥（来源：${esc(setupSrcName(d.source))}），建议保持开启。` };
-  return { state: 'missing', on: true, hint: id === 'codex' ? '还没检测到 Codex 登录——建议先安装并登录 Codex 客户端（不影响其他两家）。' : '还没有密钥——下一步可以填，也可以先跳过。' };
+  if (!on) return { state: 'off', on: false, hint: '现在关着。' };
+  if (d.found) return { state: 'ready', on: true, src: d.source, hint: id === 'codex' ? '已经登录了，建议保持开启。' : `已经有密钥了（来自：${esc(setupSrcName(d.source))}），建议保持开启。` };
+  return { state: 'missing', on: true, hint: id === 'codex' ? '还没登录 Codex——建议先装并登录 Codex 客户端（不影响其他两家）。' : '还没有密钥——下一步会告诉你怎么补上（不用在这里填）。' };
 }
 function setupRender2() {
   const rows = PLATFORM_META.map(m => {
@@ -1806,9 +1825,9 @@ function setupRender2() {
       + `<label class="nm"><input type="checkbox" id="setupPlat-${m.id}"${s.on ? ' checked' : ''}> ${m.name}</label>`
       + `<span class="st">${s.hint}</span></div>`;
   }).join('');
-  $('setupBody').innerHTML = `<div class="msg">想监控哪几家就留哪几家——没选的不会被采集、也不会提醒。</div>${rows}
+  $('setupBody').innerHTML = `<div class="msg">想看哪几家就勾哪几家。没勾的不会去拉数据，也不会提醒你。</div>${rows}
     <div class="msg" id="setupMsg2"></div>
-    <div class="actions"><button class="btn" id="setupRecheck2">重新检测</button><button class="btn primary" id="setupNext2">下一步</button></div>`;
+    <div class="actions"><button class="btn" id="setupRecheck2">重新检查</button><button class="btn primary" id="setupNext2">下一步</button></div>`;
   $('setupNext2').onclick = () => { setupSel = setupReadSel(); setupGoStep(3); };
   $('setupRecheck2').onclick = () => setupGoStep(1);   // 手动模式（跳过检测）后也能回去重测（M1 的行内入口）
   $('setupBody').onchange = setupSelWarn;
@@ -1821,43 +1840,49 @@ function setupSelWarn() {
   const anyOn = PLATFORM_META.some(m => $('setupPlat-' + m.id)?.checked);
   msg.className = 'msg' + (anyOn ? '' : ' warn');
   msg.dataset.sel = anyOn ? 'has-on' : 'all-off';
-  msg.innerHTML = anyOn ? '' : '三家都关着 = 采不到任何数据（采集照常运行，但没有东西可采）。把想用的打开，或者继续——之后随时能改。';
+  msg.innerHTML = anyOn ? '' : '三家都没勾 = 什么数据都看不到（程序照常在跑，但没东西可拉）。勾上你想用的，或者点「仍要保存」——以后随时能改。';
   $('setupNext2').textContent = anyOn ? '下一步' : '仍要保存';
 }
 
 function setupRender3() {
   const sel = setupSel ?? {};
+  const missing = [];                        // 勾选内、本机还没找到密钥的平台名
   const rows = PLATFORM_META.filter(m => sel[m.id]).map(m => {
     if (m.id === 'codex') {
       const found = !!setupStatus?.codex?.found;
-      return `<div class="srow" data-plat="codex"><span class="nm">Codex</span><span class="st">${found ? '它用你的登录信息，不用填密钥——已经检测到了。' : '它读的是 Codex 客户端的登录信息，不用在这里填——先安装并登录 Codex 客户端就会自动生效。'}</span></div>`;
+      return `<div class="srow" data-plat="codex"><span class="nm">Codex</span><span class="st">${found ? '它用你电脑上 Codex 的登录信息，不用填——已经找到了。' : '它用 Codex 客户端的登录信息，不用在这里填——装了、登录了就会自动生效。'}</span></div>`;
     }
     const d = setupStatus?.[m.id] ?? {};
-    return d.found
-      ? `<div class="srow" data-plat="${m.id}"><span class="nm">${m.name}</span><span class="st">已找到密钥（来源：${esc(setupSrcName(d.source))}）<button class="btn sm" id="setupRe-${m.id}">重新填写</button></span></div>`
-      : `<div class="srow" data-plat="${m.id}"><span class="nm">${m.name}</span><input type="password" autocomplete="off" id="setupKey-${m.id}" placeholder="把密钥粘贴到这里（保存前不会显示）"></div>`;
-  }).join('') || '<div class="msg">这一步没有要填的密钥，直接下一步。</div>';
-  $('setupBody').innerHTML = `<div class="msg">粘贴后不会显示、也不会进日志；留空 = 这家先不用，之后随时能补。</div>${rows}
+    if (d.found) return `<div class="srow" data-plat="${m.id}" data-key="found"><span class="nm">${m.name}</span><span class="st">已经有密钥了（来自：${esc(setupSrcName(d.source))}）</span></div>`;
+    missing.push(m.name);
+    return `<div class="srow" data-plat="${m.id}" data-key="${setupStatus ? 'missing' : 'unknown'}"><span class="nm">${m.name}</span><span class="st">${setupStatus ? '还没有找到' : '还没检查过这家'}</span></div>`;
+  }).join('') || '<div class="msg">这一步不用填什么，直接下一步就行。</div>';
+  // 密钥不在本页填（NFR-1 改口径）：统一由 ThinCoder 维护，页面只报「有没有、从哪来」
+  const guide = missing.length
+    ? `<div class="msg" data-guide="thincoder">这几家还没有密钥：点「重新检查」确认一下；确实没有的话，装一次 <b>ThinCoder</b>，在里面把 <b>${esc(missing.join('、'))}</b> 配好（只配这一次），回来点「重新检查」。<br>不想装 ThinCoder 也行：关掉向导，用「配置」里的「老式向导」或「编辑密钥文件」。</div>
+      <div class="actions"><a class="btn primary" id="setupTcLink" href="${THINCODER_SETUP_URL}" target="_blank" rel="noopener noreferrer">打开 ThinCoder 下载页</a><button class="btn" id="setupRecheck3">重新检查</button></div>`
+    : '';
+  $('setupBody').innerHTML = `<div class="msg">密钥不在这里填——看板直接用你电脑上已经有的（ThinCoder 配置 / 密钥文件 / 环境变量）。下面只告诉你有几家已经能用。</div>
+    ${rows}${guide}
+    <div class="msg" id="setupMsg3"></div>
+    <div class="msg" id="setupPrivacy">🔒 密钥只存在你自己的电脑上，不会上传到任何地方。</div>
     <div class="actions"><button class="btn primary" id="setupNext3">下一步</button></div>`;
-  for (const m of PLATFORM_META) {
-    const r = $('setupRe-' + m.id);
-    if (r) r.onclick = () => { r.parentElement.innerHTML = `<input type="password" autocomplete="off" id="setupKey-${m.id}" placeholder="粘贴新的密钥（会覆盖原来的）">`; };
-  }
-  $('setupNext3').onclick = () => { setupGrabKeys(); setupGoStep(4); };
+  const rc = $('setupRecheck3');
+  if (rc) rc.onclick = setupRecheck3;
+  $('setupNext3').onclick = () => setupGoStep(4);
 }
-function setupGrabKeys() {
-  setupKeys = setupKeys ?? {};
-  for (const id of ['deepseek', 'glm']) {
-    const el = $('setupKey-' + id);
-    if (!el) continue;
-    const v = el.value.trim();
-    if (v) setupKeys[id] = v;
-    el.value = '';                 // 输入框立刻清空：密钥只留在临时对象里
-  }
+async function setupRecheck3() {
+  const b = $('setupRecheck3');
+  if (b) b.disabled = true;
+  setupSay('setupMsg3', '', '正在重新检查…（几秒钟）');
+  const st = await setupProbeCore();         // 复用探测核心：重新跑一次 setupcheck 并回读状态文件
+  if (!$('setupNext3')) return;              // 用户已经离开这一步
+  setupStepRender(3);                        // 按新状态重渲染本步
+  setupSay('setupMsg3', st ? '' : 'warn', st ? '检查完了。' : '没等到回应——过一会儿再点一次「重新检查」。');
 }
 
 function setupRender4() {
-  $('setupBody').innerHTML = `<div class="msg">点「保存」：平台开关写进 <code>config.json</code>，新密钥写进 <code>secrets.json</code>——这两个文件里已有的其它内容会原样保留。</div>
+  $('setupBody').innerHTML = `<div class="msg">点「保存」就行。你原来有的其它设置原样保留，不会被盖掉。</div>
     <div class="msg" id="setupMsg4"></div>
     <div class="actions" id="setupAct4"><button class="btn primary" id="setupSave">保存</button></div>`;
   $('setupSave').onclick = setupSaveAll;
@@ -1894,15 +1919,12 @@ async function setupWriteJson(name, obj, prevText) {
 async function setupSaveAll() {
   if (setupBusy) return;
   setupBusy = true;
-  setupSay('setupMsg4', '', '正在写入…');
+  setupSay('setupMsg4', '', '正在保存…');
   try {
-    const prev = {}, broken = [];
-    for (const name of ['config.json', 'secrets.json']) {
-      const r = await setupReadJson(name);
-      if (r.broken) broken.push([name, r]); else prev[name] = r;
-    }
-    if (broken.length) setupRebuildUI(broken);      // 不点「备份并重建」= 零写入
-    else await setupWriteAll(prev);
+    // 只写 config.json：密钥文件既不写也不读（密钥由 ThinCoder / secrets.json / 环境变量各自维护）
+    const cfg = await setupReadJson('config.json');
+    if (cfg.broken) setupRebuildUI([['config.json', cfg]]);   // 不点「备份并重建」= 零写入
+    else await setupWriteAll({ 'config.json': cfg });
   } catch (e) { setupSaveError(e); }
   setupBusy = false;
 }
@@ -1913,26 +1935,17 @@ async function setupWriteAll(prev) {
   await setupWriteJson('config.json', next, cfg.text);
   const back = await setupReadJson('config.json');    // 回读核对：说的和存的一致才算数
   const bad = PLATFORM_META.filter(m => (back.data.platforms?.[m.id] !== false) !== !!sel[m.id]);
-  if (bad.length) throw new Error(`平台开关没写进去：${bad.map(m => m.name).join('、')}`);
-  const lines = [`平台开关：${PLATFORM_META.map(m => `${m.name} ${sel[m.id] ? '开' : '关'}`).join(' · ')}`];
-  const keys = setupKeys ?? {};
-  const kn = Object.keys(keys);
-  if (kn.length) {
-    const sec = prev['secrets.json'] ?? await setupReadJson('secrets.json');
-    await setupWriteJson('secrets.json', { ...sec.data, ...keys }, sec.text);
-    const b2 = await setupReadJson('secrets.json');
-    for (const n of kn) if (b2.data[n] !== keys[n]) throw new Error(`${n} 的密钥没存进去`);
-    lines.push(`新密钥已存好：${kn.map(id => (PLATFORM_META.find(m => m.id === id) ?? { name: id }).name).join('、')}（只存在本机，不上传）`);
-    setupKeys = null;                                  // 写盘完成，立即释放
-  } else {
-    lines.push('这次没有新的密钥要写');
-  }
-  setupSay('setupMsg4', 'ok', `✓ ${lines.join('<br>✓ ')}<br>下一次采集（约 1 分钟内）生效。`);
-  $('setupAct4').innerHTML = '<button class="btn primary" id="setupNext4">下一步：试采一次</button>';
+  if (bad.length) throw new Error(`没能保存：${bad.map(m => m.name).join('、')} 没存上`);
+  const lines = [
+    `平台开关：${PLATFORM_META.map(m => `${m.name} ${sel[m.id] ? '开' : '关'}`).join(' · ')}`,
+    '没有改动你的密钥文件（密钥只存在你自己的电脑上，不会上传）',
+  ];
+  setupSay('setupMsg4', 'ok', `✓ ${lines.join('<br>✓ ')}<br>大约 1 分钟后就会生效。`);
+  $('setupAct4').innerHTML = '<button class="btn primary" id="setupNext4">下一步：先拉一次数据</button>';
   $('setupNext4').onclick = () => setupGoStep(5);
 }
 function setupRebuildUI(broken) {
-  $('setupBody').innerHTML = `<div class="msg bad">${broken.map(x => `「${x[0]}」读不出来了（内容坏了）。`).join('')}点下面的按钮：先把原文件留一份备份，再写一份新的干净配置；不点就什么都不写。</div>
+  $('setupBody').innerHTML = `<div class="msg bad">${broken.map(x => `「${x[0]}」坏了、读不出来。`).join('')}点下面的按钮：先把原来的文件留一份备份，再写一份新的；不点就什么都不动。</div>
     <div class="msg" id="setupMsg4"></div>
     <div class="actions" id="setupAct4"><button class="btn primary" id="setupRebuild">备份并重建</button></div>`;
   $('setupRebuild').onclick = async () => {
@@ -1955,16 +1968,16 @@ function setupSaveError(e) {
   const rb = e?.setupRollback ?? 'none';
   msg.className = 'msg bad';
   msg.dataset.rollback = rb;
-  msg.innerHTML = `保存没成功${rb === 'failed' ? '，而且原来的内容也写不回去了——这几个文件可能已经读不出来' : rb === 'ok' ? '（已尝试把原来的内容写回去）' : '（那个文件本来是新建的）'}：${esc(setupErrText(e))}<br>怎么办：点「重试」再存一次；还不行就把项目文件夹换个位置，或改用「老式向导」（配置面板里有入口）。`;
+  msg.innerHTML = `没保存成功${rb === 'failed' ? '，而且原来的内容也没能写回去——这几个文件可能已经读不出来了' : rb === 'ok' ? '（已经试着把原来的内容写回去了）' : '（那个文件本来是新建的）'}：${esc(setupErrText(e))}<br>怎么办：点「重试」再存一次；还不行就把看板换个位置，或者改用「老式方式」（在右上角的设置面板里）。`;
   $('setupAct4').innerHTML = '<button class="btn primary" id="setupRetry4">重试</button>';
   $('setupRetry4').onclick = setupSaveAll;
 }
 
 function setupRender5() {
-  $('setupBody').innerHTML = `<div class="msg">配置已保存。现在试采一次，看看是不是真能拿到数据（要联网，最多一分半）。</div>
+  $('setupBody').innerHTML = `<div class="msg">设置存好了。现在拉一次数据，看看是不是真能拿到（要联网，最多一分半）。</div>
     <div class="msg" id="setupMsg5"></div>
     <div id="setupCollectRows"></div>
-    <div class="actions" id="setupAct5"><button class="btn primary" id="setupCollect">试采一次</button></div>`;
+    <div class="actions" id="setupAct5"><button class="btn primary" id="setupCollect">现在拉一次</button></div>`;
   $('setupCollect').onclick = setupCollectTest;
 }
 async function setupReadPayload() {
@@ -1978,7 +1991,7 @@ async function setupReadPayload() {
 async function setupCollectTest() {
   if (setupBusy) return;
   setupBusy = true;
-  setupSay('setupMsg5', '', '正在采集…（等结果，最多一分半；先别关页面）');
+  setupSay('setupMsg5', '', '正在拉数据…（最多一分半，先别关这个页面）');
   $('setupCollectRows').innerHTML = '';
   const before = await setupReadPayload();
   const base = before && Number.isFinite(Number(before.collectedAtMs)) ? Number(before.collectedAtMs) : null;
@@ -1996,26 +2009,26 @@ async function setupCollectTest() {
 function setupCollectDone(p) {
   $('setupCollectRows').innerHTML = PLATFORM_META.map(m => {
     const r = p[m.id] ?? {};
-    let state = 'ok', text = '已经能采到数据了', fix = '';
-    if (r.disabled) { state = 'off'; text = '已关闭（这次没选它，想用就在向导里打开）'; }
+    let state = 'ok', text = '已经能拿到数据了', fix = '';
+    if (r.disabled) { state = 'off'; text = '这次没勾它（想用就回上一步勾上）'; }
     else if (r.unconfigured || !r.ok) {
       state = r.unconfigured ? 'unconfigured' : 'fail';
       text = m.id === 'codex'
-        ? 'Codex 暂时采不到：先安装并登录 Codex 客户端'
-        : (r.unconfigured ? '这家还没有密钥：回到向导补一下就行' : `这次没采到：${esc(setupErrText(r.error ?? '原因不明', m.id))}`);
+        ? 'Codex 现在拿不到：先装并登录 Codex 客户端'
+        : (r.unconfigured ? '这家还没有密钥：照上一步的提示装一次 ThinCoder，在里面配好就行' : `这次没拿到：${esc(setupErrText(r.error ?? '原因不明', m.id))}`);
       fix = m.id === 'codex' ? 'login-codex' : 'rekey';
     }
     return `<div class="srow" data-plat="${m.id}" data-state="${state}"${fix ? ` data-fix="${fix}"` : ''}><span class="nm">${m.name}</span><span class="st">${text}</span></div>`;
   }).join('');
   const allOff = setupSel && !PLATFORM_META.some(m => setupSel[m.id]);
-  setupSay('setupMsg5', allOff ? 'warn' : 'ok', allOff ? '三家都关着，采不到任何数据——想采就回上一步打开至少一家。' : '试采完成。没成功的按提示处理就好。');
+  setupSay('setupMsg5', allOff ? 'warn' : 'ok', allOff ? '三家都关着，拿不到任何数据——想拉就回上一步勾上至少一家。' : '拉完了。没成功的，照着提示处理就行。');
   const msg = $('setupMsg5');
   msg.dataset.sum = allOff ? 'all-off' : 'done';
-  $('setupAct5').innerHTML = '<button class="btn primary" id="setupNext5">下一步：自动采集</button>';
+  $('setupAct5').innerHTML = '<button class="btn primary" id="setupNext5">下一步：让它自己更新</button>';
   $('setupNext5').onclick = () => setupGoStep(6);
 }
 function setupCollectTimeout() {
-  setupSay('setupMsg5', 'warn', '没等到结果（可能网络慢，或采集还没跑起来）。可以点「重试」；也可以双击项目里的「运行采集.vbs」马上采一次（没有窗口），再回来看。');
+  setupSay('setupMsg5', 'warn', '等太久了还没结果（可能是网络慢）。可以点「重试」再等等。');
   const msg = $('setupMsg5');
   msg.dataset.sum = 'timeout';
   msg.dataset.manual = 'vbs';
@@ -2026,42 +2039,42 @@ function setupCollectTimeout() {
 
 function setupRender6() {
   const st = setupStatus, state = !st ? 'unknown' : st.autoRun?.taskRegistered ? 'on' : 'off';
-  $('setupBody').innerHTML = `<div class="msg">让它自己在后台采集——装一次就不用管了。</div>
-    <div class="srow" data-plat="autorun"><span class="nm">自动采集</span><span class="st" id="setupAutoState" data-auto="${state}">${state === 'on' ? '已开启：它每隔几分钟自己采一次' : state === 'off' ? '还没开启' : '状态未知（这次跳过了检测）'}</span></div>
+  $('setupBody').innerHTML = `<div class="msg">让它自己在后台更新，设一次就不用管了。</div>
+    <div class="srow" data-plat="autorun"><span class="nm">自动更新</span><span class="st" id="setupAutoState" data-auto="${state}">${state === 'on' ? '已经开着：每隔几分钟它自己拉一次' : state === 'off' ? '还没开' : '还不知道（刚才跳过了检查）'}</span></div>
     <div class="msg" id="setupMsg6"></div>
-    ${state === 'on' ? '' : `<div class="msg" data-guide="vbs">没装上？双击项目里的「启用自动采集.vbs」也行（没有黑色窗口，装完会弹一个中文提示）——装完点下面的「重新检测」。</div>
-    <div class="actions" style="margin-top:10px"><button class="btn" id="setupRecheck6">重新检测</button></div>`}
-    <div class="actions" id="setupAct6">${state === 'on' ? '' : '<button class="btn primary" id="setupInstall">一键开启</button>'}<button class="btn primary" id="setupNext6">下一步</button></div>`;
+    ${state === 'on' ? '' : `<div class="msg" data-guide="vbs">或者打开看板文件夹，<b>双击「启用自动采集」</b>（不会弹黑窗口），完了点「重新检查」。</div>
+    <div class="actions" style="margin-top:10px"><button class="btn" id="setupRecheck6">重新检查</button></div>`}
+    <div class="actions" id="setupAct6">${state === 'on' ? '' : '<button class="btn primary" id="setupInstall">现在就开启</button>'}<button class="btn primary" id="setupNext6">下一步</button></div>`;
   const ins = $('setupInstall');
   if (ins) ins.onclick = setupInstall;
   $('setupNext6').onclick = () => setupGoStep(7);
   const rc = $('setupRecheck6');
   if (rc) rc.onclick = async () => {
-    setupSay('setupMsg6', '', '正在重新检测…');
+    setupSay('setupMsg6', '', '正在重新检查…');
     const st2 = await setupProbeCore();
     setupStepRender(6);
     setupSay('setupMsg6', st2?.autoRun?.taskRegistered ? 'ok' : 'warn', st2
-      ? (st2.autoRun?.taskRegistered ? '✓ 已开启：以后它会自己采。' : '还是没开启——点「一键开启」，或双击「启用自动采集.vbs」。')
-      : '还是没回应：稍等一下再试，或双击「启用自动采集.vbs」。');
+      ? (st2.autoRun?.taskRegistered ? '✓ 已经开着：以后它自己更新。' : '还是没开——点「现在就开启」；或者打开文件夹双击那个叫「启用自动采集」的文件。')
+      : '还是没回应：稍等一下再试，或打开文件夹双击那个叫「启用自动采集」的文件。');
   };
 }
 async function setupInstall() {
   if (setupBusy) return;
   setupBusy = true;
-  setupSay('setupMsg6', '', '正在开启…（要几十秒，装完这里会变成「已开启」）');
+  setupSay('setupMsg6', '', '正在开启…（要几十秒，开好了这里会变成「已经开着」）');
   fireProtocol('aiquotaboard://setupinstall');
   await setupWait(SETUP_TIMEOUTS.installWaitMs);
   setupBusy = false;
   const st = await setupProbeCore();
   setupStepRender(6);
   setupSay('setupMsg6', st?.autoRun?.taskRegistered ? 'ok' : 'warn', st?.autoRun?.taskRegistered
-    ? '✓ 已开启：以后它会自己采。'
-    : '还没看到它开启（可能还在装）。点「重新检测」再看看；或者双击项目里的「安装定时任务.bat」看详细输出。');
+    ? '✓ 已经开着：以后它自己更新。'
+    : '还没看到它开起来（可能还在装）。点「重新检查」再看看；还不行就打开文件夹双击那个叫「启用自动采集」的文件。');
 }
 
 function setupRender7() {
-  $('setupBody').innerHTML = `<div class="msg ok">配置完成。以后它自己采，约 1 分钟后本页会出现数据；也可以现在就点「刷新」。</div>
-    <div class="msg">想改哪一家：右上角「配置」→「打开配置向导」。密钥只留在本机，不上传、不进日志。</div>
+  $('setupBody').innerHTML = `<div class="msg ok">设置好了。以后它自己拉，大约 1 分钟后这页就会有数据；也可以现在就点「刷新」。</div>
+    <div class="msg">想改哪一家：右上角「设置」→「打开设置向导」。密钥只留在你这台电脑上，不会上传、不会写进记录。</div>
     <div class="actions"><button class="btn primary" id="setupDone">完成</button></div>`;
   $('setupDone').onclick = () => { setupWizardClose(); refreshData(true); };
 }
@@ -2261,7 +2274,7 @@ function saveConfigEdits() {
   // file:// 页面不能直接写文件：走 aiquotaboard:// 协议（隐藏 iframe 触发，避免页面跳转）
   fireProtocol(`aiquotaboard://config?set=${encodeURIComponent(pairs)}`);
   closeOverlays();
-  toastNote('已提交配置修改，下一次采集生效');
+  toastNote('已经改好了，下次更新时生效');
 }
 
 function runBackup() {
@@ -2607,5 +2620,7 @@ document.querySelectorAll('[data-mark]').forEach(el => { el.innerHTML = MARK[el.
 
 refreshData();
 </script>
+<script src="assets/product-info.js"></script>
+<script src="assets/support.js"></script>
 </body>
 </html>

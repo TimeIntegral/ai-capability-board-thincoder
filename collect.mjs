@@ -46,6 +46,7 @@ function isDue(prevRes, intervalMinutes, now) {
 
 export async function runCollection({ notify: doNotify = true, forceAll = false } = {}) {
   ensureDataDir();
+  if (fs.existsSync(path.join(DATA_DIR, 'upgrade-transaction.json'))) throw new Error('程序正在升级，请稍后重试采集');
   const cfg = loadConfig();
   const enabled = enabledPlatforms(cfg); // 平台开关（config.platforms 缺省 = 全开）
   if (!cfg.proxy) cfg.proxy = detectSystemProxy(); // 代理端口自动探测（clash 换端口不再中断）

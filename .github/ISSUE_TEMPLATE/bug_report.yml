@@ -1,0 +1,20 @@
+name: 使用问题
+description: 安装、配置、额度显示或升级遇到了问题
+title: "[问题] "
+body:
+  - type: markdown
+    attributes:
+      value: "请勿上传密钥、完整配置或未脱敏的截图。可从看板的帮助与反馈复制版本信息。"
+  - type: input
+    id: version
+    attributes:
+      label: 软件版本和 Windows 版本
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 遇到的问题与复现步骤
+      description: 你做了什么，出现了什么，期望怎样？
+    validations:
+      required: true
