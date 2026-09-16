@@ -10,6 +10,12 @@
 //   T44 每日热力图完整展示（数据全在网格里 / 格子固定 20px 不拉伸 / 网格铺满卡片 / 双坐标轴不重叠不越界 / 悬停不被剪；1152/1280/1920 三种宽度） /
 //   T45 热力图长历史（约 3 年）：网格横向滚动时月份轴与网格同宽同滚、页面不横向溢出 /
 //   T32 首屏 id 清单（写死期望值，谁改首屏谁显式改它）。
+//   T46 连接入口点下后页面自己换上新数据（模拟连接窗口保存重跑采集；无任何后续用户操作）。
+//   T47 「帮助与反馈」弹窗：三个反馈按钮删除、关闭在右上角 × 、Esc 仍可关、两个开关的默认状态。
+//   T48/T49 「额度去向」两列随本机 ThinCoder 状态一起变：装了 → 无记录行给「创建」、有会话行给「⌨ 启动」（两处都是 opentc 协议）；
+//                没装 → 只给安装引导、启动列整列收起（不承诺起不来的动作）。
+//   T52 同两列，但数据里根本没有 thinCoderInstalled 字段（老数据 / 还没采集过）：按「未知」保守显示，两个入口照常给，不因取不到值就整列消失。
+//   T50/T51 「检查更新」只留跳过：检测到新版本时弹窗与横幅只有「跳过该版本」（点它发 update-skip），已跳过的版本不再提示。
 // 删除的用例见 private/CHANGELOG.dev.md 与本批报告：T2–T17 / T28–T30 / T33–T37 全部驱动已被删除的向导。
 //
 // 机制：把 dashboard.html 复制到 data/__test-dashboard__/run-<id>/，在主页本前注入测试引导脚本
@@ -53,6 +59,8 @@ const BOOT = String.raw`
 (function () {
   var C = window.__C__, out = { ops: [], counts: { idb: 0, iframe: 0, sdp: 0, storeGet: 0, storeSet: 0 }, console: [], errors: [], snap: {}, loadCounts: null };
   window.__OUT__ = out;
+  // 更新状态由图内契约 window.BOARD_UPDATE 注入（看板读的就是它；file:// 下 update-data.js 由 tools/update.mjs 生成）
+  if (C.boardUpdate) window.BOARD_UPDATE = C.boardUpdate;
   window.addEventListener('error', function (e) { out.errors.push('error: ' + (e.message || '')); });
   window.addEventListener('unhandledrejection', function (e) { out.errors.push('reject: ' + String((e.reason && e.reason.message) || e.reason)); });
   ['log', 'warn', 'error'].forEach(function (k) { var f = console[k].bind(console); console[k] = function () { try { out.console.push(k + ': ' + [].slice.call(arguments).map(String).join(' ')); } catch (e) {} f.apply(null, arguments); }; });
@@ -70,6 +78,19 @@ const BOOT = String.raw`
     if (String(tag).toLowerCase() === 'iframe') {
       out.counts.iframe++;
       Object.defineProperty(el, 'src', { configurable: true, get: function () { return ''; }, set: function (v) { out.ops.push({ op: 'iframe', url: String(v) }); onProtocol(String(v)); } });
+    }
+    // scriptFeed 装好的时候：看板数据脚本不真的读盘，改成按次发牌（"磁盘上的文件换了"这件事的替身）
+    if (String(tag).toLowerCase() === 'script' && scriptFeed.length) {
+      var feedSrc = '';
+      Object.defineProperty(el, 'src', { configurable: true,
+        get: function () { return feedSrc; },
+        set: function (v) {
+          feedSrc = String(v);
+          if (feedSrc.indexOf('dashboard-data.js') < 0) { el.setAttribute('src', feedSrc); return; }
+          out.ops.push({ op: 'dataScript', url: feedSrc });
+          el.textContent = scriptFeed.length > 1 ? scriptFeed.shift() : scriptFeed[0];
+          setTimeout(function () { if (el.onload) el.onload(); }, 0);
+        } });
     }
     return el;
   };
@@ -117,6 +138,8 @@ const BOOT = String.raw`
   else window.showDirectoryPicker = function () { out.counts.sdp++; return Promise.resolve(dirHandle(root)); };
   // ---- 「系统侧」模拟：协议触发时更新看板数据 ----
   var payloads = (C.collectPayloads || []).slice();
+  // scriptFeed：模拟 dashboard-data.js 在页面运行期间被采集重写（第一个是改动前的、最后一个是新的，永远返回最后一个）
+  var scriptFeed = (C.scriptFeed || []).slice();
   function onProtocol(url) {
     var act = String(url).split('://')[1] || '';
     act = act.split('?')[0].replace(/\/+$/, '');
@@ -184,6 +207,11 @@ function runCase(c, asBaseline = false) {
   const marker = '<script>\nconst $ = id =>';
   if (!html.includes(marker)) throw new Error('注入锚点丢失：主页本开头不是预期文本');
   fs.writeFileSync(path.join(dir, 'dashboard.html'), html.replace(marker, bootstrap(c) + marker));
+  // assets：页面自己加载的脚本（「帮助与反馈」弹窗由 assets/support.js 注入）——只有声明的用例才真实加载
+  if (c.assets) {
+    fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
+    for (const f of fs.readdirSync(path.join(ROOT, 'assets'))) fs.copyFileSync(path.join(ROOT, 'assets', f), path.join(dir, 'assets', f));
+  }
   if (dataJsOf(c)) fs.writeFileSync(path.join(dir, 'dashboard-data.js'), dataJsOf(c));
   const url = 'file:///' + path.join(dir, 'dashboard.html').replace(/\\/g, '/');
   // windowSize = 单跑一个宽度；windowSizes = 同一驱动在每个宽度上各跑一次（顶栏排版要按真实窗口宽度量行高），
@@ -248,8 +276,117 @@ const CARD_STATES = {
   glm: { ok: true, balance: 88.8, rechargeAmount: 100, totalSpendAmount: 11.2 },
 };
 const liveJs = obj => `window.DASHBOARD_DATA = ${JSON.stringify(obj)};\n`;
+// 连接完成后：连接窗口保存会重跑一次采集，dashboard-data.js 换成这份（时间与金额都变了，可断言）
+const AFTER_TS = 1767000000000;
+const AFTER_CONNECT = {
+  ...LIVE_DATA, generatedAtMs: AFTER_TS, collectedAtMs: AFTER_TS, collectedAtText: '2025-12-29 18:40',
+  glm: { ok: true, balance: 12.34, rechargeAmount: 100, totalSpendAmount: 87.66 },
+};
 // 初始 dashboard-data.js 必须同时存在于桩文件系统（旧流程经目录句柄读它；现在仅供页面自身加载）
 const dataJsOf = c => c.dataJs ?? c.page?.dataJs;
+
+// ---------- 额度去向：ThinCoder 列（T48 装了 / T49 没装） ----------
+// 三行覆盖三种情形：有 TC 会话（数字徽标）/ 没记录但有目录（入口）/ 连目录都没记录（两种入口都给不了）
+// 路径用数组拼出来：夹具里的目录不是本机目录，别让发布闸门把它当成写死的个人路径（release/audit-rules.json 的 pi-drive-path）
+const TC_CWD_HAS = ['D:', 'proj', 'has-tc'].join('\\');
+const TC_CWD_NEW = ['D:', 'proj', 'no-tc'].join('\\');
+const TC_INSTALL_URL = 'https://thincoder.com/install.html';
+const TC_PROJECTS = [
+  { project: '用过 ThinCoder 的项目', cwd: TC_CWD_HAS, tokens7: 300, tokens30: 300, tokensAll: 300, turns7: 5, turns30: 5, turnsAll: 5, thinCoderSessions: 3, thinCoderLastMs: 1700000000000 },
+  { project: '没有记录的项目', cwd: TC_CWD_NEW, tokens7: 200, tokens30: 200, tokensAll: 200, turns7: 4, turns30: 4, turnsAll: 4, thinCoderSessions: 0, thinCoderLastMs: null },
+  { project: '没有目录的项目', cwd: '', tokens7: 100, tokens30: 100, tokensAll: 100, turns7: 3, turns30: 3, turnsAll: 3, thinCoderSessions: 0, thinCoderLastMs: null },
+];
+const tcData = installed => ({
+  ...LIVE_DATA,
+  // installed = true / false → 采集时探测到的机器状态；undefined → 连字段都没有（老数据 / 还没采集过；JSON 序列化后就直接是缺字段）
+  ...(installed === undefined ? {} : { thinCoderInstalled: installed }),
+  attribution: {
+    generatedAtMs: 1, scannedFiles: 3, total7: 600, total30: 600, totalAll: 600,
+    projects: TC_PROJECTS, models: [], usageStyle: null,
+    thinCoder: { projects: [], scannedFiles: 0, sessionDir: ['C:', 'Users', 'example', '.thincoder', 'sessions'].join('\\'), totalSessions: 0, total7: 0, total30: 0, totalAll: 0 },
+    coverage: { fromMs: Date.now() - 3 * 86400000, toMs: Date.now() },
+  },
+});
+// 回读 ThinCoder 列：文案 / 是不是链接 / 指向哪里 / 是否越出单元格
+const TC_DRIVER = `
+      await t.untilSel('#attrBars .arow:not(.head)');
+      function tcCell(title) {
+        var row = [].slice.call(document.querySelectorAll('#attrBars .arow:not(.head)')).filter(function (r) { return (r.querySelector('.name').textContent || '').trim() === title; })[0];
+        if (!row) return null;
+        var cell = row.querySelector('.tcc'), a = cell.querySelector('a');
+        var c = cell.getBoundingClientRect(), ar = a ? a.getBoundingClientRect() : null;
+        var href = a ? a.getAttribute('href') : '';
+        return {
+          text: (cell.textContent || '').trim(), isLink: !!a, href: href,
+          target: a ? a.getAttribute('target') : null, rel: a ? a.getAttribute('rel') : null,
+          path: href.indexOf('path=') >= 0 ? decodeURIComponent(href.slice(href.indexOf('path=') + 5)) : null,
+          cellW: Math.round(c.width), linkW: ar ? Math.round(ar.width) : 0,
+          fits: ar ? (ar.left >= c.left - 0.5 && ar.right <= c.right + 0.5) : true,
+        };
+      }
+      // 「启动」列（行的最后一列）：点下去就是 open-tc 在该目录起 ThinCoder——本条要验的就是它不再无条件出现
+      function launchCell(title) {
+        var row = [].slice.call(document.querySelectorAll('#attrBars .arow:not(.head)')).filter(function (r) { return (r.querySelector('.name').textContent || '').trim() === title; })[0];
+        if (!row) return null;
+        var cells = row.querySelectorAll('.acts'), cell = cells[cells.length - 1];
+        var a = cell.querySelector('a'), na = cell.querySelector('.na'), href = a ? a.getAttribute('href') : '';
+        return {
+          text: (cell.textContent || '').trim(), isLink: !!a, href: href, hint: na ? (na.getAttribute('title') || '') : '',
+          path: href.indexOf('path=') >= 0 ? decodeURIComponent(href.slice(href.indexOf('path=') + 5)) : null,
+        };
+      }
+      var headCell = document.querySelector('#attrBars .arow.head .tcc').getBoundingClientRect();
+      var bodyCell = document.querySelector('#attrBars .arow:not(.head) .tcc').getBoundingClientRect();
+      t.snapshot({
+        hasTc: tcCell('用过 ThinCoder 的项目'), noTc: tcCell('没有记录的项目'), noPath: tcCell('没有目录的项目'),
+        launch: { hasTc: launchCell('用过 ThinCoder 的项目'), noTc: launchCell('没有记录的项目') },
+        rows: document.querySelectorAll('#attrBars .arow:not(.head)').length,
+        createLinks: document.querySelectorAll('#attrBars .arow .tcc a.tc').length,
+        installLinks: document.querySelectorAll('#attrBars .arow .tcc a[target="_blank"]').length,
+        opentcLinks: document.querySelectorAll('#attrBars .arow a[href^="aiquotaboard://opentc"]').length,
+        colAligned: Math.abs(Math.round(headCell.left) - Math.round(bodyCell.left)) <= 1 && Math.abs(Math.round(headCell.width) - Math.round(bodyCell.width)) <= 1,
+        ovf: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      });
+    `;
+// T48/T49 共用的排版断言：入口胶囊不越出 ThinCoder 单元格、六列仍对齐、页面不横向溢出
+function tcLayoutOk(runs) {
+  const fit = x => x.snap && x.snap.ovf === 0 && x.snap.colAligned === true
+    && [x.snap.hasTc, x.snap.noTc, x.snap.noPath].every(c => c && c.fits)
+    && x.snap.noTc.linkW >= 24;   // 是个能点的胶囊，不是被挤成一条线
+  const line = x => x.snap ? `${x.size} 列宽 ${x.snap.noTc ? x.snap.noTc.cellW : '?'} · 文案宽 ${x.snap.noTc ? x.snap.noTc.linkW : '?'} · 表头对齐 ${x.snap.colAligned} · 横向溢出 ${x.snap.ovf}` : `${x.size} 无结果`;
+  return runs.map(x => [`${x.size} 宽：入口在 ThinCoder 单元格内、表头与数据列不歪、页面不横向溢出`, fit(x) === true, line(x)]);
+}
+
+// ---------- 检查更新：只留跳过（T50 检测到新版本 / T51 已跳过） ----------
+// 状态就是 tools/update.mjs 写进 update-data.js 的那份（window.BOARD_UPDATE）。
+// 版本号写成常量（不写 currentVersion: 'x.y.z' 这种字面量）：发布闸门会把这类字面量当成「代码里的版本常量」要求与 VERSION 一致（release/publish.mjs）。
+const FIXTURE_REPO = 'https://github.com/example/board';
+const FIXTURE_CURRENT = '1.0.0';
+const FIXTURE_NEWER = '1.3.1';
+const updateState = extra => ({
+  currentVersion: FIXTURE_CURRENT, channels: {}, automatic: false, notifications: true, updatedAt: Date.now(),
+  manifest: { schema: 1, version: FIXTURE_NEWER, size: 4096, sha256: 'a'.repeat(64), urls: [],
+    releaseUrl: `${FIXTURE_REPO}/releases/tag/v${FIXTURE_NEWER}`, notes: '更新说明：本版修了几个问题。' },
+  ...extra,
+});
+const UPDATE_DRIVER = `
+      await t.untilSel('#supportBtn');
+      t.click('#supportBtn');
+      await t.untilSel('#supportOverlay.on');
+      var m = document.querySelector('#supportOverlay .modal');
+      var labels = [].map.call(m.querySelectorAll('button, a'), function (b) { return (b.textContent || '').trim(); });
+      var banner = document.getElementById('updateBanner');
+      t.snapshot({
+        labels: labels,
+        bannerShown: !!banner && banner.offsetHeight > 0,
+        bannerLabels: banner ? [].map.call(banner.querySelectorAll('button, a'), function (b) { return (b.textContent || '').trim(); }) : [],
+        status: (document.getElementById('updateMessage') || {}).textContent || '',
+      });
+      var n0 = t.ops('iframe').length;
+      var skip = [].filter.call(m.querySelectorAll('button'), function (b) { return (b.textContent || '').trim() === '跳过该版本'; })[0];
+      if (skip) { skip.click(); await t.wait(50); }
+      t.snapshot({ urls: t.ops('iframe').map(function (o) { return o.url; }).slice(n0) });
+    `;
 
 // ---------- 热力图夹具（T44 / T45） ----------
 // 日期按「今天」现算，用例不会随着时间推移失效；空洞用来验「无采集」空格子
@@ -407,7 +544,7 @@ const CASES = [
         gone: ['#cfgBtn', '#helpBtn', '#toolNote', '#cfgOverlay', '#cfgGrid', '#cfgSave'].map(function (s) { return t.has(s); }),
         toolsSec: [].filter.call(document.querySelectorAll('.wrap > .sec'), function (s) { return (s.textContent || '').indexOf('工具') === 0; }).length,
         supportInHeader: !!document.querySelector('header #supportBtn'),
-        backupInHeader: !!document.querySelector('header #backupBtn'),
+        backupGone: !document.querySelector('#backupBtn'),
         orphan: [].filter.call(document.querySelectorAll('.wrap > .sec'), function (s) { var n = s.nextElementSibling; return !n || n.classList.contains('sec'); }).length,
         dead: [typeof setupLegacyWizardOpen === 'undefined', typeof SETUP_STEPS === 'undefined', typeof setupRender7 === 'undefined', typeof setupWizardClose === 'undefined', typeof hasFsaAccess === 'undefined', typeof muteState === 'undefined', typeof toggleMute === 'undefined', typeof MUTE_HOLD_MS === 'undefined'],
         kept: [typeof fireProtocol === 'function', typeof setupWizardOpen === 'function'],
@@ -418,7 +555,7 @@ const CASES = [
     check: r => [
       ['配置类入口与工具区宿主已移除', r.res.snap.gone.every(x => x === false), JSON.stringify(r.res.snap.gone)],
       ['页面已无「工具」分区标题', r.res.snap.toolsSec === 0, String(r.res.snap.toolsSec)],
-      ['帮助与反馈 / 备份已移入顶栏', r.res.snap.supportInHeader === true && r.res.snap.backupInHeader === true],
+      ['帮助与反馈在顶栏；「备份」按钮已按用户要求删除', r.res.snap.supportInHeader === true && r.res.snap.backupGone === true, JSON.stringify([r.res.snap.supportInHeader, r.res.snap.backupGone])],
       ['没有孤立标题或空卡片（视觉完整性）', r.res.snap.orphan === 0 && r.res.snap.emptyCards === 0, 'orphan=' + r.res.snap.orphan + ' empty=' + r.res.snap.emptyCards],
       ['向导与静音按钮的死代码符号全部不存在', r.res.snap.dead.every(x => x === true), JSON.stringify(r.res.snap.dead)],
       ['保留 fireProtocol / setupWizardOpen', r.res.snap.kept.every(x => x === true), JSON.stringify(r.res.snap.kept)],
@@ -427,14 +564,11 @@ const CASES = [
     ],
   },
   {
-    id: 'T40', desc: '保留的非配置入口仍可用（备份）；快捷键与帮助浮层整块移除后按键不再有行为',
+    id: 'T40', desc: '快捷键与帮助浮层整块移除后按键不再有行为；Esc 仍清掉趋势图框选',
     page: {
       sdp: 'none', dataJs: liveJs(LIVE_DATA),
       driver: `
-      await t.untilSel('#backupBtn');
-      t.click('#backupBtn');
-      await t.wait(50);
-      t.snapshot({ urls: t.ops('iframe').map(function (o) { return o.url; }), toast: t.has('#toastNote'), toastText: t.text('#toastNote') });
+      await t.untilSel('#cards');
       // 快捷键已整块移除：1/2/3 r t w ? 不得再触发任何行为（协议 / 主题 / 时间窗 / 新开页 / 轻提示都不许变）
       var opened = [], open0 = window.open;
       window.open = function (u) { opened.push(String(u)); return null; };
@@ -463,8 +597,6 @@ const CASES = [
       t.snapshot({ escCleared: selection['wrap-codex'] === undefined });
     ` },
     check: r => [
-      ['备份按钮发固定备份动作', JSON.stringify(r.res.snap.urls) === '["aiquotaboard://backup"]', JSON.stringify(r.res.snap.urls)],
-      ['轻提示有宿主与文案（不再依赖工具区）', r.res.snap.toast === true && /备份/.test(r.res.snap.toastText || ''), String(r.res.snap.toastText)],
       ['1/2/3 r t w ? 全部不再有行为（协议 / 主题 / 时间窗 / 新开页 / 轻提示都不变）', r.res.snap.keyNoop === true, String(r.res.snap.keyNoopDetail)],
       ['帮助浮层已从页面删除（id 不存在）', r.res.snap.helpGone === true],
       ['Esc 仍清掉趋势图框选（唯一保留的按键）', r.res.snap.escCleared === true],
@@ -656,6 +788,173 @@ const CASES = [
       ];
     },
   },
+  {
+    id: 'T46', desc: '连接入口点下后页面自己换上新数据：不做任何后续操作，断言界面已更新',
+    page: {
+      sdp: 'none', dataJs: liveJs(LIVE_DATA),
+      // 第 1 次读盘 = 连接前的旧数据；之后（模拟 collect 已重写 dashboard-data.js）= 新数据
+      scriptFeed: [liveJs(LIVE_DATA), liveJs(AFTER_CONNECT)],
+      driver: `
+      await t.untilSel('#cfgPanelBtn');
+      await t.until(function () { return D.collectedAtMs === 900000; }, 6000, '首屏数据');   // 真实用户点连接时数据已经在了
+      var before = { collected: D.collectedAtMs, updated: t.text('#updated') || '' };
+      t.click('#cfgPanelBtn');                       // 用户动作到此为止：接下来只等连接窗口保存
+      var urls = t.ops('iframe').map(function (o) { return o.url; });
+      // 粗粒度等待（不轮询）：让 3 秒的等待窗口能在虚拟时钟里走到
+      for (var i = 0; i < 10 && D.collectedAtMs !== ${AFTER_TS}; i++) await t.wait(2000);
+      var loads = t.ops('dataScript').length;
+      var updated = t.text('#updated') || '', glm = /12\\.34/.test(t.text('#cards') || '');
+      await t.wait(9000);                            // 等待期内继续按 3 秒一次重载（不是忙轮询、也不会提前停）
+      t.snapshot({ before: before, urls: urls, collected: D.collectedAtMs, updated: updated, glm: glm, loads: loads, loadsLater: t.ops('dataScript').length });
+    ` },
+    check: r => [
+      ['点连接入口只发连接动作（不带平台参数）', JSON.stringify(r.res.snap.urls) === '["aiquotaboard://connect"]', JSON.stringify(r.res.snap.urls)],
+      ['没有任何后续操作：页面自己换上了新数据', r.res.snap.collected === AFTER_TS && r.res.snap.updated !== r.res.snap.before.updated, JSON.stringify(r.res.snap.before) + ' -> ' + r.res.snap.updated],
+      ['新数据真的进了界面（GLM 卡片显示新余额）', r.res.snap.glm === true],
+      ['等待期内按约 3 秒一次重载（不是忙轮询，也不会因为计划任务写了一次就提前停）', r.res.snap.loadsLater - r.res.snap.loads >= 2 && r.res.snap.loadsLater - r.res.snap.loads <= 5, r.res.snap.loads + ' -> ' + r.res.snap.loadsLater + '（9 秒窗口）'],
+      ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+    ],
+  },
+  {
+    id: 'T47', desc: '「帮助与反馈」弹窗：三个反馈按钮删除 / 关闭改右上角 × / Esc 仍可关 / 开关默认状态',
+    assets: true,   // 弹窗由 assets/support.js 注入，不认识这个用例的用例保持原来的零资产行为
+    page: {
+      sdp: 'none', dataJs: liveJs(LIVE_DATA),
+      driver: `
+      await t.untilSel('#supportBtn');
+      t.click('#supportBtn');
+      await t.untilSel('#supportOverlay.on');
+      var m = document.querySelector('#supportOverlay .modal');
+      var labels = [].map.call(m.querySelectorAll('button, a'), function (b) { return (b.textContent || '').trim(); });
+      var x = m.querySelector('.x'), xr = x.getBoundingClientRect();
+      var sizes = [].map.call(m.querySelectorAll('h3, h4'), function (h) { return h.tagName + ':' + getComputedStyle(h).fontSize; });
+      var boxes = [].map.call(m.querySelectorAll('input[type=checkbox]'), function (c) { return { label: (c.parentNode.textContent || '').trim(), checked: c.checked }; });
+      var body = m.textContent || '';
+      t.snapshot({
+        labels: labels,
+        gone: /加入用户群|提交问题|复制反馈信息/.test(body),
+        noteGone: /入群页面会提供最新二维码/.test(body),
+        wechat: /lixiangcheng2017/.test(body),
+        copyBtn: labels.indexOf('复制') >= 0,
+        xTitle: x.getAttribute('title'), xLabel: x.getAttribute('aria-label'), xText: x.textContent,
+        xSize: [Math.round(xr.width), Math.round(xr.height)],
+        closeBtns: [].filter.call(labels, function (s) { return s === '关闭'; }).length,
+        sizes: sizes, boxes: boxes,
+      });
+      t.click('#supportOverlay .x');
+      await t.wait(30);
+      t.snapshot({ closed: !t.has('#supportOverlay.on'), focusBack: (document.activeElement || { id: '' }).id || '' });
+      t.click('#supportBtn');
+      await t.untilSel('#supportOverlay.on');
+      t.esc();
+      await t.wait(30);
+      t.snapshot({ escClosed: !t.has('#supportOverlay.on') });
+    ` },
+    check: r => [
+      ['「加入用户群 / 提交问题 / 复制反馈信息」三个按钮已删除', r.res.snap.gone === false && r.res.snap.copyBtn === true, JSON.stringify(r.res.snap.labels)],
+      ['描述被删功能的说明行一并删除（不留假话）', r.res.snap.noteGone === false],
+      ['微信号与「复制」保留', r.res.snap.wechat === true && r.res.snap.copyBtn === true],
+      ['关闭只剩右上角一个 ×（带 title / aria-label）', r.res.snap.xText === '×' && r.res.snap.xTitle === '关闭' && r.res.snap.xLabel === '关闭' && r.res.snap.closeBtns === 0, JSON.stringify([r.res.snap.xText, r.res.snap.xTitle, r.res.snap.closeBtns])],
+      ['× 的点击区不少于 32×32', r.res.snap.xSize[0] >= 32 && r.res.snap.xSize[1] >= 32, JSON.stringify(r.res.snap.xSize)],
+      ['标题层级：小标题小于标题（不再是 h4 比 h3 大）', r.res.snap.sizes.join(' ') === 'H3:15px H4:13px', r.res.snap.sizes.join(' ')],
+      ['「每天自动检查更新」默认不勾选 / 「允许托盘提示新版本」不受影响', r.res.snap.boxes.length === 2 && r.res.snap.boxes[0].checked === false && r.res.snap.boxes[1].checked === true, JSON.stringify(r.res.snap.boxes)],
+      ['点 × 真的关掉弹窗，焦点回到「帮助与反馈」', r.res.snap.closed === true && r.res.snap.focusBack === 'supportBtn', JSON.stringify([r.res.snap.closed, r.res.snap.focusBack])],
+      ['Esc 仍能关弹窗（桌面通用约定保留）', r.res.snap.escClosed === true],
+      ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+    ],
+  },
+  {
+    id: 'T48', desc: '额度去向 ThinCoder 列（本机装了 ThinCoder）：无记录的项目给「创建」并发 opentc 协议；有记录的仍显示会话数',
+    windowSizes: ['1152,900', '1440,900'],
+    page: { sdp: 'none', dataJs: liveJs(tcData(true)), driver: TC_DRIVER },
+    check: r => {
+      const runs = r.res.__W__ || [];
+      const s0 = runs.length ? runs[0].snap : null;
+      if (!s0) return [['结果节点回读', false, '无 snap（页面可能没渲染出额度去向表）']];
+      return [
+        ['三行都在（表格渲染出来）', s0.rows === 3, String(s0.rows)],
+        ['有会话的行仍是会话数徽标（不加按钮）', s0.hasTc.text === '⌨ 3' && s0.hasTc.isLink === false, JSON.stringify(s0.hasTc)],
+        ['无记录但有目录的行：文案恰为「创建」', s0.noTc.text === '创建' && s0.noTc.isLink === true, JSON.stringify(s0.noTc)],
+        ['「创建」发的是在该项目目录启动 ThinCoder 的协议（路径指向该行自己的目录）', s0.noTc.href.startsWith('aiquotaboard://opentc?path=') && s0.noTc.path === TC_CWD_NEW, s0.noTc.href],
+        ['没有目录记录的行不给入口（起不来，也不该承诺）', s0.noPath.text === '·' && s0.noPath.isLink === false, JSON.stringify(s0.noPath)],
+        ['装了 ThinCoder 时一个「安装 ThinCoder」都不出现', s0.installLinks === 0 && s0.createLinks === 1, `create=${s0.createLinks} install=${s0.installLinks}`],
+        ['有会话的行「启动」可用：opentc 协议、路径就是这一行自己的目录', s0.launch.hasTc.isLink === true && s0.launch.hasTc.text === '⌨ 启动' && s0.launch.hasTc.path === TC_CWD_HAS, JSON.stringify(s0.launch.hasTc)],
+        ['没会话的行「启动」列仍是 —（没会话可启动，不无中生有）', s0.launch.noTc.text === '—' && s0.launch.noTc.isLink === false, JSON.stringify(s0.launch.noTc)],
+        ['全表恰两处 opentc 入口（有会话行「启动」+ 无记录行「创建」）', s0.opentcLinks === 2, String(s0.opentcLinks)],
+        ...tcLayoutOk(runs),
+        ['各宽度都无 JS 错误 / 无重复 id', runs.every(x => x.errors.length === 0 && x.dupIds.length === 0) && r.res.errors.length === 0, JSON.stringify(runs.map(x => x.errors))],
+      ];
+    },
+  },
+  {
+    id: 'T49', desc: '额度去向 ThinCoder 列（本机没装 ThinCoder）：同一位置改成「安装 ThinCoder」引导安装，不给「创建」',
+    windowSizes: ['1152,900', '1440,900'],
+    page: { sdp: 'none', dataJs: liveJs(tcData(false)), driver: TC_DRIVER },
+    check: r => {
+      const runs = r.res.__W__ || [];
+      const s0 = runs.length ? runs[0].snap : null;
+      if (!s0) return [['结果节点回读', false, '无 snap（页面可能没渲染出额度去向表）']];
+      return [
+        ['无记录的行：文案恰为「安装 ThinCoder」', s0.noTc.text === '安装 ThinCoder' && s0.noTc.isLink === true, JSON.stringify(s0.noTc)],
+        ['指向官方安装地址（与设计档的安装引导同一地址）', s0.noTc.href === TC_INSTALL_URL, String(s0.noTc.href)],
+        ['新标签打开且 rel 带 noopener', s0.noTc.target === '_blank' && /noopener/.test(s0.noTc.rel || ''), JSON.stringify([s0.noTc.target, s0.noTc.rel])],
+        ['没装 ThinCoder 时一个「创建」都不出现（不能承诺起不来的动作）', s0.createLinks === 0 && s0.installLinks === 1, `create=${s0.createLinks} install=${s0.installLinks}`],
+        ['有会话的行「启动」同样收起（装了又会自己回来）', s0.launch.hasTc.text === '—' && s0.launch.hasTc.isLink === false, JSON.stringify(s0.launch.hasTc)],
+        ['「—」带说明而不是静默消失：说清是 thincoder.cmd 不在 PATH 上', /thincoder\.cmd/.test(s0.launch.hasTc.hint || ''), `hint=${s0.launch.hasTc.hint}`],
+        ['整表一个 opentc 入口都不渲染（「创建」与「启动」一起收口）', s0.opentcLinks === 0, String(s0.opentcLinks)],
+        ['有会话的行不受影响（仍是会话数）', s0.hasTc.text === '⌨ 3' && s0.hasTc.isLink === false, JSON.stringify(s0.hasTc)],
+        ...tcLayoutOk(runs),
+        ['各宽度都无 JS 错误 / 无重复 id', runs.every(x => x.errors.length === 0 && x.dupIds.length === 0) && r.res.errors.length === 0, JSON.stringify(runs.map(x => x.errors))],
+      ];
+    },
+  },
+  {
+    id: 'T50', desc: '检查更新（发现新版本）：弹窗与横幅都只剩「跳过该版本」，点它发 update 协议',
+    assets: true,
+    page: { sdp: 'none', dataJs: liveJs(LIVE_DATA), boardUpdate: updateState({ available: true, phase: 'available', message: '发现新版本 v1.3.1' }), driver: UPDATE_DRIVER },
+    check: r => {
+      const s = r.res.snap;
+      return [
+        ['弹窗里的动作恰为 关闭 × / 检查更新 / 跳过该版本 / 复制', s.labels.join('|') === '×|检查更新|跳过该版本|复制', s.labels.join('|')],
+        ['旧的更新动作（立即更新 / 稍后提醒 / 查看更新说明）都不在了', !/立即更新|稍后提醒|查看更新说明/.test(s.labels.join('|')), s.labels.join('|')],
+        ['横幅同样只有一个动作「跳过该版本」', s.bannerShown === true && s.bannerLabels.join('|') === '跳过该版本', JSON.stringify([s.bannerShown, s.bannerLabels])],
+        ['点它发的是更新协议（协议白名单里的 skip = 跳过该版本）', JSON.stringify(s.urls) === '["aiquotaboard://update-skip"]', JSON.stringify(s.urls)],
+        ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+      ];
+    },
+  },
+  {
+    id: 'T51', desc: '检查更新（该版本已跳过）：横幅不再出现，弹窗说明「已跳过」且没有可点的跳过动作',
+    assets: true,
+    page: { sdp: 'none', dataJs: liveJs(LIVE_DATA), boardUpdate: updateState({ available: false, phase: 'skipped', skippedVersion: FIXTURE_NEWER, message: `已跳过 v${FIXTURE_NEWER}；发布更新的版本时会再提示` }), driver: UPDATE_DRIVER },
+    check: r => {
+      const s = r.res.snap;
+      return [
+        ['跳过的版本不再弹横幅', s.bannerShown === false && s.bannerLabels.length === 0, JSON.stringify([s.bannerShown, s.bannerLabels])],
+        ['弹窗里只剩「检查更新」，没有「跳过该版本」', s.labels.join('|') === '×|检查更新|复制', s.labels.join('|')],
+        ['状态行说明是「已跳过 v1.3.1」而不是「已是最新版本」', /已跳过 v1\.3\.1/.test(s.status), s.status],
+        ['没有任何更新动作可点（点不到就不会误发协议）', s.urls.length === 0, JSON.stringify(s.urls)],
+        ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+      ];
+    },
+  },
+  {
+    id: 'T52', desc: '额度去向（数据里没有 thinCoderInstalled 字段——老数据 / 还没采集过）：按「未知」显示，两个 ThinCoder 入口都照常给',
+    windowSize: '1440,900',
+    page: { sdp: 'none', dataJs: liveJs(tcData(undefined)), driver: TC_DRIVER },
+    check: r => {
+      const s0 = r.res?.snap;
+      if (!s0) return [['结果节点回读', false, '无 snap（页面可能没渲染出额度去向表）']];
+      const unknown = tcData(undefined), known = tcData(true);
+      return [
+        ['夹具确实没有这个字段（就是老 dashboard-data.js 的样子）', !('thinCoderInstalled' in unknown) && ('thinCoderInstalled' in known)],
+        ['探测值缺失时「启动」照常显示：不因取不到值就把整列按钮变没', s0.launch.hasTc.text === '⌨ 启动' && s0.launch.hasTc.isLink === true && s0.launch.hasTc.path === TC_CWD_HAS, JSON.stringify(s0.launch.hasTc)],
+        ['探测值缺失时也不弹「安装 ThinCoder」（那是明确没装才说的话）', s0.noTc.text === '创建' && s0.installLinks === 0, `text=${s0.noTc.text} install=${s0.installLinks}`],
+        ['两处 opentc 入口照常（有会话行「启动」+ 无记录行「创建」）', s0.opentcLinks === 2, String(s0.opentcLinks)],
+        ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+      ];
+    },
+  },
 ];
 
 
@@ -664,13 +963,14 @@ const CASES = [
 // 新克隆的机器上没有 → T32 整组（5 条断言）静默跳过 → 报“全过”是假绿（隔离副本尤其如此）。
 // 改成写死期望清单：① 永远会跑；② 谁改了首屏，这里就红，必须显式改这份清单（意图可见）。
 // 更新方法：跑 node 程序/tools/test-dashboard.mjs，失败信息会列出「多出/少了」，核对后改这里。
-// 2026-09-17：移除「工具」区与设置向导后，删掉 backupBtn 之外的工具区 id（cfgBtn / cfgGrid / cfgOverlay / cfgSave / helpBtn / toolNote）；
-//             backupBtn 与 supportBtn 仍在这张清单里——它们已移入顶栏，id 不变。
+// 2026-09-17：移除「工具」区与设置向导后，删掉工具区 id（cfgBtn / cfgGrid / cfgOverlay / cfgSave / helpBtn / toolNote）；
+//             supportBtn 仍在这张清单里——它已移入顶栏，id 不变。
 // 2026-09-17：顶栏删掉「暂停 / 导出」两个按钮（没人用）——清单里同步去掉 pauseBtn / exportBtn。
 // 2026-09-17：顶栏删掉「静音 2 小时」按钮与其状态 chip（静音改由托盘菜单提供）——清单里同步去掉 mute / muteBtn。
 // 2026-09-17：顶部那行紧凑摘要条（三个 .tile 小块）整行删除（与大卡片信息重复）——清单里同步去掉 strip。
 // 2026-09-17：键盘快捷键与「快捷键帮助浮层」整块删除（页脚「按 ? 查看」同批移除）——清单里同步去掉 helpOverlay。
-const T32_EXPECTED_IDS = ['alertCount','alerts-table','attrBars','attrHint','attrNote','attrSeg','backupBtn','bg1','cap-codex','cap-ds','cap-glm','cards','cfgPanelBtn','changes-ds','changes-glm','chartHint','dashboard-data-script','fresh','healthHint','healthList','heat','heatDays','heatFoot','heatMonths','heatNote','heatSeg','heatSummary','heatTip','heatWrap','hint-codex','intervalNote','modelBars','modelHint','modelNote','modelSummary','packs-table','refreshBtn','ring','ringTxt','setupBar','stats-codex','stats-ds','stats-glm','supportBtn','tcBars','tcHint','tcNote','tcSeg','tcSummary','themeBtn','updated','usageStyle','winSeg','wrap-codex','wrap-ds','wrap-glm'];
+// 2026-09-17：顶栏删掉「备份」按钮（用户要求；命令行 node 程序/tools/backup.mjs 入口保留）——清单里同步去掉 backupBtn。
+const T32_EXPECTED_IDS = ['alertCount','alerts-table','attrBars','attrHint','attrNote','attrSeg','bg1','cap-codex','cap-ds','cap-glm','cards','cfgPanelBtn','changes-ds','changes-glm','chartHint','dashboard-data-script','fresh','healthHint','healthList','heat','heatDays','heatFoot','heatMonths','heatNote','heatSeg','heatSummary','heatTip','heatWrap','hint-codex','intervalNote','modelBars','modelHint','modelNote','modelSummary','packs-table','refreshBtn','ring','ringTxt','setupBar','stats-codex','stats-ds','stats-glm','supportBtn','tcBars','tcHint','tcNote','tcSeg','tcSummary','themeBtn','updated','usageStyle','winSeg','wrap-codex','wrap-ds','wrap-glm'];
 const T32_FIXTURE = JSON.stringify({
   generatedAtMs: 1, collectedAtMs: 900000, collectedAtText: '2026-09-15 00:00',
   health: null, mute: { active: false }, suppression: {}, config: { refreshSeconds: 0, defaultWindow: 'h24', theme: 'auto', staleMinutes: 15 },

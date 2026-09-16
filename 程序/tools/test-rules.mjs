@@ -560,5 +560,33 @@ if (!SLOW) {
   check('O 用例结束后现场已还原', [...snapshots].every(([p, buf]) => String(snapshot(p)) === String(buf)), '');
 }
 
+console.log('\n=== 测试 P：余额类采集间隔 = 1 分钟（默认值钉死 + 健康滞回按实际间隔换算） ===');
+{
+  // 默认值：模板里余额与 Codex 同为 1 分钟（2026-09-17 用户要求「余额采集频次提到 1 分钟」）。
+  // 用户自己的 config.json 是 gitignore 的用户数据，此处只能钉模板默认值——它决定新装/未显式覆盖的机器。
+  check('config.template.json: codexMinutes = 1', cfg.intervals?.codexMinutes === 1, String(cfg.intervals?.codexMinutes));
+  check('config.template.json: balanceMinutes = 1（余额与 Codex 同频）', cfg.intervals?.balanceMinutes === 1, String(cfg.intervals?.balanceMinutes));
+
+  // 机制：健康滞回按「分钟」配置、按该平台实际间隔换算成样本数 —— 余额改 1 分钟后不得变得过敏。
+  // （healthFailMinutes=15：1 分钟制要连续 15 次失败，若被当成 5 分钟制则 3 次就报警）
+  const balRow = (i, ok) => ({
+    ts: T0 + i * 60000,
+    current: {
+      codex: mkCodex({ u5: 0, uw: 0, reset5: 1 }),
+      deepseek: ok ? { ok: true, data: { totalBalance: 100 } } : { ok: false, error: 'boom' },
+      glm: { ok: true, data: { balance: 50 } },
+    },
+    sampled: { codex: false, deepseek: true, glm: true },
+    intervalMinutes: { codex: 1, balance: 1 },
+  });
+  const fail14 = runSequence(Array.from({ length: 14 }, (_, i) => balRow(i, false)), { codexMax5h7d: 50 });
+  check('余额 1 分钟制：连续 14 次失败（=14 分钟）不提醒（需 15 分钟）',
+    fail14.fired.length === 0, fail14.fired.map(f => f.key).join(','));
+  const fail15 = runSequence(Array.from({ length: 15 }, (_, i) => balRow(i, false)), { codexMax5h7d: 50 });
+  check('余额 1 分钟制：连续 15 次失败才报采集异常（按实际间隔换算，未被当成 5 分钟）',
+    fail15.fired.filter(f => f.key === 'health:deepseek' && f.level === 'P0').length === 1,
+    fail15.fired.map(f => f.key).join(','));
+}
+
 console.log(`\n=== 结果：${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);

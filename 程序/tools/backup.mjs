@@ -1,5 +1,5 @@
 // 一键备份：把配置、状态、全部历史与日志打包成 zip（永久保留的数据需要一个出口）
-// 用法：node 程序/tools/backup.mjs   （或看板上的「备份」按钮，经 aiquotaboard://backup 调用）
+// 用法：node 程序/tools/backup.mjs
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';

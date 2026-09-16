@@ -124,7 +124,7 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   /* 额度去向（对齐表格 + 整行色带表示幅度；右侧跳转按钮）
      关键：.abars 是**一个**网格，每行用 grid-template-columns: subgrid 继承同一套列轨道——
      否则每行各自成网格时，最后一列宽度会随按钮多少变化，把前面几列挤偏（曾因此出现 1/2/2 的不对齐）。 */
-  .abars { display: grid; grid-template-columns: minmax(0, 1fr) 76px 72px 48px max-content max-content;
+  .abars { display: grid; grid-template-columns: minmax(0, 1fr) 100px 72px 48px max-content max-content;
            gap: 2px 10px; max-height: 330px; overflow-y: auto; padding-right: 4px; }
   .arow { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center;
           padding: 5px 9px; border-radius: 6px; font-size: 12.5px; }
@@ -132,12 +132,17 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
                background: var(--card); z-index: 1; }
   .arow:not(.head) { background: linear-gradient(to right, rgba(var(--c), .15) var(--w), transparent var(--w)); }
   .arow:not(.head):hover { background-color: color-mix(in srgb, var(--accent) 9%, transparent); }
-  /* ThinCoder 列：有会话 → 实心徽标（醒目、可竖扫）；无 → 极淡的占位点 */
+  /* ThinCoder 列：有会话 → 实心徽标（醒目、可竖扫）；无 → 装了就给「创建」入口，没装只能引导安装（文字最长，列宽 100px 是为它定的） */
   .arow .tcc { text-align: center; }
   .arow.head .tcc { font-size: 11px; }
   .arow .tcc .on { display: inline-block; font-size: 10.5px; padding: 0 7px; border-radius: 999px;
                    background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); font-weight: 600; }
   .arow .tcc .off { color: var(--line); }
+  .arow .tcc a { display: inline-block; font-size: 10.5px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px;
+                 color: var(--muted); text-decoration: none; white-space: nowrap; }
+  .arow .tcc a:hover { color: var(--accent); border-color: var(--accent); }
+  .arow .tcc a.tc { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .arow .tcc a.tc:hover { background: color-mix(in srgb, var(--ok) 12%, transparent); }
   .arow .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .arow a.name { color: inherit; text-decoration: none; }
   .arow a.name:hover { color: var(--accent); text-decoration: underline; }
@@ -207,9 +212,21 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
     background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 16px;
     font-size: 12.5px; box-shadow: var(--shadow); opacity: 0; transition: opacity .18s; pointer-events: none; }
   .toast.on { opacity: 1; }
-  .modal { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; min-width: 380px; max-width: 560px; max-height: 80vh; overflow: auto; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
-  .modal h3 { margin: 0 0 12px; font-size: 15px; }
+  .modal { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; min-width: 380px; max-width: 560px; max-height: 80vh; overflow: auto; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+  .modal h3 { margin: 0 0 8px; font-size: 15px; }
+  /* 小标题要比标题小：h4 默认 16px，比 15px 的弹窗标题还大，层级是倒的 */
+  .modal h4 { margin: 18px 0 8px; font-size: 13px; font-weight: 650; }
+  .modal p { font-size: 12.5px; line-height: 1.6; }
+  /* 「说明 + 动作」同一行：按钮贴着它作用的那句话，不再单独占一行飘在最右边 */
+  .modal .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; }
+  /* 复选框成组：行距 8px（原来是两段 12px 的段落感），点整行都能切换 */
+  .modal .opts { display: grid; gap: 8px; margin-top: 12px; }
+  .modal .opts label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
   .modal .actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 16px; }
+  /* 关闭：右上角图标；点击区 34×34（够得着），title/aria-label 都有 */
+  .modal .x { position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 0; border-radius: 8px; color: var(--muted); font: inherit; font-size: 19px; line-height: 1; cursor: pointer; }
+  .modal .x:hover { background: var(--card2); color: var(--text); }
 
   /* ---------- 配置检查横幅 ---------- */
   .setupbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -295,7 +312,6 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
       </svg>
       <button class="btn" id="refreshBtn" title="立即刷新数据">刷新</button>
       <button class="btn" id="themeBtn" title="切换主题">主题</button>
-      <button class="btn" id="backupBtn" title="把配置、全部记录与日志打包到项目的 backups 目录（可长期留存）">备份</button>
       <button class="btn" id="supportBtn" title="帮助、反馈与检查更新">帮助与反馈 · 检查更新</button>
       <button class="btn" id="cfgPanelBtn" title="配置：平台开关与连接入口">配置</button>
     </div>
@@ -550,6 +566,32 @@ setInterval(() => {
   $('ringTxt').textContent = Math.max(0, countdown);
   if (countdown <= 0) refreshData();
 }, 1000);
+
+/* ================= 连接完成后的自动刷新 =================
+   连接窗口是本机独立进程（程序/tools/connections.mjs）：保存后会重跑一次 collect.mjs，
+   新数据落在 dashboard-data.js 里。页面这边收不到任何通知（file:// 页面没有服务端，也不新造协议），
+   唯一通路就是重载这个文件——默认 60 秒一次，用户连完回来看还是旧的。
+   所以点过连接入口（首屏「开始配置」/ 顶栏「配置」/ 卡片「连接平台」/ 检查横幅）就进入「等新数据」状态：
+   重载间隔临时压到 3 秒、持续 10 分钟，这期间连上哪个渠道都能在几秒内自己出现在看板上。
+   不在「数据一变就停」：计划任务每分钟也在写数据，那样会在用户还没保存时就提前结束等待。
+   窗口关掉后浏览器窗口重新获得焦点时再补一次——连接入口也可能来自托盘或别的窗口。 */
+const WATCH_SECONDS = 3, WATCH_MAX_MS = 10 * 60 * 1000;
+let watchTimer = null, watchUntil = 0;
+function watchForCollectedData() {
+  watchUntil = Date.now() + WATCH_MAX_MS;
+  if (watchTimer) return;                      // 已经在等：只把等待窗口往后推，不叠定时器
+  watchTimer = setInterval(() => {
+    if (Date.now() > watchUntil) { clearInterval(watchTimer); watchTimer = null; return; }
+    refreshData();
+  }, WATCH_SECONDS * 1000);
+}
+
+// 页面重新获得焦点 / 后台标签页重新可见：该刷新了就立刻追一次，不等下一个周期
+function catchUpRefresh() {
+  if (Date.now() < watchUntil || (refreshSec > 0 && countdown <= 0)) refreshData();
+}
+window.addEventListener('focus', catchUpRefresh);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) catchUpRefresh(); });
 
 /* ================= 渲染 ================= */
 function render() {
@@ -1201,6 +1243,8 @@ let attrDays = 7;   // 7 | 30 | 'all'
 let attrSort = { key: 'tokens', dir: -1 };
 // 整行色带用 rgba 分量的形式，便于按项目序号取色
 const ATTR_RGB = ['79,140,255', '62,207,142', '245,166,35', '255,92,92', '167,139,250', '34,211,238', '244,114,182', '132,204,22', '56,189,248', '250,204,21'];
+// 没装 ThinCoder 的机器上，ThinCoder 列指到这里（与设计档第 4 步的 ThinCoder 安装引导同一地址）
+const TC_INSTALL_URL = 'https://thincoder.com/install.html';
 
 function renderAttr() {
   const a = D.attribution;
@@ -1243,13 +1287,24 @@ function renderAttr() {
     const folderCell = cwd
       ? `<span class="acts"><a href="aiquotaboard://openpath?path=${esc(enc)}" title="在资源管理器中打开：${esc(cwd)}">📁 打开</a></span>`
       : `<span class="acts"><span class="na">—</span></span>`;
-    const tcCellAct = hasTc
+    // 「启动」点下去真的会起 ThinCoder（程序/tools/open-tc.mjs 执行 thincoder.cmd），两个条件缺一不可：
+    // 这个项目用过 ThinCoder ＋ 本机**现在**还装着（D.thinCoderInstalled，采集时探测，与下面 ThinCoder 列同一个值）。
+    // 取不到这个字段（老数据 / 还没采集过）按「未知」处理，保持显示——不能因为值缺失就把整列按钮变没。
+    const canLaunch = hasTc && D.thinCoderInstalled !== false;
+    const tcCellAct = canLaunch
       ? `<span class="acts"><a class="tc" href="aiquotaboard://opentc?path=${esc(enc)}" title="在此项目目录启动 ThinCoder 工作台">⌨ 启动</a></span>`
-      : `<span class="acts"><span class="na">—</span></span>`;
-    // ThinCoder 列：有会话 → 醒目徽标；无 → 淡点（方便竖向扫读哪些项目用过 ThinCoder）
+      : hasTc
+        ? `<span class="acts"><span class="na" title="本机没检测到 ThinCoder（thincoder.cmd 不在 PATH 上）：装好之后这里才能启动">—</span></span>`
+        : `<span class="acts"><span class="na">—</span></span>`;
+    // ThinCoder 列：有会话 → 醒目徽标；无 → 装了 ThinCoder 给「创建」入口（就在该目录起一个会话，与「启动」同一条协议），
+    // 没装就只能引导去装（不能写「创建」：那台机器上点了也起不来）。连目录都没记录的行两种都给不了。
     const tcCell = hasTc
       ? `<span class="tcc"><span class="on" title="该项目有 ${p.thinCoderSessions} 个 ThinCoder 会话">⌨ ${p.thinCoderSessions}</span></span>`
-      : `<span class="tcc"><span class="off" title="该项目没有 ThinCoder 会话">·</span></span>`;
+      : cwd
+        ? (D.thinCoderInstalled !== false
+          ? `<span class="tcc"><a class="tc" href="aiquotaboard://opentc?path=${esc(enc)}" title="在此项目目录启动 ThinCoder 工作台">创建</a></span>`
+          : `<span class="tcc"><a href="${TC_INSTALL_URL}" target="_blank" rel="noopener noreferrer" title="ThinCoder 下载与安装">安装 ThinCoder</a></span>`)
+        : `<span class="tcc"><span class="off" title="该项目没有 ThinCoder 会话">·</span></span>`;
     return `<div class="arow" style="--c:${rgb};--w:${Math.max(1, (p[key] / max) * 100).toFixed(1)}%">
       <span class="name" title="${esc(cwd || p.project)}">${esc(p.project)}</span>
       ${tcCell}
@@ -1380,7 +1435,7 @@ function renderSetupBar() {
    用隐藏 iframe 触发 aiquotaboard:// 协议（见 fireProtocol），动作清单以 程序/运行协议.vbs 为准。
    连接窗口是本机独立进程（程序/tools/connections.mjs）：页面这边没有向导、不申请目录句柄、不接触密钥。 */
 function fireProtocol(url) {
-  // 隐藏 iframe 触发协议，避免页面跳转（连接 / 备份 / 平台开关等按钮共用）
+  // 隐藏 iframe 触发协议，避免页面跳转（连接 / 平台开关等按钮共用）
   const f = document.createElement('iframe');
   f.style.display = 'none';
   f.src = url;
@@ -1392,6 +1447,7 @@ function setupWizardOpen(platform = '') {
   // 卡片上的「启用平台 / 连接平台」= 只配置这一家：带 platform 参数开本机连接窗口，
   // 窗口那边把这一家置顶/预勾选；不带参数 = 三家都显示
   // （首屏「开始配置」、顶栏「配置」、检查横幅的「打开配置」共用）。
+  watchForCollectedData();   // 连接保存后会重跑采集：页面盯着 dashboard-data.js，连完自动换上新数据
   fireProtocol('aiquotaboard://connect' + (platform ? '?platform=' + encodeURIComponent(platform) : ''));
 }
 
@@ -1562,11 +1618,6 @@ function renderHealth() {
 // 没有弹窗时顺带清掉趋势图上的框选。字母 / 数字类快捷键（1 2 3 · R · T · W · ?）已整体移除。
 function closeOverlayEl(el) { el.classList.remove('on'); }
 function closeOverlays() { document.querySelectorAll('.overlay.on').forEach(closeOverlayEl); }
-
-function runBackup() {
-  fireProtocol('aiquotaboard://backup');
-  toastNote('备份已开始，完成后在 backups/ 目录查看');
-}
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
@@ -1881,9 +1932,8 @@ document.querySelectorAll('#attrSeg button').forEach(b => b.classList.toggle('on
 // 初始化 ThinCoder 范围开关
 document.querySelectorAll('#tcSeg button').forEach(b => b.classList.toggle('on', b.dataset.tc === String(tcDays)));
 
-// 顶栏按钮（配置 = 直接打开本机连接窗口 / 备份；「帮助与反馈」按钮的事件在 assets/support.js 里）
+// 顶栏按钮（配置 = 直接打开本机连接窗口；「帮助与反馈」按钮的事件在 assets/support.js 里）
 $('cfgPanelBtn').addEventListener('click', () => setupWizardOpen());
-$('backupBtn').addEventListener('click', runBackup);
 
 // 首帧即应用已保存的主题（避免先闪一下默认主题）
 applyTheme();

@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 
 export function compareVersions(a, b) {
   const parse = v => {
@@ -67,11 +66,6 @@ export async function fetchBounded(url, limit, { fetcher = fetch, timeout = 1200
     return Buffer.concat(chunks);
   }
   throw new Error('下载跳转次数过多');
-}
-
-export function verifyInstaller(bytes, manifest) {
-  if (bytes.length !== manifest.size || bytes[0] !== 0x4d || bytes[1] !== 0x5a ||
-      crypto.createHash('sha256').update(bytes).digest('hex') !== manifest.sha256) throw new Error('安装包校验失败，请重新检查更新');
 }
 
 export function atomicJson(file, value) {

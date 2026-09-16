@@ -2,14 +2,15 @@
 (() => {
   'use strict';
   const info = window.BOARD_PRODUCT || {};
-  let state = { currentVersion: info.version || '未知', channels: info.channels || {}, automatic: true, notifications: true };
+  // automatic 的默认值与 程序/tools/update.mjs 里 update-preferences.json 的默认值同源：每天自动检查默认不勾选
+  let state = { currentVersion: info.version || '未知', channels: info.channels || {}, automatic: false, notifications: true };
   let timer, waitingUntil = 0, previousData = '';
   const make = (tag, text, className) => {
     const el = document.createElement(tag); if (text) el.textContent = text;
     if (className) el.className = className; return el;
   };
   const overlay = make('div', '', 'overlay'); overlay.id = 'supportOverlay';
-  const modal = make('div', '', 'modal'); modal.style.maxWidth = '620px';
+  const modal = make('div', '', 'modal');
   modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true'); modal.setAttribute('aria-label', '帮助与反馈');
   overlay.append(modal); document.body.append(overlay);
   const banner = make('div', '', 'card'); banner.id = 'updateBanner'; banner.hidden = true;
@@ -23,64 +24,60 @@
     state.message = '正在处理…若浏览器询问，请允许打开看板应用。'; render();
     clearTimeout(timer); poll();
   }
-  function button(label, action, primary = false) {
-    const b = make('button', label, `btn${primary ? ' primary' : ''}`);
+  function button(label, action) {
+    const b = make('button', label, 'btn');
     b.addEventListener('click', action); return b;
   }
-  function link(label, href) {
-    const a = make('a', label, 'btn');
-    try { const u = new URL(href); if (u.protocol !== 'https:' || u.username || u.password) return make('span', '入口尚未配置', 'muted'); a.href = u.href; }
-    catch { return make('span', '入口尚未配置', 'muted'); }
-    a.target = '_blank'; a.rel = 'noopener noreferrer'; return a;
-  }
-  // 维护者微信号 + 一键复制（这串字母数字手抄容易错）
+  // 维护者微信号 + 一键复制（这串字母数字手抄容易错）；
+  // 复制结果就地在按钮旁反馈：原来写进标题下的状态行，离按钮 8 行远，点了像没反应
   const WECHAT_ID = 'lixiangcheng2017';
-  function wechatBlock(status) {
-    const row = make('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 2px';
+  function wechatBlock() {
+    const row = make('div', '', 'row');
     const id = make('strong', WECHAT_ID);
     id.style.cssText = 'font: 600 14px/1.4 var(--mono, ui-monospace, monospace)';
+    const note = make('span', '', 'muted'); note.setAttribute('aria-live', 'polite');
     row.append(make('span', '微信', 'muted'), id, button('复制', async () => {
-      try { await navigator.clipboard.writeText(WECHAT_ID); status.textContent = '已复制微信号'; }
-      catch { status.textContent = '请手动复制：' + WECHAT_ID; }
-    }));
+      try { await navigator.clipboard.writeText(WECHAT_ID); note.textContent = '已复制'; }
+      catch { note.textContent = `请手动复制：${WECHAT_ID}`; }
+    }), note);
     return row;
   }
   function open() { overlay.classList.add('on'); render(); modal.querySelector('button')?.focus(); poll(); }
   function close() { overlay.classList.remove('on'); document.getElementById('supportBtn')?.focus(); }
   function render() {
-    modal.replaceChildren(make('h3', '帮助与反馈'), make('p', `当前版本 v${state.currentVersion}`));
-    const status = make('p', state.message || '可手动检查更新；自动检查每天最多一次。'); status.id = 'updateMessage'; status.setAttribute('aria-live', 'polite'); modal.append(status);
-    const actions = make('div', '', 'actions');
-    actions.append(button('检查更新', () => command('check')));
+    // 关闭改到右上角图标（底部那个孤立在左下的「关闭」按钮去掉）
+    const closeBtn = make('button', '×', 'x');
+    closeBtn.type = 'button'; closeBtn.title = '关闭'; closeBtn.setAttribute('aria-label', '关闭');
+    closeBtn.addEventListener('click', close);
+    modal.replaceChildren(make('h3', '帮助与反馈'), closeBtn, make('p', `当前版本 v${state.currentVersion}`, 'muted'));
+    // 状态与「检查更新」同一行（按钮不再单独占一行飘在最右边）
+    const row = make('div', '', 'row');
+    const status = make('span', state.message || '可手动检查更新。', 'spacer');
+    status.id = 'updateMessage'; status.setAttribute('aria-live', 'polite');
+    row.append(status, button('检查更新', () => command('check')));
+    modal.append(row);
     if (state.available && state.manifest) {
       modal.append(make('h4', `新版本 v${state.manifest.version}`));
-      const notes = make('p', state.manifest.notes || '改进与修复'); notes.style.whiteSpace = 'pre-wrap'; modal.append(notes);
-      const upgrade = button('立即更新', () => command('install'), true);
-      upgrade.disabled = state.phase === 'downloading';
-      actions.append(upgrade, button('稍后提醒', () => command('later')), link('查看更新说明', state.manifest.releaseUrl));
-      modal.append(make('p', '升级保留配置和历史；下载校验后打开安装向导。', 'muted'));
+      const notes = make('p', state.manifest.notes || '改进与修复', 'muted'); notes.style.whiteSpace = 'pre-wrap'; modal.append(notes);
+      // 检测到新版本时只保留一个动作：跳过该版本（用户 2026-09-17 定：不做自动下载 / 自动安装，要升级的自己下安装包）。
+      // 动作名 skip 三处同名：本文件 → 协议白名单（程序/运行协议.vbs 的固定动作表）→ tools/update.mjs。
+      // 三处必须一起改：对不上的表现是「点了没反应」，静默失败最难查。
+      const actions = make('div', '', 'actions');
+      actions.append(button('跳过该版本', () => command('skip')));
+      modal.append(actions);
     }
-    modal.append(actions);
+    const opts = make('div', '', 'opts');
     for (const [name, label, action] of [['automatic', '每天自动检查更新', 'auto'], ['notifications', '允许托盘提示新版本', 'notify']]) {
-      const row = make('label', '', 'hint'); row.style.cssText = 'display:block;margin:12px 0';
+      const line = make('label');
       const check = document.createElement('input'); check.type = 'checkbox'; check.checked = state[name] !== false;
-      check.addEventListener('change', () => command(`${action}-${check.checked ? 'on' : 'off'}`)); row.append(check, document.createTextNode(` ${label}`)); modal.append(row);
+      check.addEventListener('change', () => command(`${action}-${check.checked ? 'on' : 'off'}`));
+      line.append(check, document.createTextNode(` ${label}`)); opts.append(line);
     }
-    modal.append(make('h4', '交流与问题反馈'), wechatBlock(status));
-    const contact = make('div', '', 'actions');
-    contact.append(link('加入用户群', state.channels?.community), link('提交问题', state.channels?.github ? `${state.channels.github}/issues` : ''));
-    contact.append(button('复制反馈信息', async () => {
-      const text = `软件版本：v${state.currentVersion}\n系统：${navigator.platform || 'Windows'}\n遇到的问题：\n复现步骤：\n希望的结果：\n`;
-      try { await navigator.clipboard.writeText(text); status.textContent = '已复制反馈模板，可粘贴到群内或问题页面。'; }
-      catch { const box = make('textarea'); box.value = text; box.style.cssText = 'width:100%;height:140px'; modal.append(box); box.focus(); box.select(); status.textContent = '请复制下方反馈模板。'; }
-    }));
-    modal.append(contact, make('p', '入群页面会提供最新二维码；反馈模板不含密钥、用量和项目路径。', 'muted'));
-    modal.append(button('关闭', close));
+    modal.append(opts, make('h4', '交流与问题反馈'), wechatBlock());
     banner.replaceChildren();
-    const show = !!state.available && state.manifest && !(state.snoozeUntil > Date.now());
+    const show = !!state.available && !!state.manifest;
     banner.hidden = !show; banner.style.display = show ? 'flex' : 'none';
-    if (show) banner.append(make('strong', `发现新版本 v${state.manifest.version}`), button('查看与更新', open, true), button('稍后提醒', () => command('later')));
+    if (show) banner.append(make('strong', `发现新版本 v${state.manifest.version}`), button('跳过该版本', () => command('skip')));
   }
   function poll() {
     clearTimeout(timer);

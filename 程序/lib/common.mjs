@@ -214,6 +214,19 @@ export function detectSystemProxy() {
   } catch { return null; }
 }
 
+// ---- ThinCoder 装没装（看板「额度去向」的 ThinCoder 列据此显示「创建」或「安装 ThinCoder」）----
+// 判据是「启动器在不在 PATH 上」：那一列点了就是让 tools/open-tc.mjs 在该项目目录里执行 thincoder(.cmd)，
+// 只有探测同一个可执行文件，按钮的承诺（点了能起来）才不会落空。
+// 不看 ~/.thincoder（那只能说明用过、不能说明还能启动），也不自己拼安装目录。
+export function thinCoderInstalled() {
+  try {
+    // where.exe thincoder.cmd：与 tools/open-tc.mjs 启动的同一个可执行文件（npm 全局安装的启动器）
+    if (process.platform === 'win32') execFileSync('where.exe', ['thincoder.cmd'], { stdio: 'ignore', timeout: 8000 });
+    else execFileSync('sh', ['-c', 'command -v thincoder'], { stdio: 'ignore', timeout: 8000 });
+    return true;
+  } catch { return false; }
+}
+
 // ---- 静音（临时关闭提醒；P0 是否放行由 config.mute.allowP0 决定）----
 
 export function loadMute() {

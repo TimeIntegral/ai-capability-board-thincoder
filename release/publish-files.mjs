@@ -69,7 +69,7 @@ export const 发布层 = [
 
   // ── 程序工具：安装、更新、升级、卸载与看板按钮的执行端 ──
   ['程序/tools/attribution.mjs', '额度归因：采集时调用，也可单独跑'],
-  ['程序/tools/backup.mjs', '一键备份（看板「备份」按钮经协议调用）'],
+  ['程序/tools/backup.mjs', '一键备份：打包历史与配置（命令行调用）'],
   ['程序/tools/build-dashboard-data.mjs', '生成 dashboard-data.js（采集后调用）'],
   ['程序/tools/connections.mjs', '本机连接窗口：接收并保存密钥'],
   ['程序/tools/connections.ps1', '连接窗口的原生表单（connections.mjs 调用）'],
@@ -89,7 +89,7 @@ export const 发布层 = [
   ['程序/tools/setup-notify.mjs', '首次启用的中文完成提示（启用自动采集.vbs 调用）'],
   ['程序/tools/tray.ps1', '托盘常驻脚本（托盘图标.vbs 调用）'],
   ['程序/tools/uninstall.mjs', '卸载清理：停掉后台、注销任务与协议，用户数据默认保留'],
-  ['程序/tools/update.mjs', '检查更新（看板「检查更新」与启动时自动检查）'],
+  ['程序/tools/update.mjs', '检查更新与「跳过该版本」（看板「检查更新」、跳过按钮与启动时自动检查）'],
   ['程序/tools/upgrade-lifecycle.mjs', '升级前备份、失败回滚（安装器调用）'],
   ['程序/tools/windows-integration.mjs', '系统集成公共库：计划任务、快捷方式、托盘进程收口'],
 

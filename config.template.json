@@ -3,7 +3,7 @@
   "intervals": {
     "$comment": "分平台采集间隔（分钟）。改变后运行 node 程序/tools/set-task-interval.mjs 同步计划任务（任务按最小间隔触发，各平台按自己的间隔取数）",
     "codexMinutes": 1,
-    "balanceMinutes": 5
+    "balanceMinutes": 1
   },
   "proxy": null,
   "$proxyComment": "null = 自动探测系统代理（推荐）；也可写死如 \"http://127.0.0.1:7897\"。探测失败时采集器会再试直连。",

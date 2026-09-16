@@ -2,7 +2,7 @@
 // 数据只含展示字段，绝不含密钥/token
 import fs from 'node:fs';
 import path from 'node:path';
-import { DATA_DIR, DAY_MS, ensureDataDir, fmtLocal, humanDuration, loadMute, loadConfig, loadSuppression, compactSeries, readHistoryRows } from '../lib/common.mjs';
+import { DATA_DIR, DAY_MS, ensureDataDir, fmtLocal, humanDuration, loadMute, loadConfig, loadSuppression, compactSeries, readHistoryRows, thinCoderInstalled } from '../lib/common.mjs';
 
 export function buildDashboardData() {
   ensureDataDir();
@@ -50,6 +50,9 @@ export function buildDashboardData() {
     predict: { ...(cfg.predict ?? {}) },
     anomaly: { ...(cfg.anomaly ?? {}) },
     attribution: safeJson(`${DATA_DIR}\\attribution.json`) ?? null, // 额度去向（每小时维护生成）
+    // 本机装没装 ThinCoder（每次采集重算，装完不用等一小时就能看到「创建」）——
+    // 只给「额度去向」表的 ThinCoder 列用：没装显示「安装 ThinCoder」，装了显示「创建」
+    thinCoderInstalled: thinCoderInstalled(),
     recentAlerts: (alerts.history ?? alerts.fired ?? []).slice(-40).reverse(),
     daily: buildDaily(cache),   // 按日聚合（热力图与区间统计用）
     history: buildHistory(cache), // 趋势数据内联（file:// 下 fetch 不可用）

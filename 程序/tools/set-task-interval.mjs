@@ -1,6 +1,6 @@
 // 按 config.json 的 intervals 同步 Windows 计划任务的触发间隔
 // 用法：node 程序/tools/set-task-interval.mjs
-// 说明：任务按「最小间隔」触发（如 Codex 1 分钟、余额 5 分钟 → 任务每 1 分钟跑一次），
+// 说明：任务按「最小间隔」触发（各平台间隔不同时取其中最小者 —— 默认 Codex 与余额都是 1 分钟），
 //       各平台是否真正取数由 collect.mjs 按自己的间隔判断。
 import fs from 'node:fs';
 import path from 'node:path';
