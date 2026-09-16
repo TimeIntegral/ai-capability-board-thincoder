@@ -98,24 +98,24 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   .nodata .nd-l b { font-weight: 600; }
   .nodata code { background: color-mix(in srgb, var(--text) 8%, transparent); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 
-  /* 每日热力图（含坐标：左侧星期、顶部月份，行列间距与格子严格对齐） */
+  /* 每日热力图（含坐标：左侧星期、顶部月份）
+     月份行与网格同处一个横向滚动容器：滚动时两者一起走，不会错位；
+     列距固定 24px（格子 20 + 间距 4）——宽度不够时补的是空格子，不是把格子拉大。 */
   .heat-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-  .heat-top { display: flex; gap: 6px; margin-bottom: 3px; }
-  .heat-gutter { width: 20px; flex: 0 0 auto; }
-  .heat-days { width: 20px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 3px; }
-  .heat-days span { height: 14px; line-height: 14px; font-size: 10px; color: var(--muted); text-align: right; padding-right: 2px; }
-  .heat-months { display: flex; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
-  .heat-months span { flex: 0 0 auto; }
+  .heat-days { width: 20px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; padding-top: 18px; }  /* 18 = 月份行高 14 + 间距 4，保证星期与行严格同高同距 */
+  .heat-days span { height: 20px; line-height: 20px; font-size: 11px; color: var(--muted); text-align: right; padding-right: 2px; }
+  .heat-months { position: relative; height: 14px; margin-bottom: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .heat-months span { position: absolute; top: 0; }
   .heat-body { display: flex; gap: 6px; }
-  .heat-wrap { overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; position: relative; }
-  .heat { display: flex; gap: 3px; }
-  .heat .hcol { display: flex; flex-direction: column; gap: 3px; }
-  .heat .hcell { width: 14px; height: 14px; border-radius: 3px; background: var(--card2); cursor: default; }
+  .heat-wrap { flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; position: relative; }
+  .heat { display: flex; gap: 4px; }
+  .heat .hcol { display: flex; flex-direction: column; gap: 4px; }
+  .heat .hcell { width: 20px; height: 20px; border-radius: 4px; background: var(--card2); cursor: default; }
   .heat .hcell.empty { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
   .heat .hcell.today { box-shadow: 0 0 0 1.5px var(--text); }
   .heat-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 11.5px; color: var(--muted); flex-wrap: wrap; }
   .heat-foot .scale { display: flex; align-items: center; gap: 3px; }
-  .heat-foot .scale i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .heat-foot .scale i { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
 
   /* 平台跳转按钮 */
   a.open { text-decoration: none; color: var(--muted); padding: 1px 7px; line-height: 1.4; }
@@ -199,7 +199,7 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   .health-row .rate { font-variant-numeric: tabular-nums; font-weight: 600; }
   .health-row .sub { color: var(--muted); font-size: 12px; }
 
-  /* 快捷键帮助浮层 & 配置编辑弹窗 */
+  /* 弹窗样式（overlay + modal）：页面里只有 assets/support.js 注入的「帮助与反馈」用它 */
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); z-index: 100; display: none; align-items: center; justify-content: center; }
   .overlay.on { display: flex; }
   /* 轻提示：页面底部飘一句（原先借用「工具区」里的 #toolNote，工具区移除后自带宿主） */
@@ -209,45 +209,16 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   .toast.on { opacity: 1; }
   .modal { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; min-width: 380px; max-width: 560px; max-height: 80vh; overflow: auto; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
   .modal h3 { margin: 0 0 12px; font-size: 15px; }
-  .keys { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: 13px; }
-  .keys kbd { background: var(--card2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; font: 600 11.5px/1.7 var(--mono, ui-monospace, monospace); }
   .modal .actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 16px; }
 
-  /* ---------- 配置检查横幅 + 配置面板 ---------- */
+  /* ---------- 配置检查横幅 ---------- */
   .setupbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     background: color-mix(in srgb, var(--warn) 10%, var(--card));
     border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
     border-radius: 10px; padding: 9px 14px; margin-bottom: 14px; font-size: 12.5px; }
   .setupbar .sb-warn { color: var(--warn); }
   .setupbar .spacer { flex: 1; }
-  .cfgpanel { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-    padding: 14px 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
-  .cfgpanel h3 { font-size: 13.5px; margin: 0 0 4px; font-weight: 600; }
-  .cfgpanel .cp-sub { color: var(--muted); font-size: 11.5px; margin: 0 0 10px; line-height: 1.6; }
-  .cfgpanel .cp-row { display: flex; align-items: center; gap: 10px; padding: 8px 0;
-    border-top: 1px dashed var(--line); flex-wrap: wrap; }
-  .cfgpanel .cp-row:first-of-type { border-top: none; }
-  .cfgpanel .cp-name { width: 96px; font-weight: 600; font-size: 12.5px; }
-  .cfgpanel .cp-state { font-size: 11.5px; color: var(--muted); flex: 1; min-width: 180px; }
-  .cfgpanel .cp-state b { color: var(--text); font-weight: 600; }
-  .cfgpanel .cp-acts { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
-  .cfgpanel .cp-sec { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
-    display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .btn.sm { padding: 3px 10px; font-size: 11.5px; }
-  .btn.danger { color: var(--bad); }
-
-  /* ---------- 概览状态条 ---------- */
-  .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-bottom: 16px; }
-  .tile { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 3px; box-shadow: var(--shadow); }
-  .tile.ok { border-left-color: var(--ok); }
-  .tile.warn { border-left-color: var(--warn); }
-  .tile.bad { border-left-color: var(--bad); }
-  /* 已关闭 / 未配置：中性色，不吓人（不是故障） */
-  .tile.idle { border-left-color: var(--line); opacity: .72; }
-  .tile.idle .v { color: var(--muted); }
-  .tile .t { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
-  .tile .v { font-size: 20px; font-weight: 650; }
-  .tile .v small { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 6px; }
 
   /* ---------- 卡片 ---------- */
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
@@ -303,7 +274,7 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   footer { margin-top: 26px; color: var(--muted); font-size: 11.5px; line-height: 1.9; }
   @media (max-width: 620px) {
     body { padding: 12px; }
-    .grid, .strip { grid-template-columns: 1fr; }
+    .grid { grid-template-columns: 1fr; }
     h1 { font-size: 17px; }
   }
 </style>
@@ -338,16 +309,12 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
       </span>
       <span class="muted" id="intervalNote"></span>
       <span class="spacer"></span>
-      <span class="chip warn" id="mute" style="display:none"></span>
-      <button class="btn" id="muteBtn" title="静音 2 小时">静音 2 小时</button>
     </div>
   </header>
 
   <div class="setupbar" id="setupBar" style="display:none"></div>
-  <div class="cfgpanel" id="cfgPanel" style="display:none"></div>
 
   <div class="group"><span class="gbar"></span><span class="gtxt">实时状态</span><span class="gsub">当前额度与用量趋势</span><span class="gline"></span></div>
-  <div class="strip" id="strip"></div>
   <div class="grid" id="cards"></div>
 
   <div class="sec" style="margin-top:20px">用量趋势 <span class="span"></span><span class="muted" id="chartHint">在图上点两下选择区间：第一下起点、第二下终点</span></div>
@@ -390,13 +357,13 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
       </span>
       <span class="muted" id="heatSummary"></span>
     </div>
-    <div class="heat-top">
-      <span class="heat-gutter"></span>
-      <div class="heat-months" id="heatMonths"></div>
-    </div>
     <div class="heat-body">
       <div class="heat-days" id="heatDays"></div>
-      <div class="heat-wrap" id="heatWrap"><div class="heat" id="heat"></div><div class="tip" id="heatTip"></div></div>
+      <div class="heat-wrap" id="heatWrap">
+        <div class="heat-months" id="heatMonths"></div>
+        <div class="heat" id="heat"></div>
+        <div class="tip" id="heatTip"></div>
+      </div>
     </div>
     <div class="heat-foot" id="heatFoot"></div>
   </div>
@@ -443,25 +410,6 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
     <div class="hint" id="tcHint"></div>
   </div>
 
-  <div class="overlay" id="helpOverlay">
-    <div class="modal">
-      <h3>键盘快捷键</h3>
-      <div class="keys">
-        <kbd>1</kbd><span>打开 Codex 官方用量页</span>
-        <kbd>2</kbd><span>打开 DeepSeek 用量页</span>
-        <kbd>3</kbd><span>打开 GLM 财务页</span>
-        <kbd>R</kbd><span>立即刷新数据</span>
-        <kbd>T</kbd><span>切换主题（自动 → 深色 → 浅色）</span>
-        <kbd>W</kbd><span>切换时间窗口（24 小时 → 7 天 → 30 天 → 全部）</span>
-        <kbd>点选</kbd><span>在趋势图上点两下选择区间（第一下起点、第二下终点），统计该区间用量与花费；<kbd>Esc</kbd> 取消</span>
-        <kbd>点击</kbd><span>点表头可排序（额度去向 / ThinCoder 表格）；在「额度去向」里点 📁 打开项目文件夹、点 ⌨ 启动 ThinCoder 工作台</span>
-        <kbd>Esc</kbd><span>清除框选 / 关闭浮层</span>
-        <kbd>?</kbd><span>显示或隐藏本帮助</span>
-      </div>
-      <div class="actions"><button class="btn primary" data-close="helpOverlay">知道了</button></div>
-    </div>
-  </div>
-
   <div class="group alt"><span class="gbar"></span><span class="gtxt">历史与记录</span><span class="gsub">充值凭证与提醒流水</span><span class="gline"></span></div>
 
   <div class="panel">
@@ -483,8 +431,7 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   <footer>
     数据来源：Codex = chatgpt.com/backend-api/codex/usage（OAuth）；DeepSeek = api.deepseek.com/user/balance（官方）；GLM = bigmodel.cn 财务接口（逆向，失效会显示「数据陈旧」并提醒）。<br>
     采集：Windows 计划任务按最小间隔触发，各平台按各自间隔取数（Codex 与余额可不同）；关机/睡眠期间无数据，唤醒后自动补跑。<br>
-    临时不想被打扰：点顶栏的 <b>静音 2 小时</b>（托盘图标右键也有同一项）。<br>
-    键盘快捷键：按 <b>?</b> 查看。
+    临时不想被打扰：右键任务栏托盘的看板图标，点「静音 2 小时」。
   </footer>
 </div>
 
@@ -596,7 +543,6 @@ function applyTheme() {
 }
 
 setInterval(() => {
-  if (muteState().active !== lastMuteActive) renderHeader();   // 静音到点自动恢复：按钮与状态 chip 一起翻回来
   if (refreshSec === 0) { $('fresh').title = '自动刷新已关闭'; $('ringTxt').textContent = '⏸'; return; }
   countdown -= 1;
   const ring = document.querySelector('#ring .fgc');
@@ -608,7 +554,6 @@ setInterval(() => {
 /* ================= 渲染 ================= */
 function render() {
   renderHeader();
-  renderStrip();
   renderCards();
   renderCharts();
   renderRangeStats();
@@ -619,48 +564,7 @@ function render() {
   renderHealth();
   renderPacks();
   renderAlerts();
-  renderCfg();
-}
-
-/* ================= 提醒静音：页面按钮 ↔ 本机 mute.mjs =================
-   页面只发协议（aiquotaboard://mute / unmute，动作清单见 程序/运行协议.vbs），不写盘、不碰密钥。
-   状态来自采集写进看板数据的 D.mute（程序/tools/build-dashboard-data.mjs 由 data/mute.json 生成，约 5 分钟一次）。
-   点过之后、下一份数据回来之前先用本地覆盖值显示，数据一转回来就交还给数据。
-   铁律：按钮上的字永远等于点下去会发生的事——静音到点后文案自己翻回「静音 2 小时」。 */
-const MUTE_HOLD_MS = 2 * 3600e3;   // 与 程序/运行协议.vbs 的 mute 动作一致（那里执行的是 mute.mjs 2h）
-let muteOverride = null;           // { active, untilMs, atMs }：点击瞬间起效的本地值
-let lastMuteActive = null;         // 每秒比对：到点或数据变化时把文案翻回来
-
-function muteState() {
-  if (muteOverride && (D.generatedAtMs ?? 0) <= muteOverride.atMs) {
-    const o = muteOverride;
-    return { active: o.active && o.untilMs > Date.now(), untilMs: o.untilMs, untilText: o.active ? fmtTime(o.untilMs, false) : null };
-  }
-  muteOverride = null;
-  const untilMs = D.mute?.until ?? null;
-  return {
-    active: !!D.mute?.active && (untilMs == null || untilMs > Date.now()),
-    untilMs,
-    untilText: (D.mute?.untilText ?? '').slice(-5) || null,   // 数据里是「YYYY-MM-DD HH:MM」，只取时分
-  };
-}
-
-function renderMuteBtn() {
-  const st = muteState();
-  lastMuteActive = st.active;
-  const b = $('muteBtn');
-  if (!b) return;
-  b.textContent = st.active ? '取消静音' : '静音 2 小时';
-  b.title = b.textContent;
-}
-
-function toggleMute() {
-  const now = Date.now();
-  const on = muteState().active;
-  muteOverride = on ? { active: false, untilMs: 0, atMs: now } : { active: true, untilMs: now + MUTE_HOLD_MS, atMs: now };
-  fireProtocol(on ? 'aiquotaboard://unmute' : 'aiquotaboard://mute');
-  toastNote(on ? '已取消静音' : '已静音 2 小时');
-  renderHeader();
+  renderSetupBar();
 }
 
 function renderHeader() {
@@ -673,11 +577,6 @@ function renderHeader() {
   else { f.textContent = `数据过期 · ${fmtAge(ageMin)}`; f.className = 'chip bad'; }
   $('updated').textContent = D.collectedAtText ? `更新于 ${D.collectedAtText}` : '';
 
-  const st = muteState();
-  const m = $('mute');
-  if (st.active) { m.style.display = ''; m.textContent = `🔇 静音至 ${st.untilText ?? ''}`; } else m.style.display = 'none';
-  renderMuteBtn();
-
   const iv = D.intervals ?? {};
   $('intervalNote').textContent = `采集：Codex ${iv.codex ?? '?'} 分钟 · 余额 ${iv.balance ?? '?'} 分钟 · 页面 ${refreshSec || '—'} 秒刷新`;
 }
@@ -689,52 +588,6 @@ function platState(x) {
   if (x?.disabled) return 'disabled';
   if (x?.unconfigured) return 'unconfigured';
   return 'error';
-}
-// 关闭/未配置时的中性占位块（用于顶部状态条）
-// 提示文案必须分平台：Codex 的凭据来自它的登录文件，不走 secrets.json（曾经三个平台共用一句错误提示）
-const IDLE_HINT = {
-  codex: { need: '先安装并登录 Codex（生成 ~/.codex/auth.json）', off: '点击连接平台，重新启用' },
-  deepseek: { need: '点击连接平台，补充密钥', off: '点击连接平台，重新启用' },
-  glm: { need: '点击连接平台，补充密钥', off: '点击连接平台，重新启用' },
-};
-function idleTile(mark, name, x, platform) {
-  const isOff = x?.disabled;
-  const hint = IDLE_HINT[platform] ?? IDLE_HINT.deepseek;
-  const title = isOff ? '已关闭' : '未配置';
-  return `<div class="tile idle"><div class="t"><span>${mark} ${esc(name)}</span><span><span class="pill">${title}</span></span></div>
-    <div class="v">—</div><div class="t"><span>${esc(isOff ? hint.off : hint.need)}</span></div></div>`;
-}
-
-function renderStrip() {
-  const tiles = [];
-  const c = D.codex, ds = D.deepseek, g = D.glm;
-  if (c?.ok) {
-    const w5 = c.fiveHour.usedPercent ?? 0, ww = c.weekly.usedPercent ?? 0;
-    const r5 = Math.max(0, 100 - w5), rw = Math.max(0, 100 - ww); // 以「剩余」为主口径
-    const warnAt = 100 - (D.thresholds?.codex5hWarn ?? 80), badAt = 100 - (D.thresholds?.codex5hCritical ?? 95);
-    const cls = c.limitReached ? 'bad' : r5 <= badAt ? 'bad' : r5 <= warnAt ? 'warn' : 'ok';
-    tiles.push(`<div class="tile ${cls}"><div class="t"><span>${MARK.codex} Codex 剩余额度</span><span>${c.degraded ? '<span class="pill warn">降级</span>' : ''}${c.limitReached ? '<span class="pill bad">已限流</span>' : ''}</span></div>
-      <div class="v">${r5}% <small>5h 窗口剩余</small></div><div class="t"><span>7 天窗口剩余 ${rw}%</span><span>${fmtAge(c.ageMinutes)}</span></div></div>`);
-  } else if (platState(c) !== 'error') tiles.push(idleTile(MARK.codex, 'Codex', c, 'codex'));
-  else tiles.push(`<div class="tile bad"><div class="t"><span>${MARK.codex} Codex</span></div><div class="v">—</div><div class="t"><span>${esc(c?.error ?? '无数据')}</span></div></div>`);
-
-  if (ds?.ok) {
-    const b = ds.totalBalance, low = D.thresholds?.dsCritical ?? 10, mid = D.thresholds?.dsLow ?? 20;
-    const cls = !ds.isAvailable || b < low ? 'bad' : b < mid ? 'warn' : 'ok';
-    tiles.push(`<div class="tile ${cls}"><div class="t"><span>${MARK.deepseek} DeepSeek 余额</span><span>${ds.projectedDays != null ? `约 ${ds.projectedDays} 天` : ''}</span></div>
-      <div class="v">¥${fmtMoney(b)}</div><div class="t"><span>${ds.burnPerDay != null ? '¥' + ds.burnPerDay.toFixed(2) + '/天' : '速率未知'}</span><span>${fmtAge(ds.ageMinutes)}</span></div></div>`);
-  } else if (platState(ds) !== 'error') tiles.push(idleTile(MARK.deepseek, 'DeepSeek', ds, 'deepseek'));
-  else tiles.push(`<div class="tile bad"><div class="t"><span>${MARK.deepseek} DeepSeek</span></div><div class="v">—</div><div class="t"><span>${esc(ds?.error ?? '无数据')}</span></div></div>`);
-
-  if (g?.ok) {
-    const b = Number(g.balance), low = D.thresholds?.glmCritical ?? 2, mid = D.thresholds?.glmLow ?? 5;
-    const cls = g.depleted || b < low ? 'bad' : b < mid ? 'warn' : 'ok';
-    tiles.push(`<div class="tile ${cls}"><div class="t"><span>${MARK.glm} GLM 余额</span><span>${g.depleted ? '<span class="pill bad">已耗尽</span>' : ''}</span></div>
-      <div class="v">¥${fmtMoney(b)}</div><div class="t"><span>${g.projectedDays != null ? `约 ${g.projectedDays} 天` : '需充值'}</span><span>${fmtAge(g.ageMinutes)}</span></div></div>`);
-  } else if (platState(g) !== 'error') tiles.push(idleTile(MARK.glm, 'GLM', g, 'glm'));
-  else tiles.push(`<div class="tile bad"><div class="t"><span>${MARK.glm} GLM</span></div><div class="v">—</div><div class="t"><span>${esc(g?.error ?? '无数据')}</span></div></div>`);
-
-  $('strip').innerHTML = tiles.join('');
 }
 
 function bar(pct, warn = 80, bad = 90) {
@@ -761,7 +614,7 @@ function renderCards() {
       <h2>${MARK.codex} Codex <span class="tag">${esc(c.plan ?? '')}</span>
         ${c.limitReached ? '<span class="pill bad">已限流</span>' : ''}
         ${c.degraded ? `<span class="pill warn">降级数据 · 快照 ${c.snapshotAgeMinutes ?? '?'} 分钟前</span>` : ''}
-        ${c.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('codex', 1)}</h2>
+        ${c.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('codex')}</h2>
       <div class="sub">${esc(c.email ?? '（实时接口不可达，显示本地会话快照）')} · 数据 ${fmtAge(c.ageMinutes)}</div>
       <div class="row"><span class="k">近 5 小时剩余</span><span><b>${r5}%</b> <span class="muted-note">（已用 ${w5}%）</span></span></div>
       ${barRemain(r5, warnAt, badAt)}
@@ -779,12 +632,12 @@ function renderCards() {
 
   if (D.deepseek?.ok) {
     const d = D.deepseek;
-    const low = D.thresholds?.dsCritical ?? 10, mid = D.thresholds?.dsLow ?? 20;
+    const low = D.thresholds?.dsCritical ?? 2, mid = D.thresholds?.dsLow ?? 5;
     out.push(`<div class="card">
       <h2>${MARK.deepseek} DeepSeek ${d.isAvailable ? '' : '<span class="pill bad">账户不可用</span>'}
         ${d.totalBalance < low ? '<span class="pill bad">余额紧急</span>' : d.totalBalance < mid ? '<span class="pill warn">余额偏低</span>' : ''}
         ${sup.deepseek ? '<span class="pill">提醒已关闭</span>' : ''}
-        ${d.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('deepseek', 2)}</h2>
+        ${d.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('deepseek')}</h2>
       <div class="sub">按量计费余额 · 数据 ${fmtAge(d.ageMinutes)}</div>
       <div class="big">¥${fmtMoney(d.totalBalance)} <small>可用</small></div>
       <div class="kv">
@@ -805,7 +658,7 @@ function renderCards() {
       <h2>${MARK.glm} 智谱 GLM
         ${g.depleted ? '<span class="pill bad">余额已耗尽</span>' : bal < low ? '<span class="pill bad">余额紧急</span>' : bal < mid ? '<span class="pill warn">余额偏低</span>' : ''}
         ${sup.glm ? '<span class="pill">提醒已关闭</span>' : ''}
-        ${g.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('glm', 3)}</h2>
+        ${g.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('glm')}</h2>
       <div class="sub">bigmodel.cn 开放平台 · 数据 ${fmtAge(g.ageMinutes)}</div>
       <div class="big">¥${fmtMoney(bal)} <small>可用</small></div>
       ${g.depleted ? '<div class="hint" style="color:var(--bad)">⛔ 余额为 0，GLM API 调用会失败——需充值后恢复</div>' : ''}
@@ -832,7 +685,7 @@ function alertControl(platform, supInfo) {
     </div>`;
   }
   const p = platform === 'glm' ? D.glm : D.deepseek;
-  const mid = platform === 'glm' ? (D.thresholds?.glmLow ?? 5) : (D.thresholds?.dsLow ?? 20);
+  const mid = platform === 'glm' ? (D.thresholds?.glmLow ?? 5) : (D.thresholds?.dsLow ?? 5);
   const bal = Number(platform === 'glm' ? p?.balance : p?.totalBalance);
   const unhealthy = p?.depleted || bal < mid || p?.isAvailable === false;
   if (!unhealthy) return '';
@@ -1299,23 +1152,14 @@ document.addEventListener('click', e => {
   redrawChart(b.dataset.clear);
 });
 
-/* ================= 平台跳转（卡片↗按钮 / 快捷键 1-3 / 通知「去充值」） ================= */
+/* ================= 平台跳转（卡片↗按钮；通知里的「去充值」按钮由采集端生成） ================= */
 const PLATFORMS = ['codex', 'deepseek', 'glm'];
 
-function openPlatform(key, which = 'usage') {
-  const l = D.links?.[key];
-  const url = which === 'topup' ? (l?.topup ?? l?.usage) : l?.usage;
-  if (!url) { toastNote(`未配置 ${key} 的页面地址（config.json → links）`); return false; }
-  window.open(url, '_blank', 'noopener');
-  toastNote(`已打开 ${l?.name ?? key} ${which === 'topup' ? '充值' : '官方'}页面`);
-  return true;
-}
-
-function openLinkHtml(key, n) {
+function openLinkHtml(key) {
   const l = D.links?.[key];
   if (!l?.usage) return '';
   return `<a class="btn sm open" href="${esc(l.usage)}" target="_blank" rel="noopener"
-    title="打开 ${esc(l.name)} 官方页面（快捷键 ${n}）">↗</a>`;
+    title="打开 ${esc(l.name)} 官方页面">↗</a>`;
 }
 
 // 轻提示：底部飘一句（节点按需创建；工具区移除后不再借用那里的 #toolNote）
@@ -1482,11 +1326,14 @@ function renderChanges(hostElId, rows, idx, unit = '¥') {
     </div>`).join('');
 }
 
-/* ================= 配置入口（平台开关 / 密钥 / 向导） =================
+/* ================= 配置入口（本机连接窗口） =================
    为什么要有：小白用户根本不知道要改 JSON、也不知道改哪个文件。
    实测新用户痛点：不知道要建 secrets.json、不知道该开哪几个平台、装完不知道成没成。
-   这里把这三件事变成可点的按钮：平台开关走协议写 config.json；密钥只管「有没有、从哪来」
-   （ThinCoder 配置 / secrets.json / 环境变量，见 lib/common.mjs 的 resolveApiKey），不由本页填写。 */
+   页面这边没有页内配置面板：所有配置入口（首屏「开始配置」、卡片上的「启用平台 / 连接平台」、
+   顶栏「配置」、配置检查横幅的「打开配置」）做的是同一件事——用协议打开本机连接窗口，
+   平台开关、密钥、提醒时机都在那个窗口里改（程序/tools/connections.mjs），本页只读不写。
+   密钥只管「有没有、从哪来」（ThinCoder 配置 / secrets.json / 环境变量，见 lib/common.mjs 的 resolveApiKey），
+   不由本页填写。 */
 const PLATFORM_META = [
   { id: 'codex', name: 'Codex' },
   { id: 'deepseek', name: 'DeepSeek' },
@@ -1504,46 +1351,8 @@ function platInfo(id) {
   return { on, state, tone, keySource: d?.keySource ?? null };
 }
 
-// 凭据来源说人话：让人知道"密钥是从哪儿读到的"
-function keySourceText(id, info) {
-  if (info.tone === 'off') return '已关闭，不采集';
-  if (info.tone === 'warn') return id === 'codex' ? '需要先安装并登录 Codex' : '需要连接平台';
-  const s = info.keySource;
-  if (!s) return '—';
-  if (id === 'codex') return '来自 Codex 登录文件 ~/.codex/auth.json';
-  if (s === 'secrets.json') return '来自 secrets.json';
-  if (s === 'ThinCoder 配置') return '来自 ThinCoder 配置';
-  if (s.startsWith('环境变量')) return `来自${s}`;
-  return `来自 ${s}`;
-}
-
-function renderConfigPanel() {
-  const el = $('cfgPanel');
-  if (!el || el.dataset.open !== '1') return;
-  const rows = PLATFORM_META.map(m => {
-    const info = platInfo(m.id);
-    const toggle = info.on
-      ? `<a class="btn sm danger" href="aiquotaboard://config?set=platforms.${m.id}:false" title="关闭后不采集、不参与提醒，看板上仍保留卡片">关闭</a>`
-      : `<a class="btn sm" href="aiquotaboard://config?set=platforms.${m.id}:true" title="开启后下一次采集生效">开启</a>`;
-    const fix = info.tone === 'warn'
-      ? `<button class="btn sm" data-platform="${m.id}" data-setup-open title="打开连接窗口，只处理这一家">去配置…</button>`
-      : '';
-    return `<div class="cp-row">
-      <span class="cp-name">${esc(m.name)}</span>
-      <span class="cp-state">${info.tone === 'ok' ? '✓' : info.tone === 'bad' ? '✗' : '○'} <b>${esc(info.state)}</b> · ${esc(keySourceText(m.id, info))}</span>
-      <span class="cp-acts">${fix}${toggle}</span>
-    </div>`;
-  }).join('');
-  el.innerHTML = `<h3>配置</h3>
-    <p class="cp-sub">平台开关会写入项目目录的 <code>config.json</code>，<b>下一次采集生效</b>（最多 1 分钟；也可用「刷新」手动触发）。</p>
-    ${rows}
-    <div class="cp-sec">
-      <button class="btn sm" data-setup-open>打开连接窗口（三家一起）</button>
-      <span class="cp-sub" style="margin:0">提醒阈值在 <code>config.json</code> 的 <code>thresholds</code> 里改，改完下一次采集生效。</span>
-    </div>`;
-}
-
 // 配置检查横幅：有平台没配好时提醒一下（可隐藏；状态变了会重新出现）
+// 「打开配置」= 和顶栏「配置」同一条路：开本机连接窗口（面板删除前它开的是页内面板）
 function renderSetupBar() {
   const el = $('setupBar');
   if (!el) return;
@@ -1562,20 +1371,9 @@ function renderSetupBar() {
     <button class="btn sm" id="sbOpen">打开配置</button>
     <button class="btn sm" id="sbHide">隐藏</button>`;
   el.style.display = '';
-  $('sbOpen').onclick = () => { toggleConfig(true); };
+  $('sbOpen').onclick = () => { setupWizardOpen(); };
   $('sbHide').onclick = () => { try { localStorage.setItem('quota-setupbar-hidden', sig); } catch {} el.style.display = 'none'; };
 }
-
-function toggleConfig(force) {
-  const el = $('cfgPanel');
-  if (!el) return;
-  const open = force === true ? true : el.dataset.open !== '1';
-  el.dataset.open = open ? '1' : '0';
-  el.style.display = open ? '' : 'none';
-  if (open) { renderConfigPanel(); el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
-}
-
-function renderCfg() { renderSetupBar(); renderConfigPanel(); }
 
 /* ================= 协议动作（页面按钮 → 本机执行） =================
    file:// 页面不能写文件、也不能执行系统动作：页面上每个「按钮」都只做一件事——
@@ -1592,7 +1390,8 @@ function fireProtocol(url) {
 
 function setupWizardOpen(platform = '') {
   // 卡片上的「启用平台 / 连接平台」= 只配置这一家：带 platform 参数开本机连接窗口，
-  // 窗口那边把这一家置顶/预勾选；不带参数 = 三家都显示（首屏「开始配置」与配置面板共用）。
+  // 窗口那边把这一家置顶/预勾选；不带参数 = 三家都显示
+  // （首屏「开始配置」、顶栏「配置」、检查横幅的「打开配置」共用）。
   fireProtocol('aiquotaboard://connect' + (platform ? '?platform=' + encodeURIComponent(platform) : ''));
 }
 
@@ -1758,9 +1557,9 @@ function renderHealth() {
   $('healthHint').textContent = errs.length ? `最近错误 —— ${errs.join(' · ')}` : '近 24 小时无采集错误。';
 }
 
-/* ================= 快捷键与浮层 ================= */
-const WINDOW_ORDER = ['h24', 'd7', 'd30', 'all'];
-
+/* ================= 浮层与键盘 ================= */
+// 键盘只剩 Esc：关弹窗是桌面软件的通用约定（页面里的弹窗 = assets/support.js 注入的「帮助与反馈」），
+// 没有弹窗时顺带清掉趋势图上的框选。字母 / 数字类快捷键（1 2 3 · R · T · W · ?）已整体移除。
 function closeOverlayEl(el) { el.classList.remove('on'); }
 function closeOverlays() { document.querySelectorAll('.overlay.on').forEach(closeOverlayEl); }
 
@@ -1770,35 +1569,21 @@ function runBackup() {
 }
 
 document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
   if (e.target.matches?.('input, textarea, select')) return;
   if (e.ctrlKey || e.altKey || e.metaKey) return;
-  const k = e.key;
-  const lower = k.toLowerCase();
-  if (k === '1' || k === '2' || k === '3') { openPlatform(PLATFORMS[Number(k) - 1]); return; }
-  if (lower === 'r') { refreshData(true); toastNote('正在刷新…'); return; }
-  if (lower === 't') { $('themeBtn').click(); return; }
-  if (lower === 'w') {
-    const next = WINDOW_ORDER[(WINDOW_ORDER.indexOf(win) + 1) % WINDOW_ORDER.length];
-    document.querySelector(`[data-win="${next}"]`)?.click();
-    toastNote(`时间窗口：${WIN_LABEL[next]}`);
-    return;
-  }
-  if (k === 'Escape') {
-    const anyOpen = document.querySelector('.overlay.on');
-    if (anyOpen) { closeOverlays(); return; }
-    Object.keys(selection).forEach(h => delete selection[h]);
-    Object.keys(pendingAnchor).forEach(h => delete pendingAnchor[h]);
-    Object.keys(STATS_HOST).forEach(redrawChart);
-    return;
-  }
-  if (k === '?') { $('helpOverlay').classList.toggle('on'); return; }
+  const anyOpen = document.querySelector('.overlay.on');
+  if (anyOpen) { closeOverlays(); return; }
+  Object.keys(selection).forEach(h => delete selection[h]);
+  Object.keys(pendingAnchor).forEach(h => delete pendingAnchor[h]);
+  Object.keys(STATS_HOST).forEach(redrawChart);
 });
 
 document.addEventListener('click', e => {
   const c = e.target.closest('[data-close]');
   if (c) { closeOverlayEl($(c.dataset.close)); return; }
   if (e.target.classList?.contains('overlay')) { closeOverlayEl(e.target); return; }
-  const sp = e.target.closest?.('[data-setup-open]');   // 卡片/面板上的连接入口：带 data-platform 的只聚焦那一家
+  const sp = e.target.closest?.('[data-setup-open]');   // 卡片/首屏/横幅上的连接入口：带 data-platform 的只聚焦那一家
   if (sp) { setupWizardOpen(sp.dataset.platform ?? ''); return; }
   const a = e.target.closest('[data-attr]');
   if (a) {
@@ -1840,6 +1625,22 @@ const HEAT_META = {
   glm: { rgb: [255, 92, 92], fmt: v => `¥${Number(v).toFixed(2)}`, label: 'GLM 当日消耗', fixedMax: null },
 };
 
+// 格子固定 20px + 间距 4px = 列距 24px（与样式表里的 .hcell / .heat gap 同一套数字，
+// 改样式表就得改这里，否则月份标签会与列错位——T44 的「月份轴与网格同宽」断言会直接红）；
+// MIN_WEEKS 是「至少这么多列」的底线，实际列数再按卡片宽度向上补：
+// 补的是空格子（宽度），不是把格子拉大（尺寸永远不变）。
+const HEAT_CELL = 20, HEAT_GAP = 4, HEAT_PITCH = HEAT_CELL + HEAT_GAP, MIN_WEEKS = 8;
+
+// 月份标签宽度测量（懒建一个 2D 上下文；字号与 .heat-months 保持一致）
+let heatMCtx = null;
+function heatTextWidth(txt) {
+  if (!heatMCtx) {
+    heatMCtx = document.createElement('canvas').getContext('2d');
+    heatMCtx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
+  }
+  return heatMCtx.measureText(txt).width;
+}
+
 function heatValue(day, metric) {
   const d = day?.[metric];
   if (!d) return null;
@@ -1849,9 +1650,10 @@ function heatValue(day, metric) {
 function renderHeat() {
   const daily = D.daily ?? {};
   const keys = Object.keys(daily).sort();
-  const wrap = $('heat');
+  const grid = $('heat'), scroller = $('heatWrap'), monthsBox = $('heatMonths');
   if (!keys.length) {
-    wrap.innerHTML = '<div class="muted" style="padding:6px">暂无按日聚合数据（下次维护后生成）</div>';
+    grid.innerHTML = '<div class="muted" style="padding:6px">暂无按日聚合数据（下次维护后生成）</div>';
+    monthsBox.innerHTML = ''; monthsBox.style.width = '';
     $('heatFoot').innerHTML = ''; $('heatSummary').textContent = ''; $('heatNote').textContent = '';
     return;
   }
@@ -1859,9 +1661,8 @@ function renderHeat() {
   const vals = keys.map(k => heatValue(daily[k], heatMetric)).filter(v => v != null && v > 0);
   const vmax = meta.fixedMax ?? Math.max(...vals, 0.01);
 
-  // 网格：从首日所在周（周一）到本周；不足 MIN_WEEKS 周时向左补齐，
-  // 让热力图从一开始就是"一张网格"的样子（左侧补的日期会标为「尚未开始记录」，与"关机/离线"区分）
-  const MIN_WEEKS = 8;
+  // 网格：从首日所在周（周一）到本周；再向左补齐到「一屏铺满」的列数（至少 MIN_WEEKS），
+  // 让热力图从一开始就是"一整张铺满卡片"的样子（左侧补的日期标「尚未开始记录」，与"关机/离线"区分）
   const [y0, m0, d0] = keys[0].split('-').map(Number);
   const firstDataKey = keys[0];
   const cur = new Date(Date.UTC(y0, m0 - 1, d0));
@@ -1873,7 +1674,11 @@ function renderHeat() {
     for (let i = 0; i < 7; i++) { col.push(cur.toISOString().slice(0, 10)); cur.setUTCDate(cur.getUTCDate() + 1); }
     cols.push(col);
   }
-  while (cols.length < MIN_WEEKS) {
+  // 一屏能放下多少列就用多少列（卡片被拉宽/窗口缩放后重新渲染会跟着变）：
+  // 用容器自身宽度算，不靠写死的列数；数据不够就用空格子把左边铺满。
+  const avail = scroller.clientWidth;
+  const fitCols = avail > HEAT_PITCH ? Math.floor((avail + HEAT_GAP) / HEAT_PITCH) : 0;
+  while (cols.length < Math.max(MIN_WEEKS, fitCols)) {
     const first = new Date(Date.parse(cols[0][0] + 'T00:00:00Z'));
     const col = [];
     for (let i = 6; i >= 0; i--) {
@@ -1909,25 +1714,28 @@ function renderHeat() {
     }
     html += '</div>';
   }
-  wrap.innerHTML = html;
+  grid.innerHTML = html;
 
-  // 坐标：左侧星期（与行严格同高同距）+ 顶部月份（宽度按列数折算，与列对齐）
+  // 坐标：左侧星期（与行严格同高同距）+ 顶部月份（绝对定位到各自首列，与列严格对齐；
+  // 标签比本月的列还宽、或紧贴上一个标签时就不画——重叠的坐标比缺一个月份更难读）
   $('heatDays').innerHTML = ['一', '二', '三', '四', '五', '六', '日'].map(d => `<span>${d}</span>`).join('');
-  const COL_PITCH = 17;  // 14px 格子 + 3px 间隔
-  let monthsHtml = '', i = 0;
+  const gridW = cols.length * HEAT_PITCH - HEAT_GAP;
+  monthsBox.style.width = gridW + 'px';   // 月份行与网格同宽：横向滚动时两者一起走，不会错位
+  let monthsHtml = '', i = 0, prevRight = -1e9;
   while (i < colMonths.length) {
     let j = i;
     while (j < colMonths.length && colMonths[j] === colMonths[i]) j += 1;
-    const w = (j - i) * COL_PITCH - 3;
-    // 不足一格宽度时也要能放下标签，否则标签会被挤掉
-    monthsHtml += `<span style="width:${Math.max(w, 26)}px">${colMonths[i]} 月</span>`;
+    const left = i * HEAT_PITCH, txt = `${colMonths[i]} 月`, lw = heatTextWidth(txt);
+    if (lw <= (j - i) * HEAT_PITCH - HEAT_GAP && left >= prevRight + 6) {
+      monthsHtml += `<span style="left:${left}px">${txt}</span>`;
+      prevRight = left + lw;
+    }
     i = j;
   }
-  $('heatMonths').innerHTML = monthsHtml;
+  monthsBox.innerHTML = monthsHtml;
 
   const spanDays = Math.round((Date.parse(todayKey) - Date.parse(keys[0])) / 86400000) + 1;
-  $('heatNote').textContent = `${keys[0]} ~ ${todayKey} · 共 ${spanDays} 天（有数据 ${n} 天）`
-    + (spanDays < 28 ? ' · 数据积累中，格子会随时间自动扩展' : '');
+  $('heatNote').textContent = `${keys[0]} ~ ${todayKey} · 共 ${spanDays} 天（有数据 ${n} 天）`;
   $('heatSummary').textContent = n
     ? `${meta.label}：峰值 ${meta.fmt(peak)}（${peakDay}）· 日均 ${meta.fmt(sum / n)}`
     : `${meta.label}：暂无数据`;
@@ -1949,7 +1757,9 @@ function renderHeat() {
     const wrapRect = wrap.getBoundingClientRect(), r = c.getBoundingClientRect();
     const left = Math.min(r.left - wrapRect.left, Math.max(0, wrap.clientWidth - tip.offsetWidth - 4));
     tip.style.left = Math.max(0, left) + 'px';
-    tip.style.top = Math.max(0, r.top - wrapRect.top - tip.offsetHeight - 6) + 'px';
+    // 上方放不下（顶行）就改到格子下方：贴到容器顶部会盖住它正在说明的那几行
+    const above = r.top - wrapRect.top - tip.offsetHeight - 6;
+    tip.style.top = (above >= 0 ? above : r.bottom - wrapRect.top + 6) + 'px';
   });
   wrap.addEventListener('mouseleave', () => tip.classList.remove('on'));
 })();
@@ -2056,7 +1866,13 @@ $('themeBtn').addEventListener('click', () => {
   } catch { /* 存储不可用时仅本次会话有效 */ }
   applyTheme();
 });
-window.addEventListener('resize', () => { if (D.history) renderCharts(); });
+let heatResizeTimer = null;
+window.addEventListener('resize', () => {
+  if (D.history) renderCharts();
+  // 卡片宽度变了，热力图要重算列数（防抖：拖拽窗口时不要每帧重建一次网格）
+  clearTimeout(heatResizeTimer);
+  heatResizeTimer = setTimeout(renderHeat, 120);
+});
 
 // 初始化热力图指标开关
 document.querySelectorAll('#heatSeg button').forEach(b => b.classList.toggle('on', b.dataset.heat === heatMetric));
@@ -2065,10 +1881,9 @@ document.querySelectorAll('#attrSeg button').forEach(b => b.classList.toggle('on
 // 初始化 ThinCoder 范围开关
 document.querySelectorAll('#tcSeg button').forEach(b => b.classList.toggle('on', b.dataset.tc === String(tcDays)));
 
-// 顶栏按钮（配置面板 / 备份 / 静音；快捷键帮助浮层由 ? 打开、Esc 关闭）
-$('cfgPanelBtn').addEventListener('click', () => toggleConfig());
+// 顶栏按钮（配置 = 直接打开本机连接窗口 / 备份；「帮助与反馈」按钮的事件在 assets/support.js 里）
+$('cfgPanelBtn').addEventListener('click', () => setupWizardOpen());
 $('backupBtn').addEventListener('click', runBackup);
-$('muteBtn').addEventListener('click', toggleMute);
 
 // 首帧即应用已保存的主题（避免先闪一下默认主题）
 applyTheme();

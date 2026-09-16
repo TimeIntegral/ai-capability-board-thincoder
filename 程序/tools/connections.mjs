@@ -123,7 +123,8 @@ async function main() {
     process.stdout.write(lines.join('\n'));
   } else {
     const platform = parsePlatform();
-    run('tools/setup-check.mjs');
+    // 探测失败也要把窗口开出来（它是本机唯一的配置入口）：状态读不到只影响预填，窗口侧对缺失状态本就容错。
+    try { run('tools/setup-check.mjs'); } catch {}
     const env = { ...process.env }; delete env.PSModulePath;
     // 窗口的阈值预填值：读不到配置就不注入，窗口回退到内置默认值（少一次崩溃面）
     try { env.BOARD_THRESHOLDS = JSON.stringify(thresholdEditorValues(loadConfig())); }

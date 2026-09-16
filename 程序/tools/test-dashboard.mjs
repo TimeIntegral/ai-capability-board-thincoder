@@ -3,8 +3,12 @@
 //
 // 覆盖范围（2026-09-17 收敛：8 步「设置向导」整块删除后，只留活功能的用例）：
 //   T38 卡片「启用平台」按平台聚焦 / T1 首屏无数据态 / T31 点击同步发协议 /
-//   T18 页面健康（活交互无 JS 错误）/ T39 「工具」区移除后的结构完整性 / T40 保留的非配置入口 /
-//   T41 顶栏静音按钮（文案跟着静音状态走、点击发 mute | unmute；1152/1280/1440/1920 四种宽度 × 未静音/已静音量行高） /
+//   T18 页面健康（活交互无 JS 错误）/ T39 「工具」区移除后的结构完整性 / T40 保留的非配置入口 + 快捷键移除后按键无行为 /
+//   T41 顶栏排版（静音按钮与状态 chip 移除后不残留；1152/1280/1440/1920 四种宽度 × 顶栏两行不换行、不横向溢出） /
+//   T42 顶栏「配置」直连本机连接窗口（协议恰为不带参数的 connect；页内配置面板整块删除后的结构完整性） /
+//   T43 顶部紧凑摘要条整行删除后的结构完整性（三张平台大卡片仍在；1152/1280/1440/1920 四种宽度 × 卡片并排不溢出不压扁） /
+//   T44 每日热力图完整展示（数据全在网格里 / 格子固定 20px 不拉伸 / 网格铺满卡片 / 双坐标轴不重叠不越界 / 悬停不被剪；1152/1280/1920 三种宽度） /
+//   T45 热力图长历史（约 3 年）：网格横向滚动时月份轴与网格同宽同滚、页面不横向溢出 /
 //   T32 首屏 id 清单（写死期望值，谁改首屏谁显式改它）。
 // 删除的用例见 private/CHANGELOG.dev.md 与本批报告：T2–T17 / T28–T30 / T33–T37 全部驱动已被删除的向导。
 //
@@ -246,6 +250,82 @@ const CARD_STATES = {
 const liveJs = obj => `window.DASHBOARD_DATA = ${JSON.stringify(obj)};\n`;
 // 初始 dashboard-data.js 必须同时存在于桩文件系统（旧流程经目录句柄读它；现在仅供页面自身加载）
 const dataJsOf = c => c.dataJs ?? c.page?.dataJs;
+
+// ---------- 热力图夹具（T44 / T45） ----------
+// 日期按「今天」现算，用例不会随着时间推移失效；空洞用来验「无采集」空格子
+function heatDaily(days) {
+  const daily = {};
+  const today = Date.now() + 8 * 3600e3;                       // 与页面同一时区口径（UTC+8）
+  for (let i = days - 1; i >= 1; i--) {
+    const d = new Date(today); d.setUTCDate(d.getUTCDate() - i);
+    const k = d.toISOString().slice(0, 10);
+    if (i % 9 === 0) continue;                                  // 每 9 天留一个空洞 = 关机/离线
+    daily[k] = {
+      codex: { n: 10, max5h: (i * 7) % 100, avg5h: 30, max7d: 40 },
+      deepseek: { n: 10, spend: (i % 5) * 3.5, first: 0, last: 0 },
+      glm: { n: 10, spend: 0, first: 0, last: 0 },
+    };
+  }
+  return daily;
+}
+// 有值的那天（任一指标 > 0）；用来验证「有数值的日期都画出了色块」
+const heatFilledKeys = data => Object.keys(data.daily).filter(k => {
+  const v = data.daily[k];
+  return (v.codex && v.codex.max5h > 0) || (v.deepseek && v.deepseek.spend > 0);
+});
+const HEAT_SHORT = { ...LIVE_DATA, daily: heatDaily(25) };     // 近 25 天：明显不足 8 周，靠补空格子铺满
+const HEAT_LONG = { ...LIVE_DATA, daily: heatDaily(1100) };    // 约 3 年：网格比卡片宽，必须横向滚动
+
+// 热力图几何量回读（T44 按三种宽度各跑一次 / T45 单跑）：尺寸 / 对齐 / 坐标 / 悬停 / 横向溢出
+const HEAT_DRIVER = `
+      await t.untilSel('#heat .hcell');
+      function rc(el) { var b = el.getBoundingClientRect(); return { l: b.left, t: b.top, w: b.width, h: b.height, r: b.right, b: b.bottom }; }
+      var heat = document.getElementById('heat'), wrap = document.getElementById('heatWrap');
+      var cols = heat.querySelectorAll('.hcol');
+      var cells = [].slice.call(heat.querySelectorAll('.hcell'));
+      var sized = {}, dated = [], painted = [];
+      cells.forEach(function (c) {
+        var b = c.getBoundingClientRect();
+        sized[Math.round(b.width) + 'x' + Math.round(b.height)] = 1;
+        if (c.dataset.k) { dated.push(c.dataset.k); if (c.getAttribute('style')) painted.push(c.dataset.k); }
+      });
+      var wr = rc(wrap);
+      // 网格真实宽度 = 首列左缘到末列右缘（#heat 是块级元素，自身宽度始终等于容器，量它量不出网格真实铺开多少）
+      var fc = cols.length ? rc(cols[0]) : null, lc = cols.length ? rc(cols[cols.length - 1]) : null;
+      var colsW = fc && lc ? Math.round(lc.r - fc.l) : 0;
+      var months = [].slice.call(document.getElementById('heatMonths').children).map(function (s) { var b = rc(s); return { t: s.textContent, l: b.l, r: b.r }; });
+      var overlaps = 0;
+      for (var i = 1; i < months.length; i++) if (months[i].l < months[i - 1].r - 0.5) overlaps++;
+      var outOfGrid = months.filter(function (m) { return m.l < fc.l - 0.5 || m.r > lc.r + 0.5; }).length;
+      var dayLbls = [].slice.call(document.getElementById('heatDays').children).map(rc);
+      var col0 = cols.length ? [].slice.call(cols[0].children) : [];
+      var align = 0;
+      for (var j = 0; j < 7 && j < col0.length && j < dayLbls.length; j++) {
+        var cb = rc(col0[j]);
+        align = Math.max(align, Math.abs((dayLbls[j].t + dayLbls[j].h / 2) - (cb.t + cb.h / 2)));
+      }
+      var tip = document.getElementById('heatTip');
+      function hover(cell) {
+        if (!cell) return null;
+        cell.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        var b = rc(tip), w = rc(wrap);
+        return { on: tip.classList.contains('on'), inside: b.t >= w.t - 0.5 && b.b <= w.b + 0.5 };
+      }
+      var topCell = null, botCell = null, k;
+      for (k = 0; k < cells.length && !topCell; k++) if (cells[k].dataset.k) topCell = cells[k];
+      for (k = cells.length - 1; k >= 0 && !botCell; k--) if (cells[k].dataset.k) botCell = cells[k];
+      t.snapshot({
+        cols: cols.length, cells: cells.length, datedKeys: dated, paintedKeys: painted,
+        sizes: Object.keys(sized), cellW: cells.length ? Math.round(cells[0].getBoundingClientRect().width) : 0,
+        colsW: colsW, firstColLeft: fc ? Math.round(fc.l) : -1, lastColRight: lc ? Math.round(lc.r) : -1,
+        wrapLeft: Math.round(wr.l), avail: wrap.clientWidth, scrollW: wrap.scrollWidth,
+        months: months.length, monthsW: Math.round(document.getElementById('heatMonths').getBoundingClientRect().width),
+        overlaps: overlaps, outOfGrid: outOfGrid, align: Math.round(align * 10) / 10,
+        ovf: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        tipTop: hover(topCell), tipBottom: hover(botCell),
+      });
+    `;
+
 function pageCfg(c) {
   const cfg = { ...(c.page || {}) };
   delete cfg.dataJs;
@@ -265,21 +345,11 @@ const CASES = [
       t.click('#cards [data-platform=deepseek]');
       await t.wait(50);
       t.snapshot({ urls: t.ops('iframe').map(function (o) { return o.url; }) });
-      t.click('#cfgPanelBtn');
-      await t.untilSel('#cfgPanel [data-setup-open]');
-      t.click('#cfgPanel .cp-row [data-setup-open]');
-      await t.wait(30);
-      t.snapshot({ urlsRow: t.ops('iframe').map(function (o) { return o.url; }).slice(1), panelPlatforms: [].map.call(document.querySelectorAll('#cfgPanel [data-platform]'), function (b) { return b.getAttribute('data-platform'); }) });
-      t.click('#cfgPanel .cp-sec [data-setup-open]');
-      await t.wait(50);
-      t.snapshot({ urlsFoot: t.ops('iframe').map(function (o) { return o.url; }).slice(2) });
       t.snapshot({ picker: t.has('#setupPick'), pw: t.count('input[type=password]'), panel: !!document.querySelector('#connectionPanel'), files: t.unwritten() });
     ` },
     check: r => [
       ['每张卡片各带自己的平台 id', JSON.stringify(r.res.snap.labels) === '["codex|启用平台","deepseek|连接平台"]', JSON.stringify(r.res.snap.labels)],
       ['点「连接平台」只发这一家的连接动作', JSON.stringify(r.res.snap.urls) === '["aiquotaboard://connect?platform=deepseek"]', JSON.stringify(r.res.snap.urls)],
-      ['配置面板里未配置的那家也能单独去配置', JSON.stringify(r.res.snap.urlsRow) === '["aiquotaboard://connect?platform=deepseek"]' && JSON.stringify(r.res.snap.panelPlatforms) === '["deepseek"]', JSON.stringify(r.res.snap.urlsRow)],
-      ['配置面板底部「打开连接窗口（三家一起）」不聚焦', JSON.stringify(r.res.snap.urlsFoot) === '["aiquotaboard://connect"]', JSON.stringify(r.res.snap.urlsFoot)],
       ['不再要目录权限、不接收密钥、不写任何文件', !r.res.snap.picker && r.res.snap.pw === 0 && r.res.snap.files === 0 && r.res.snap.panel === false],
       ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
     ],
@@ -312,8 +382,9 @@ const CASES = [
       sdp: 'none', dataJs: liveJs(LIVE_DATA),
       driver: `
       await t.untilSel('#cards');
-      t.click('#cfgPanelBtn'); await t.untilSel('#cfgPanel .cp-row');
-      t.snapshot({ panelRows: t.count('#cfgPanel .cp-row') });
+      t.click('#cfgPanelBtn');
+      await t.wait(30);
+      t.snapshot({ panelGone: t.count('.cfgpanel') + t.count('#cfgPanel') + t.count('.cp-row'), panelFn: typeof toggleConfig });
       t.click('#cfgPanelBtn');
       t.click('#winSeg [data-win=d7]');
       t.click('#themeBtn');
@@ -321,7 +392,7 @@ const CASES = [
       t.snapshot({ win: t.has('#stats-codex'), cards: t.count('#cards .card') });
     ` },
     check: r => [
-      ['配置面板为三家各渲染一行', r.res.snap.panelRows === 3, String(r.res.snap.panelRows)],
+      ['页内配置面板整块移除（点顶栏「配置」不再展开任何面板）', r.res.snap.panelGone === 0 && r.res.snap.panelFn === 'undefined', 'gone=' + r.res.snap.panelGone + ' fn=' + String(r.res.snap.panelFn)],
       ['平台卡片渲染出来', r.res.snap.cards >= 3, String(r.res.snap.cards)],
       ['全程无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
     ],
@@ -338,7 +409,7 @@ const CASES = [
         supportInHeader: !!document.querySelector('header #supportBtn'),
         backupInHeader: !!document.querySelector('header #backupBtn'),
         orphan: [].filter.call(document.querySelectorAll('.wrap > .sec'), function (s) { var n = s.nextElementSibling; return !n || n.classList.contains('sec'); }).length,
-        dead: [typeof setupLegacyWizardOpen === 'undefined', typeof SETUP_STEPS === 'undefined', typeof setupRender7 === 'undefined', typeof setupWizardClose === 'undefined', typeof hasFsaAccess === 'undefined'],
+        dead: [typeof setupLegacyWizardOpen === 'undefined', typeof SETUP_STEPS === 'undefined', typeof setupRender7 === 'undefined', typeof setupWizardClose === 'undefined', typeof hasFsaAccess === 'undefined', typeof muteState === 'undefined', typeof toggleMute === 'undefined', typeof MUTE_HOLD_MS === 'undefined'],
         kept: [typeof fireProtocol === 'function', typeof setupWizardOpen === 'function'],
         setupUrl: document.documentElement.outerHTML.indexOf('aiquotaboard://set' + 'up') >= 0,
         emptyCards: [].filter.call(document.querySelectorAll('.wrap > .card'), function (c) { return !(c.textContent || '').trim() && !c.querySelector('canvas'); }).length,
@@ -349,14 +420,14 @@ const CASES = [
       ['页面已无「工具」分区标题', r.res.snap.toolsSec === 0, String(r.res.snap.toolsSec)],
       ['帮助与反馈 / 备份已移入顶栏', r.res.snap.supportInHeader === true && r.res.snap.backupInHeader === true],
       ['没有孤立标题或空卡片（视觉完整性）', r.res.snap.orphan === 0 && r.res.snap.emptyCards === 0, 'orphan=' + r.res.snap.orphan + ' empty=' + r.res.snap.emptyCards],
-      ['向导死代码符号全部不存在', r.res.snap.dead.every(x => x === true), JSON.stringify(r.res.snap.dead)],
+      ['向导与静音按钮的死代码符号全部不存在', r.res.snap.dead.every(x => x === true), JSON.stringify(r.res.snap.dead)],
       ['保留 fireProtocol / setupWizardOpen', r.res.snap.kept.every(x => x === true), JSON.stringify(r.res.snap.kept)],
       ['页面已无 aiquotaboard://setup 引用', r.res.snap.setupUrl === false],
       ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
     ],
   },
   {
-    id: 'T40', desc: '保留的非配置入口仍可用（备份 / 快捷键帮助）',
+    id: 'T40', desc: '保留的非配置入口仍可用（备份）；快捷键与帮助浮层整块移除后按键不再有行为',
     page: {
       sdp: 'none', dataJs: liveJs(LIVE_DATA),
       driver: `
@@ -364,71 +435,73 @@ const CASES = [
       t.click('#backupBtn');
       await t.wait(50);
       t.snapshot({ urls: t.ops('iframe').map(function (o) { return o.url; }), toast: t.has('#toastNote'), toastText: t.text('#toastNote') });
-      t.key('?');
-      await t.wait(30);
-      t.snapshot({ help: t.has('#helpOverlay.on'), keys: t.count('#helpOverlay .keys kbd') });
+      // 快捷键已整块移除：1/2/3 r t w ? 不得再触发任何行为（协议 / 主题 / 时间窗 / 新开页 / 轻提示都不许变）
+      var opened = [], open0 = window.open;
+      window.open = function (u) { opened.push(String(u)); return null; };
+      function state() {
+        return {
+          urls: t.ops('iframe').length,
+          theme: document.documentElement.dataset.theme || '',
+          win: (document.querySelector('#winSeg button.on') || { dataset: {} }).dataset.win || '',
+          toast: t.text('#toastNote') || '',
+        };
+      }
+      var before = state();
+      ['1', '2', '3', 'r', 't', 'w', '?'].forEach(function (k) { t.key(k); });
+      await t.wait(50);
+      var after = state();
+      window.open = open0;
+      t.snapshot({
+        keyNoop: JSON.stringify(before) === JSON.stringify(after) && opened.length === 0,
+        keyNoopDetail: JSON.stringify(before) + ' -> ' + JSON.stringify(after) + ' opened=' + opened.length,
+        helpGone: !t.has('#helpOverlay'),
+      });
+      // Esc 保留（关弹窗的桌面通用约定；页面里的弹窗只剩 support.js 注入的「帮助与反馈」）——此处验它仍清掉趋势图框选
+      selection['wrap-codex'] = [1, 2];
       t.esc();
       await t.wait(30);
-      t.snapshot({ closed: !t.has('#helpOverlay.on') });
+      t.snapshot({ escCleared: selection['wrap-codex'] === undefined });
     ` },
     check: r => [
       ['备份按钮发固定备份动作', JSON.stringify(r.res.snap.urls) === '["aiquotaboard://backup"]', JSON.stringify(r.res.snap.urls)],
       ['轻提示有宿主与文案（不再依赖工具区）', r.res.snap.toast === true && /备份/.test(r.res.snap.toastText || ''), String(r.res.snap.toastText)],
-      ['? 仍能打开快捷键帮助', r.res.snap.help === true && r.res.snap.keys >= 6, String(r.res.snap.keys)],
-      ['Esc 能关闭浮层', r.res.snap.closed === true],
+      ['1/2/3 r t w ? 全部不再有行为（协议 / 主题 / 时间窗 / 新开页 / 轻提示都不变）', r.res.snap.keyNoop === true, String(r.res.snap.keyNoopDetail)],
+      ['帮助浮层已从页面删除（id 不存在）', r.res.snap.helpGone === true],
+      ['Esc 仍清掉趋势图框选（唯一保留的按键）', r.res.snap.escCleared === true],
       ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
     ],
   },
   {
-    id: 'T41', desc: '顶栏静音按钮：文案跟着静音状态走、点击发 mute | unmute；四种宽度下两行都不换行',
+    id: 'T41', desc: '顶栏排版：静音按钮与状态 chip 已移除；四种宽度下顶栏两行都不换行、不横向溢出',
     // 排版断言要按真实窗口宽度量行高：四种宽度各跑一次（1152 是最窄的那个，也就是这段时间要治的场景）
     windowSizes: ['1152,900', '1280,900', '1440,900', '1920,900'],
     page: {
-      // 首屏数据里就是「已静音」——文案必须跟着 D.mute（采集写进看板数据的状态）走，不是上一次点击的残留
-      sdp: 'none',
-      dataJs: liveJs({ ...LIVE_DATA, mute: { active: true, until: Date.now() + 2 * 3600e3, untilText: '2026-09-17 03:41', note: null } }),
+      sdp: 'none', dataJs: liveJs(LIVE_DATA),
       driver: `
-      await t.untilSel('#muteBtn');
+      await t.untilSel('#winSeg');
       function rows() { return [].map.call(document.querySelectorAll('header .hrow'), function (r) { return Math.round(r.getBoundingClientRect().height); }); }
       function ovf() { return document.documentElement.scrollWidth - document.documentElement.clientWidth; }
-      var btn = document.getElementById('muteBtn'), chip = document.getElementById('mute');
       t.snapshot({
-        label0: t.text('#muteBtn'), title0: t.attr('#muteBtn', 'title'),
-        chip0: t.text('#mute'), chip0shown: chip.style.display !== 'none',
-        sameRow: chip.parentElement === btn.parentElement && btn.parentElement === document.querySelectorAll('header .hrow')[1],
-        rowsMuted: rows(), ovfMuted: ovf(),
+        gone: ['#muteBtn', '#mute'].map(function (s) { return t.has(s); }),
+        dead: [typeof muteState, typeof toggleMute, typeof renderMuteBtn],
+        rowIds: [].map.call(document.querySelectorAll('header .hrow')[1].children, function (el) { return el.id; }).filter(Boolean),
+        rows: rows(), ovf: ovf(),
       });
-      btn.click();
+      t.click('#winSeg [data-win=d7]');
       await t.wait(30);
-      t.snapshot({
-        urls1: t.ops('iframe').map(function (o) { return o.url; }),
-        label1: t.text('#muteBtn'), toast1: t.text('#toastNote'), chip1shown: chip.style.display !== 'none',
-        rowsUnmuted: rows(), ovfUnmuted: ovf(),
-      });
-      btn.click();
-      await t.wait(30);
-      t.snapshot({
-        urls2: t.ops('iframe').map(function (o) { return o.url; }).slice(1),
-        label2: t.text('#muteBtn'), toast2: t.text('#toastNote'),
-        chip2: t.text('#mute'), chip2shown: chip.style.display !== 'none',
-        rowsMuted2: rows(), ovfMuted2: ovf(),
-      });
+      t.snapshot({ rowsAfter: rows(), ovfAfter: ovf() });
     ` },
     check: r => {
       const runs = r.res.__W__ || [];
       const s0 = runs.length ? runs[0].snap : r.res.snap;
-      const fit = x => x.snap && [].concat(x.snap.rowsMuted, x.snap.rowsUnmuted, x.snap.rowsMuted2).every(h => h <= 40)
-        && x.snap.ovfMuted === 0 && x.snap.ovfUnmuted === 0 && x.snap.ovfMuted2 === 0;
-      const line = x => x.snap ? `${x.size} 行高 ${JSON.stringify([x.snap.rowsMuted, x.snap.rowsUnmuted, x.snap.rowsMuted2])} 横向溢出 ${x.snap.ovfMuted}/${x.snap.ovfUnmuted}/${x.snap.ovfMuted2}` : `${x.size} 无结果`;
+      const fit = x => x.snap && [].concat(x.snap.rows, x.snap.rowsAfter).every(h => h <= 40)
+        && x.snap.ovf === 0 && x.snap.ovfAfter === 0;
+      const line = x => x.snap ? `${x.size} 行高 ${JSON.stringify([x.snap.rows, x.snap.rowsAfter])} 横向溢出 ${x.snap.ovf}/${x.snap.ovfAfter}` : `${x.size} 无结果`;
       return [
-        ['数据里已静音 → 按钮就写「取消静音」（带提示文字也是同一句）', s0.label0 === '取消静音' && s0.title0 === '取消静音', String(s0.label0) + ' / ' + String(s0.title0)],
-        ['同一个状态同时标在 chip 上，且 chip 就挨在静音按钮左边（状态与动作同一行）', s0.chip0shown === true && /03:41/.test(s0.chip0 || '') && s0.sameRow === true, String(s0.chip0) + ' sameRow=' + String(s0.sameRow)],
-        ['点它 → 发取消静音协议 + 轻提示', JSON.stringify(s0.urls1) === '["aiquotaboard://unmute"]' && s0.toast1 === '已取消静音', JSON.stringify(s0.urls1) + ' / ' + String(s0.toast1)],
-        ['点完文案立刻变成下一次会做的事', s0.label1 === '静音 2 小时' && s0.chip1shown === false, String(s0.label1)],
-        ['再点 → 发静音协议（2 小时）', JSON.stringify(s0.urls2) === '["aiquotaboard://mute"]' && s0.toast2 === '已静音 2 小时', JSON.stringify(s0.urls2) + ' / ' + String(s0.toast2)],
-        // 注意：时分断言用 [0-9]{2} 而不是正则的 \d 简写——简写连写会拼出「字母 + 冒号 + 反斜杠」的形状，被发布审计当成盘符路径拦下
-        ['静音后按钮与 chip 同步翻面', s0.label2 === '取消静音' && s0.chip2shown === true && /静音至 [0-9]{2}:[0-9]{2}/.test(s0.chip2 || ''), String(s0.label2) + ' / ' + String(s0.chip2)],
-        ...runs.map(x => [`${x.size} 宽：未静音 / 已静音（含再静音）三种状态下顶栏两行都不换行`, fit(x) === true, line(x)]),
+        ['静音按钮与状态 chip 已从顶栏移除', s0.gone.every(x => x === false), JSON.stringify(s0.gone)],
+        ['静音相关函数已从页面删除', s0.dead.every(x => x === 'undefined'), JSON.stringify(s0.dead)],
+        ['顶栏第二行只留时间窗口与采集说明（没有空占位）', JSON.stringify(s0.rowIds) === '["winSeg","intervalNote"]', JSON.stringify(s0.rowIds)],
+        ...runs.map(x => [`${x.size} 宽：切换时间窗口前后顶栏两行都不换行、不横向溢出`, fit(x) === true, line(x)]),
         ['各宽度都无 JS 错误 / 无重复 id', runs.every(x => x.errors.length === 0 && x.dupIds.length === 0) && r.res.errors.length === 0, JSON.stringify(runs.map(x => x.errors))],
       ];
     },
@@ -449,7 +522,142 @@ const CASES = [
       ['同步段 < 200ms', r.res.snap.ms < 200, Number(r.res.snap.ms).toFixed(1) + 'ms'],
     ],
   },
+  {
+    id: 'T42', desc: '顶栏「配置」直连本机连接窗口（协议恰为不带参数的 connect；页内配置面板整块删除后的结构完整性）',
+    page: {
+      sdp: 'none', dataJs: liveJs(CARD_STATES),
+      driver: `
+      await t.untilSel('#cfgPanelBtn');
+      t.click('#cfgPanelBtn');
+      await t.wait(50);
+      t.snapshot({ urls1: t.ops('iframe').map(function (o) { return o.url; }) });
+      t.click('#cfgPanelBtn');
+      await t.wait(50);
+      t.snapshot({
+        urls2: t.ops('iframe').map(function (o) { return o.url; }).slice(1),
+        panelDom: t.count('.cfgpanel') + t.count('#cfgPanel') + t.count('#cfgPanel .cp-row') + t.count('.cp-sec'),
+        dead: [typeof toggleConfig, typeof renderConfigPanel, typeof renderCfg, typeof keySourceText],
+        kept: [typeof fireProtocol, typeof setupWizardOpen, typeof renderSetupBar],
+      });
+      t.snapshot({ barOpenBtn: t.has('#sbOpen') });
+      if (t.has('#sbOpen')) { t.click('#sbOpen'); await t.wait(50); }
+      t.snapshot({ urlsBar: t.ops('iframe').map(function (o) { return o.url; }).slice(2) });
+      t.snapshot({ layout: (function () {
+        var bar = document.getElementById('setupBar'), group = document.querySelector('.wrap > .group'), wrap = document.querySelector('.wrap');
+        return {
+          barShown: !!bar && bar.offsetHeight > 0,
+          adjacent: !!bar && !!group && bar.nextElementSibling === group,
+          emptyBlocks: [].filter.call(wrap.children, function (el) { return el.offsetHeight > 0 && !(el.textContent || '').trim() && !el.querySelector('canvas'); }).length,
+          orphanSec: [].filter.call(document.querySelectorAll('.wrap > .sec'), function (s) { var n = s.nextElementSibling; return !n || n.classList.contains('sec'); }).length,
+        };
+      })() });
+    ` },
+    check: r => [
+      ['点顶栏「配置」发的协议恰为 aiquotaboard://connect（不带平台参数）', JSON.stringify(r.res.snap.urls1) === '["aiquotaboard://connect"]', JSON.stringify(r.res.snap.urls1)],
+      ['再点一次还是同一个动作（没有面板可开可关）', JSON.stringify(r.res.snap.urls2) === '["aiquotaboard://connect"]', JSON.stringify(r.res.snap.urls2)],
+      ['页内不再有任何配置面板 DOM', r.res.snap.panelDom === 0, String(r.res.snap.panelDom)],
+      ['面板专属死代码符号全部不存在', r.res.snap.dead.every(x => x === 'undefined'), JSON.stringify(r.res.snap.dead)],
+      ['保留 fireProtocol / setupWizardOpen / renderSetupBar', r.res.snap.kept.every(x => x === 'function'), JSON.stringify(r.res.snap.kept)],
+      ['检查横幅的「打开配置」走的也是同一条路', r.res.snap.barOpenBtn === true && JSON.stringify(r.res.snap.urlsBar) === '["aiquotaboard://connect"]', 'btn=' + String(r.res.snap.barOpenBtn) + ' ' + JSON.stringify(r.res.snap.urlsBar)],
+      ['检查横幅与「实时状态」分区之间没有残留容器', (r.res.snap.layout || {}).barShown === true && r.res.snap.layout.adjacent === true, JSON.stringify(r.res.snap.layout)],
+      ['无空容器、无孤立分区标题（视觉完整性）', r.res.snap.layout.emptyBlocks === 0 && r.res.snap.layout.orphanSec === 0, JSON.stringify(r.res.snap.layout)],
+      ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+    ],
+  },
+  {
+    id: 'T43', desc: '顶部紧凑摘要条整行删除后的结构完整性：三张平台大卡片仍在，四种宽度下并排、不溢出、不被压扁',
+    // 与 T41 同理：排版要按真实窗口宽度量（1152 是最窄的场景）
+    windowSizes: ['1152,900', '1280,900', '1440,900', '1920,900'],
+    page: {
+      sdp: 'none', dataJs: liveJs(LIVE_DATA),
+      driver: `
+      await t.untilSel('#cards > .card');
+      function geom() {
+        return [].map.call(document.querySelectorAll('#cards > .card'), function (c) {
+          var r = c.getBoundingClientRect();
+          return { w: Math.round(r.width), top: Math.round(r.top) };
+        });
+      }
+      t.snapshot({
+        strip: { host: t.has('#strip'), tiles: t.count('.tile'), fn: [typeof renderStrip, typeof idleTile, typeof IDLE_HINT] },
+        cards: t.count('#cards > .card'),
+        titles: [].map.call(document.querySelectorAll('#cards > .card > h2'), function (h) { return (h.textContent || '').trim(); }),
+        kv: t.count('#cards .card .kv'), bars: t.count('#cards .card .bar'),
+        adjacent: (function () { var g = document.querySelector('.wrap > .group'); return !!g && g.nextElementSibling === document.getElementById('cards'); })(),
+        emptyTop: [].filter.call(document.querySelector('.wrap').children, function (el) { return el.offsetHeight > 0 && !(el.textContent || '').trim() && !el.querySelector('canvas'); }).length,
+        ovf: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        geom: geom(),
+      });
+    ` },
+    check: r => {
+      const runs = r.res.__W__ || [];
+      const s0 = runs.length ? runs[0].snap : r.res.snap;
+      const oneRow = g => new Set(g.map(x => x.top)).size === 1;      // 三张并排 = 同一行顶部
+      const fit = x => x.snap && x.snap.ovf === 0 && x.snap.cards === 3 && x.snap.geom.length === 3
+        && x.snap.geom.every(g => g.w >= 300) && oneRow(x.snap.geom);
+      const line = x => x.snap ? `${x.size} 卡片 ${x.snap.cards} 张 · 宽度 ${JSON.stringify(x.snap.geom.map(g => g.w))} · 行 ${JSON.stringify(x.snap.geom.map(g => g.top))} · 横向溢出 ${x.snap.ovf}` : `${x.size} 无结果`;
+      return [
+        ['顶部紧凑摘要条整块移除（无宿主 / 无 .tile / 无渲染函数）', s0.strip.host === false && s0.strip.tiles === 0 && s0.strip.fn.every(x => x === 'undefined'), JSON.stringify(s0.strip)],
+        ['三张平台大卡片仍在且顺序不变（Codex / DeepSeek / GLM）', s0.cards === 3 && /Codex/.test(s0.titles[0] || '') && /DeepSeek/.test(s0.titles[1] || '') && /GLM/.test(s0.titles[2] || ''), JSON.stringify(s0.titles)],
+        ['大卡片信息量保留（每张都有明细行，带进度条）', s0.kv === 3 && s0.bars >= 2, 'kv=' + s0.kv + ' bars=' + s0.bars],
+        ['「实时状态」标题与卡片网格直接相邻（原位置不留空容器 / 孤立标题）', s0.adjacent === true && s0.emptyTop === 0, 'adjacent=' + s0.adjacent + ' empty=' + s0.emptyTop],
+        ...runs.map(x => [`${x.size} 宽：三张卡片并排、不溢出、不被压扁`, fit(x) === true, line(x)]),
+        ['各宽度都无 JS 错误 / 无重复 id', runs.every(x => x.errors.length === 0 && x.dupIds.length === 0) && r.res.errors.length === 0, JSON.stringify(runs.map(x => x.errors))],
+      ];
+    },
+  },
+  {
+    id: 'T44', desc: '每日热力图完整展示：数据全在网格里、格子固定不拉伸、网格铺满卡片宽度、两个坐标轴不重叠不越界、页面不横向溢出',
+    // 排版与几何量都要按真实窗口宽度量：1152 是最窄（最容易挤坏）的一档，1920 是最宽的一档
+    windowSizes: ['1152,900', '1280,900', '1920,900'],
+    page: { sdp: 'none', dataJs: liveJs(HEAT_SHORT), driver: HEAT_DRIVER },
+    check: r => {
+      const runs = r.res.__W__ || [];
+      const s0 = runs.length ? runs[0].snap : null;
+      if (!s0) return [['热力图结果节点回读', false, '无 snap（页面可能没渲染出热力图）']];
+      const FILLED = heatFilledKeys(HEAT_SHORT), ALLK = Object.keys(HEAT_SHORT.daily).sort();
+      // 铺满 = 网格算得下时右侧余量不足一列（补的是空格子）；算不下就是长历史，横向滚动（T45 单独验）
+      const fill = s => s.colsW <= s.avail + 0.5 ? (s.avail - s.colsW < 24) : true;
+      const grid = x => x.snap && x.snap.sizes.length === 1 && x.snap.cellW >= 20               // 尺寸唯一 = 没被拉伸
+        && fill(x.snap) && x.snap.cols >= 8                                                     // 铺满卡片宽度、至少 8 列
+        && x.snap.firstColLeft === x.snap.wrapLeft && x.snap.ovf === 0;                         // 从同一左缘起画、页面不横向溢出
+      const axis = x => x.snap && x.snap.months > 0 && x.snap.overlaps === 0 && x.snap.outOfGrid === 0
+        && x.snap.monthsW === x.snap.colsW && x.snap.align <= 1;                                // 月份与网格同宽（滚动同步）、星期与行对齐
+      const tipOk = x => x.snap && x.snap.tipTop && x.snap.tipBottom && x.snap.tipTop.on && x.snap.tipBottom.on
+        && x.snap.tipTop.inside && x.snap.tipBottom.inside;                                     // 首行/末行悬停都在容器内
+      const line = x => x.snap ? `${x.size} 列 ${x.snap.cols} · 格子 ${x.snap.sizes.join('/')} · 网格宽 ${x.snap.colsW}/可视 ${x.snap.avail} · 月份行 ${x.snap.monthsW} 标签 ${x.snap.months} 重叠 ${x.snap.overlaps} 越界 ${x.snap.outOfGrid} · 星期错位 ${x.snap.align}px · 横向溢出 ${x.snap.ovf}` : `${x.size} 无结果`;
+      return [
+        ['每条按日数据都画进了网格（没有漏画）', ALLK.every(k => s0.datedKeys.includes(k)), `数据 ${ALLK.length} 天 / 网格里的日期格 ${s0.datedKeys.length} 个`],
+        ['有数值的那天都有色块（不是空壳）', FILLED.every(k => s0.paintedKeys.includes(k)), `有值 ${FILLED.length} 天 / 上色 ${s0.paintedKeys.length} 个`],
+        ['格子尺寸统一且 ≥ 20px（补宽度用空格子，不拉伸格子）', runs.every(x => x.snap && x.snap.sizes.length === 1 && x.snap.cellW >= 20), JSON.stringify(runs.map(x => x.snap && x.snap.sizes))],
+        ['星期轴与格子行中心对齐（≤1px）', runs.every(x => x.snap && x.snap.align <= 1), JSON.stringify(runs.map(x => x.snap && x.snap.align))],
+        ['首行 / 末行悬停提示都在网格容器内（不被 overflow 剪掉）', runs.every(tipOk), JSON.stringify(runs.map(x => x.snap && [x.snap.tipTop && x.snap.tipTop.inside, x.snap.tipBottom && x.snap.tipBottom.inside]))],
+        ...runs.map(x => [`${x.size} 宽：网格铺满卡片、格子固定尺寸、页面不横向溢出`, grid(x) === true, line(x)]),
+        ...runs.map(x => [`${x.size} 宽：月份轴与网格同宽且不重叠 / 不越界`, axis(x) === true, line(x)]),
+        ['各宽度都无 JS 错误 / 无重复 id', runs.every(x => x.errors.length === 0 && x.dupIds.length === 0), JSON.stringify(runs.map(x => x.errors))],
+      ];
+    },
+  },
+  {
+    id: 'T45', desc: '热力图长历史（3 年）：网格横向滚动时月份轴与网格同宽同滚，页面不横向溢出（旧实现在这里把页面撑出 600+px）',
+    windowSize: '1152,900',
+    page: { sdp: 'none', dataJs: liveJs(HEAT_LONG), driver: HEAT_DRIVER },
+    check: r => {
+      const s = r.res.snap;
+      const ALLK = Object.keys(HEAT_LONG.daily).sort();
+      return [
+        ['长历史下网格比可视区宽（该滚动就滚动）', s.scrollW > s.avail && s.colsW > s.avail, `网格内容 ${s.scrollW} / 可视 ${s.avail} / 网格宽 ${s.colsW}`],
+        ['月份轴与网格严格同宽（滚动时不会错位）', s.monthsW === s.colsW, `月份行 ${s.monthsW} / 网格 ${s.colsW}`],
+        ['页面不横向溢出（坐标轴不会撑出卡片）', s.ovf === 0, `横向溢出 ${s.ovf}px`],
+        ['长历史仍不拉伸格子', s.sizes.length === 1 && s.cellW >= 20, s.sizes.join('/')],
+        ['长历史下每条按日数据仍有格子 / 有值的仍上色', ALLK.every(k => s.datedKeys.includes(k)) && heatFilledKeys(HEAT_LONG).every(k => s.paintedKeys.includes(k)), `数据 ${ALLK.length} 天 / 上色 ${s.paintedKeys.length} 个`],
+        ['月份标签不重叠、不出网格', s.months > 0 && s.overlaps === 0 && s.outOfGrid === 0, `标签 ${s.months} 重叠 ${s.overlaps} 越界 ${s.outOfGrid}`],
+        ['无 JS 错误 / 无重复 id', r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
+      ];
+    },
+  },
 ];
+
 
 // ---------- T32：首屏无影响（与本文件写死的期望清单对比） ----------
 // 为什么不用「开工前快照文件」：快照放在 data/__test-dashboard__/（不进仓库），
@@ -459,7 +667,10 @@ const CASES = [
 // 2026-09-17：移除「工具」区与设置向导后，删掉 backupBtn 之外的工具区 id（cfgBtn / cfgGrid / cfgOverlay / cfgSave / helpBtn / toolNote）；
 //             backupBtn 与 supportBtn 仍在这张清单里——它们已移入顶栏，id 不变。
 // 2026-09-17：顶栏删掉「暂停 / 导出」两个按钮（没人用）——清单里同步去掉 pauseBtn / exportBtn。
-const T32_EXPECTED_IDS = ['alertCount','alerts-table','attrBars','attrHint','attrNote','attrSeg','backupBtn','bg1','cap-codex','cap-ds','cap-glm','cards','cfgPanel','cfgPanelBtn','changes-ds','changes-glm','chartHint','dashboard-data-script','fresh','healthHint','healthList','heat','heatDays','heatFoot','heatMonths','heatNote','heatSeg','heatSummary','heatTip','heatWrap','helpOverlay','hint-codex','intervalNote','modelBars','modelHint','modelNote','modelSummary','mute','muteBtn','packs-table','refreshBtn','ring','ringTxt','setupBar','stats-codex','stats-ds','stats-glm','strip','supportBtn','tcBars','tcHint','tcNote','tcSeg','tcSummary','themeBtn','updated','usageStyle','winSeg','wrap-codex','wrap-ds','wrap-glm'];
+// 2026-09-17：顶栏删掉「静音 2 小时」按钮与其状态 chip（静音改由托盘菜单提供）——清单里同步去掉 mute / muteBtn。
+// 2026-09-17：顶部那行紧凑摘要条（三个 .tile 小块）整行删除（与大卡片信息重复）——清单里同步去掉 strip。
+// 2026-09-17：键盘快捷键与「快捷键帮助浮层」整块删除（页脚「按 ? 查看」同批移除）——清单里同步去掉 helpOverlay。
+const T32_EXPECTED_IDS = ['alertCount','alerts-table','attrBars','attrHint','attrNote','attrSeg','backupBtn','bg1','cap-codex','cap-ds','cap-glm','cards','cfgPanelBtn','changes-ds','changes-glm','chartHint','dashboard-data-script','fresh','healthHint','healthList','heat','heatDays','heatFoot','heatMonths','heatNote','heatSeg','heatSummary','heatTip','heatWrap','hint-codex','intervalNote','modelBars','modelHint','modelNote','modelSummary','packs-table','refreshBtn','ring','ringTxt','setupBar','stats-codex','stats-ds','stats-glm','supportBtn','tcBars','tcHint','tcNote','tcSeg','tcSummary','themeBtn','updated','usageStyle','winSeg','wrap-codex','wrap-ds','wrap-glm'];
 const T32_FIXTURE = JSON.stringify({
   generatedAtMs: 1, collectedAtMs: 900000, collectedAtText: '2026-09-15 00:00',
   health: null, mute: { active: false }, suppression: {}, config: { refreshSeconds: 0, defaultWindow: 'h24', theme: 'auto', staleMinutes: 15 },

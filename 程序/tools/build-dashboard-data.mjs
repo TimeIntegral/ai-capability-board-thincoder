@@ -29,7 +29,7 @@ export function buildDashboardData() {
     },
     thresholds: {
       glmLow: cfg.thresholds?.glmLow ?? 5, glmCritical: cfg.thresholds?.glmCritical ?? 2,
-      dsLow: cfg.thresholds?.dsLow ?? 20, dsCritical: cfg.thresholds?.dsCritical ?? 10,
+      dsLow: cfg.thresholds?.dsLow ?? 5, dsCritical: cfg.thresholds?.dsCritical ?? 2,
       codex5hWarn: cfg.thresholds?.codex5hWarn ?? 80, codex5hCritical: cfg.thresholds?.codex5hCritical ?? 95,
       codexWeekWarn: cfg.thresholds?.codexWeekWarn ?? 80,
     },

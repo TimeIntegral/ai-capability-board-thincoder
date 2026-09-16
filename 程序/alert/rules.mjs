@@ -134,7 +134,7 @@ export function evaluateRules(prev, state, cfg, prevAlertState) {
     balanceRules(push, cur.deepseek, stats.burn?.deepseek, {
       name: 'DeepSeek', slot: 'ds',
       depleted: 'DeepSeek 余额已耗尽（¥0.00）', depletedBody: 'DeepSeek API 调用将失败，需充值后恢复',
-      critical: num(th.dsCritical, 10), low: num(th.dsLow, 20),
+      critical: num(th.dsCritical, 2), low: num(th.dsLow, 5),   // 急线 2：与 GLM 同构（低线 5 必须高于急线，否则 P1「偏低」永不可达）
     });
   }
   if (sampled.glm !== false && !sup.glm) {

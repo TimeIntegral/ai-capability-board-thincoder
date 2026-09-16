@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { saveConnections, parsePlatform, thresholdEditorValues } from './connections.mjs';
+import { saveConnections, parsePlatform, thresholdEditorValues, THRESHOLD_RANGES } from './connections.mjs';
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'board-connections-'));
   t.after(() => {
@@ -181,4 +181,61 @@ test('focused window sends only that platform thresholds', { skip: process.platf
   delete env.PSModulePath;
   execFileSync('powershell.exe', ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path.join(tools, 'connections.ps1'), '-NodeExe', process.execPath, '-Platform', 'glm', '-PreviewPath', path.join(dir, 'focus-thresholds.png'), '-SmokeTest'], { env, timeout: 25000, windowsHide: true, stdio: 'pipe' });
   assert.ok(fs.statSync(path.join(dir, 'focus-thresholds.png')).size > 1000);
+});
+
+// ---- 密钥来源提示（2026-09-17：装了 ThinCoder 的用户必须看得见「密钥是从那儿拿到的」）----
+
+test('key source hint: says "read from ThinCoder" only for that source', { skip: process.platform !== 'win32' }, t => {
+  const dir = fixture(t);
+  const tools = path.join(dir, '程序', 'tools');
+  fs.mkdirSync(tools, { recursive: true });
+  fs.copyFileSync(path.join(import.meta.dirname, 'connections.ps1'), path.join(tools, 'connections.ps1'));
+  fs.writeFileSync(path.join(tools, 'connections.mjs'), `let text=''; for await (const part of process.stdin) text+=part; const p=JSON.parse(text); if (p.keys.deepseek !== 'fixture-value') process.exit(1); process.stdout.write('连接测试通过');`);
+  // 桩状态：一家从 ThinCoder 配置读到、一家从 secrets.json 读到 —— 两行提示必须分开，否则等于没说来源。
+  // 断言在窗口里跑（-SmokeTest）：文案真的写出来了，而且一行放得下（210px 标签不被截断）。
+  fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'data', 'setup-status.json'), JSON.stringify({
+    checkedAtMs: 1,
+    platforms: { codex: true, deepseek: true, glm: true },
+    codex: { found: true, note: 'stub' },
+    deepseek: { found: true, source: 'ThinCoder 配置', length: 35, note: 'stub' },
+    glm: { found: true, source: 'secrets.json', length: 32, note: 'stub' },
+    lastCollect: { atMs: 1 },
+  }));
+  const env = { ...process.env }; delete env.PSModulePath; delete env.BOARD_THRESHOLDS;
+  execFileSync('powershell.exe', ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path.join(tools, 'connections.ps1'), '-NodeExe', process.execPath, '-PreviewPath', path.join(dir, 'hints.png'), '-SmokeTest'], { env, timeout: 25000, windowsHide: true, stdio: 'pipe' });
+  assert.ok(fs.statSync(path.join(dir, 'hints.png')).size > 1000);
+});
+
+// ---- 余额提醒线的内置回退默认值（2026-09-17：余额类统一为 5 元）----
+
+test('window fallback defaults match config.template.json (balance warning lines are 5)', { skip: process.platform !== 'win32' }, t => {
+  const tpl = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'config.template.json'), 'utf8'));
+  const want = {
+    codex5hWarn: tpl.thresholds.codex5hWarn, codexWeekWarn: tpl.thresholds.codexWeekWarn,
+    dsLow: tpl.thresholds.dsLow, glmLow: tpl.thresholds.glmLow,
+  };
+  assert.equal(tpl.thresholds.dsLow, 5);       // 余额类：低于 5 元提醒（产品定的值写死在此，改动必现形）
+  assert.equal(tpl.thresholds.glmLow, 5);
+  assert.equal(tpl.thresholds.dsCritical, 2);  // 急线：DeepSeek 与 GLM 同构 5/2（低线高于急线，两级才都可达）
+  assert.equal(tpl.thresholds.glmCritical, 2);
+  for (const [k, v] of Object.entries(want)) {   // 默认值必须落在窗口/node 两侧的范围校验里，否则控件画不出来
+    assert.ok(v >= THRESHOLD_RANGES[k][0] && v <= THRESHOLD_RANGES[k][1], `${k} 默认值 ${v} 超出 ${THRESHOLD_RANGES[k]}`);
+  }
+  const dir = fixture(t);
+  const tools = path.join(dir, '程序', 'tools');
+  fs.mkdirSync(tools, { recursive: true });
+  fs.copyFileSync(path.join(import.meta.dirname, 'connections.ps1'), path.join(tools, 'connections.ps1'));
+  const dump = path.join(dir, 'payload.json');
+  fs.writeFileSync(path.join(tools, 'connections.mjs'), `import fs from 'node:fs';
+let text=''; for await (const part of process.stdin) text+=part;
+fs.writeFileSync(${JSON.stringify(dump)}, text);
+process.stdout.write('连接测试通过');`);
+  const env = { ...process.env }; delete env.PSModulePath; delete env.BOARD_THRESHOLDS;   // 没有注入 → 窗口只能拿自己的内置默认值画
+  execFileSync('powershell.exe', ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path.join(tools, 'connections.ps1'), '-NodeExe', process.execPath, '-PreviewPath', path.join(dir, 'defaults.png'), '-SmokeTest'], { env, timeout: 25000, windowsHide: true, stdio: 'pipe' });
+  const got = JSON.parse(fs.readFileSync(dump, 'utf8')).thresholds;
+  // smoke 夹具把每条控件都 +1（证明控件里的值真的上了载荷），所以载荷 = 内置默认值 + 1：
+  // 逐键对上模板即证明「窗口内置默认值」与「模板默认值」同源 —— 两边漂移必红。
+  assert.deepEqual(got, Object.fromEntries(Object.entries(want).map(([k, v]) => [k, v + 1])));
+  assert.ok(fs.statSync(path.join(dir, 'defaults.png')).size > 1000);
 });

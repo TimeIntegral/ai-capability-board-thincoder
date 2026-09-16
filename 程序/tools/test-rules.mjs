@@ -164,19 +164,45 @@ console.log('\n=== 测试 D：其他场景 ===');
     ts: T0,
     current: { codex: mkCodex({ u5: 10, uw: 10, reset5: 1 }), deepseek: { ok: true, data: { totalBalance: dsBal } }, glm: { ok: true, data: { balance: glmBal } } },
   });
-  const b1 = runSequence([bal(0, 5)], { codexMax5h7d: 50 });
+  const b1 = runSequence([bal(0, 1.5)], { codexMax5h7d: 50 });
   check('GLM ¥0 → 耗尽 P0', b1.fired.some(f => f.key === 'balanceRe:glm.depleted' && f.level === 'P0'), b1.fired.map(f => f.key).join(','));
-  check('DeepSeek ¥5 → 紧急 P0', b1.fired.some(f => f.key === 'balanceRe:ds.critical' && f.level === 'P0'), b1.fired.map(f => f.key).join(','));
+  check('DeepSeek ¥1.5 → 紧急 P0（低于默认急线 2）', b1.fired.some(f => f.key === 'balanceRe:ds.critical' && f.level === 'P0'), b1.fired.map(f => f.key).join(','));
 
   const b2 = runSequence([bal(1.5, 15)], { codexMax5h7d: 50 });
   check('GLM ¥1.5 → 紧急 P0', b2.fired.some(f => f.key === 'balanceRe:glm.critical' && f.level === 'P0'), b2.fired.map(f => f.key).join(','));
-  check('DeepSeek ¥15 → 偏低 P1', b2.fired.some(f => f.key === 'balanceRe:ds.low' && f.level === 'P1'), b2.fired.map(f => f.key).join(','));
+  // 余额提醒线默认值 2026-09-17 定为：低线 5 元 / 急线 2 元（DeepSeek 与 GLM 同构）。
+  // 低线必须高于急线 —— 否则 balanceRules 先判 critical，¥15 这类余额会被急线抢先拦下，「偏低」P1 永远不可达。
+  check('DeepSeek ¥15 → 不提醒（默认低线 5 元：低于 5 才算低，¥15 不过线）', !b2.fired.some(f => f.key.startsWith('balanceRe:ds')), b2.fired.map(f => f.key).join(','));
+
+  // 同一组默认值下两级都必须可达：¥3 落在急线 2 与低线 5 之间 → P1（看板黄色「余额偏低」），¥1.5 在急线之下 → P0。
+  const b2b = runSequence([bal(50, 3)], { codexMax5h7d: 50 });
+  check('DeepSeek ¥3 → 偏低 P1（低线 5 与急线 2 之间，中间档可达）', b2b.fired.some(f => f.key === 'balanceRe:ds.low' && f.level === 'P1'), b2b.fired.map(f => f.key).join(','));
+  check('DeepSeek ¥3 不越级报紧急', !b2b.fired.some(f => f.key === 'balanceRe:ds.critical'), b2b.fired.map(f => f.key).join(','));
 
   const b3 = runSequence([bal(3, 50)], { codexMax5h7d: 50 });
   check('GLM ¥3 → 偏低 P1（阈值 2/5 之间）', b3.fired.some(f => f.key === 'balanceRe:glm.low' && f.level === 'P1'), b3.fired.map(f => f.key).join(','));
 
   const b4 = runSequence([bal(2.5, 100)], { codexMax5h7d: 50, burn: { glm: { perDay: 1, spent: 3, samples: 10, spanDays: 3 }, deepseek: { perDay: 8, spent: 24, samples: 10, spanDays: 3 } } });
   check('余额提醒含「预计可用 X 天」', b4.fired.some(f => /预计还可用/.test(f.body ?? '')), JSON.stringify(b4.fired.map(f => f.body)));
+
+  // ---- 默认值不变量（本次改动的核心风险：低线/急线一旦倒挂，P1 与看板黄色状态就死了）----
+  // balanceRules 先判 critical(P0) 再判 low(P1)：低线必须严格高于急线，两级才都可达。
+  for (const p of ['ds', 'glm']) {
+    const lo = cfg.thresholds[`${p}Low`], crit = cfg.thresholds[`${p}Critical`];
+    check(`默认阈值不变量（${p}）：低线 ${lo} 高于急线 ${crit}`, lo > crit, `low=${lo} critical=${crit}`);
+  }
+  // 同源：同一个默认值散落在四处（模板 / 规则引擎回退 / 下发看板 / 页面回退），任一处漂移即红。
+  // 2026-09-17 上一轮的坑正是「只改了其中一处」——这条把四处一起钉住。
+  {
+    const read = f => fs.readFileSync(path.join(ROOT_DIR, f), 'utf8');
+    const seen = {
+      'config.template.json': cfg.thresholds.dsCritical,
+      '程序/alert/rules.mjs': read('程序/alert/rules.mjs').match(/num\(th\.dsCritical,\s*(\d+)\)/)?.[1],
+      '程序/tools/build-dashboard-data.mjs': read('程序/tools/build-dashboard-data.mjs').match(/dsCritical:\s*cfg\.thresholds\?\.dsCritical\s*\?\?\s*(\d+)/)?.[1],
+      'dashboard.html': read('dashboard.html').match(/D\.thresholds\?\.dsCritical\s*\?\?\s*(\d+)/)?.[1],
+    };
+    check('dsCritical 默认值四处同源且为 2（模板/规则引擎/下发/页面）', Object.values(seen).map(Number).every(v => v === 2), JSON.stringify(seen));
+  }
 
   const idle = runSequence([{
     ts: T0, current: { codex: mkCodex({ u5: 0, uw: 0, reset5: 1 }), deepseek: { ok: true, data: { totalBalance: 100 } }, glm: { ok: true, data: { balance: 50 } } },
@@ -298,7 +324,7 @@ console.log('\n=== 测试 H：余额提醒抑制（「不再提醒」直到充�
     ts: T0,
     current: {
       codex: mkCodex({ u5: 10, uw: 10, reset5: 1 }),
-      deepseek: { ok: true, data: { totalBalance: 5 } },   // 低于 dsCritical(10) → 本应 P0
+      deepseek: { ok: true, data: { totalBalance: 1 } },   // 低于 dsCritical(2) → 本应 P0
       glm: { ok: true, data: { balance: 0 } },             // 耗尽 → 本应 P0
     },
     suppression: sup,

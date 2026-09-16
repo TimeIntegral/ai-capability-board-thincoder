@@ -13,8 +13,11 @@ public static class ConnectionWindow {
 }
 '@
 $root = Split-Path (Split-Path -Parent $PSScriptRoot) -Parent   # 看板根目录（本脚本在 <程序>\tools\ 下）
+# 环境探测结果（connections.mjs 开窗口前先跑一遍 setup-check.mjs 写它）：本窗口只读，缺了或坏了就当没有——
+# 预填少一点，总好过窗口直接打不开。密钥「是从哪儿读到的」就写在里面（source），下面据此告诉用户来源。
+$statusFile = Join-Path $root 'data/setup-status.json'
 $status = $null
-if (!$PreviewPath) { $status = Get-Content -LiteralPath (Join-Path $root 'data/setup-status.json') -Raw -Encoding UTF8 | ConvertFrom-Json }
+if (Test-Path $statusFile) { try { $status = Get-Content -LiteralPath $statusFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $status = $null } }
 $form = New-Object Windows.Forms.Form
 $form.Text = 'AI 能力看板 · 连接平台'
 $form.ClientSize = New-Object Drawing.Size(680, 570)
@@ -41,9 +44,18 @@ function Label($text, $x, $y, $width, $height, $parent) {
 $heading = Label '连接你使用的平台' 28 22 610 38
 $heading.Font = New-Object Drawing.Font('Microsoft YaHei UI', 18, [Drawing.FontStyle]::Bold)
 $subtitle = Label '已有账号自动复用，只补缺少的密钥；选一家就可以开始。' 30 68 610 28
-$checks = @{}; $inputs = @{}
+$checks = @{}; $inputs = @{}; $hints = @{}; $descs = @{}
 $names = @('codex','deepseek','glm')
 $labels = @{ codex = 'Codex'; deepseek = 'DeepSeek'; glm = 'GLM' }
+# 密钥来源提示（DeepSeek / GLM 两行右侧那行小字）：来源写在探测结果里（data/setup-status.json 的 source，
+# 由 tools/setup-check.mjs 按 lib/common.mjs 的 resolveApiKey 顺序探测：secrets.json → ThinCoder 配置 → 环境变量）。
+# 装过 ThinCoder 的用户从没在这窗口里填过密钥 —— 必须让他看见「已经从我装过的 ThinCoder 里拿到了」，
+# 否则他会以为还得再填一次。右边标签只有 210px 宽，文案要一行放得下（见 test-connections.mjs 的截断断言）。
+function KeyHint($name) {
+  if (([string]$status.$name.source) -like '*ThinCoder*') { return '已从 ThinCoder 读到密钥' }
+  if ($status.$name.found) { return '已有密钥，留空复用' }
+  return '在左侧粘贴 API Key'
+}
 # Focus mode: a card button on the dashboard opens this window with a platform
 # name (aiquotaboard://connect?platform=xxx -> connections.mjs --platform=x). It
 # must configure ONLY that one: the other two are neither rendered nor written.
@@ -60,8 +72,12 @@ function Row($name, $x, $y, $parent) {
   $check.Checked = if ($focus -eq $name) { $true }
     else { if ($status.lastCollect.atMs) { [bool]$status.platforms.$name } else { [bool]($status.platforms.$name -or $status.$name.found) } }
   $parent.Controls.Add($check); $checks[$name] = $check
-  $detail = if ($name -eq 'codex') { '查看订阅额度；请先在 Codex 客户端登录。' } else { '查看 API 余额；不代表聊天订阅或 Coding Plan 额度。' }
-  $null = Label $detail ($x+130) $y 490 25 $parent
+  # 说明行只说「这家给你看的是什么账」——三家的账目性质不同：Codex 是订阅额度、DeepSeek 是按量计费余额
+  # （充值制，没有聊天订阅 / Coding Plan 这回事）、GLM 是 API 余额（它另有聊天订阅 / Coding Plan）。
+  $detail = if ($name -eq 'codex') { '查看订阅额度；请先在 Codex 客户端登录。' }
+    elseif ($name -eq 'deepseek') { '查看按量计费余额。' }
+    else { '查看 API 余额；不代表聊天订阅或 Coding Plan 额度。' }
+  $descs[$name] = Label $detail ($x+130) $y 490 25 $parent
   if ($name -eq 'codex') {
     $null = Label $(if ($status.codex.found) { '已发现本机登录，保存后验证连接。' } else { '登录后可直接点下方按钮验证，无需填写密钥。' }) ($x+130) ($y+30) 490 28 $parent
   } else {
@@ -69,8 +85,7 @@ function Row($name, $x, $y, $parent) {
     $box.Location = New-Object Drawing.Point(($x+130),($y+29)); $box.Size = New-Object Drawing.Size(280,28)
     $box.UseSystemPasswordChar = $true; $box.MaxLength = 4096
     $parent.Controls.Add($box); $inputs[$name] = $box
-    $hint = if ($status.$name.found) { '已有密钥，留空复用' } else { '在左侧粘贴 API Key' }
-    $null = Label $hint ($x+419) ($y+28) 210 24 $parent
+    $hints[$name] = Label (KeyHint $name) ($x+419) ($y+28) 210 24 $parent
     $link = New-Object Windows.Forms.LinkLabel
     $link.Text = '打开平台获取密钥'
     $link.Location = New-Object Drawing.Point(($x+419),($y+52)); $link.Size = New-Object Drawing.Size(190,24)
@@ -108,7 +123,7 @@ if ($focus) {
 $thresholdFields = @(
   [pscustomobject]@{ key='codex5hWarn';   platform='codex';    label='Codex 用到';        suffix='% 时提醒我'; min=50; max=100;  step=5; dflt=80 }
   [pscustomobject]@{ key='codexWeekWarn'; platform='codex';    label='Codex 近 7 天用到'; suffix='% 时提醒我'; min=50; max=100;  step=5; dflt=80 }
-  [pscustomobject]@{ key='dsLow';         platform='deepseek'; label='DeepSeek 余额低于'; suffix=' 元时提醒我'; min=1;  max=1000; step=1; dflt=20 }
+  [pscustomobject]@{ key='dsLow';         platform='deepseek'; label='DeepSeek 余额低于'; suffix=' 元时提醒我'; min=1;  max=1000; step=1; dflt=5 }
   [pscustomobject]@{ key='glmLow';        platform='glm';      label='GLM 余额低于';      suffix=' 元时提醒我'; min=1;  max=1000; step=1; dflt=5 }
 )
 $currentThresholds = $null
@@ -194,6 +209,24 @@ if ($PreviewPath) {
     $probe = if ($focus) { $focus } else { 'deepseek' }
     if (!$inputs[$probe]) { throw '连接窗口交互测试只支持带密钥框的平台（deepseek / glm）' }
     if ($focus -and ($checks.Count -ne 1 -or !$checks.ContainsKey($focus))) { throw '聚焦模式只能渲染被点的那一家' }
+    # 密钥来源提示：桩状态（<根>\data\setup-status.json）里写什么来源，那一行小字就必须写出对应的话。
+    # 这是「装过 ThinCoder 就不用再填一次」唯一的对外说明，所以既要真的写出来，也要一行放得下（不被截断）。
+    if (Test-Path $statusFile) {
+      if (!$status) { throw '状态文件存在却没被读进窗口（密钥来源提示会退化成通用文案）' }
+      foreach ($name in @('deepseek','glm')) {
+        if (!$hints.ContainsKey($name)) { continue }
+        $want = if (([string]$status.$name.source) -like '*ThinCoder*') { '已从 ThinCoder 读到密钥' } else { '已有密钥，留空复用' }
+        if ($hints[$name].Text -ne $want) { throw "密钥来源提示不符（$name）：$($hints[$name].Text)" }
+        $need = [Windows.Forms.TextRenderer]::MeasureText($hints[$name].Text, $hints[$name].Font).Width
+        if ($need -gt $hints[$name].Width) { throw "密钥来源提示被截断（$name）：需 $need px，标签只有 $($hints[$name].Width) px" }
+      }
+    }
+    # 说明行：DeepSeek 是按量计费余额——「Coding Plan」是 GLM 的概念，不许安到它头上（用户就是这么被绕晕的）。
+    # 两行都留：改文案时若只改上一行、把概念带回来，下一行会把它扇回去。
+    if ($descs.ContainsKey('deepseek')) {
+      if ($descs['deepseek'].Text -ne '查看按量计费余额。') { throw "DeepSeek 说明行不符：$($descs['deepseek'].Text)" }
+      if ($descs['deepseek'].Text -match 'Coding Plan') { throw "DeepSeek 说明行混进了 Coding Plan：$($descs['deepseek'].Text)" }
+    }
     $checks[$probe].Checked = $true
     $inputs[$probe].Text = 'fixture-value'
     # 阈值控件也要真的被改过：每条 +1（到顶就回到下限）。载荷必须反映控件里的新值，
