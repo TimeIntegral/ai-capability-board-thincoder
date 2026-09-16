@@ -2,12 +2,19 @@
 // 用法：node release/publish.mjs [--dry] [--version X.Y.Z] [--tag]
 //
 // 流程（任何一步不过就 exit 1 拒绝发布，绝不放行）：
-//   ① 取文件清单 —— git 将跟踪的全部文件（= 下一次 push 会公开的范围）
-//   ② 审计       —— 密钥 / 个人信息 / 禁入路径，逐行扫（规则见 audit-rules.json）
+//   ① 取文件清单 —— L1 开发层（git 将跟踪的全部文件 = 下一次 push 会公开的范围）+ 分类出 L2 发布层
+//   ② 审计       —— 密钥 / 个人信息 / 禁入路径，逐行扫**整个 L1**（规则见 audit-rules.json）
 //   ③ 版本一致性 —— VERSION ↔ CHANGELOG 顶部 ↔ 代码里的版本常量 ↔ --version
-//   ④ 打包       —— dist/ai-capability-board-v<版本>.zip（代码 + 便携 Node 运行时；仅非 --dry）
+//   ④ 打包       —— dist/ai-capability-board-v<版本>.zip = **L2** + 便携 Node 运行时（仅非 --dry）
 //   ⑤ 打标签     —— git tag v<版本>（仅 --tag 且非 --dry）
 //   ⑥ 下一步     —— 打印提交 / 推送 / 上传的具体命令
+//
+// 三层文件模型（说明表见 release/README.md，清单见 publish-files.mjs）：
+//   L1 开发层 = 仓库里 git 跟踪的一切（开发随便加；审计扫它，因为 push 就公开它）
+//   L2 发布层 = publish-files.mjs 正列举的那些（= 用户拿到的 ZIP；**没列的永远不进包**）
+//   L3 安装层 = L2 + 安装时注入（build-installer.mjs 推导，安装器只装这一份清单）
+// 审计范围（L1）与打包范围（L2）故意不同：L1 要过审计是因为它会上 GitHub；
+// L2 是「从 L1 里挑出来给用户的东西」。两者都由这一道闸门把关，但依据的清单不是一份。
 //
 // 设计原则（见 release/README.md）：默认拒绝 —— 拿不准就报错停下。
 // 零外部依赖：只用 node: 内置模块，唯一的子进程是 git。
@@ -16,6 +23,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { 分类, 检查悬空引用, 发布层, 仅供开发, 安装时注入, 运行时目录 } from './publish-files.mjs';
 
 const ROOT = path.dirname(import.meta.dirname);              // 仓库根目录
 const RULES_FILE = path.join(import.meta.dirname, 'audit-rules.json');
@@ -59,7 +67,7 @@ function usage() {
   -h, --help        显示这段帮助`);
 }
 
-// ── ① 文件清单 ──────────────────────────────────────────────────────────
+// ── ① 文件清单：L1 开发层 → L2 发布层 ───────────────────────────────────
 // -z：NUL 分隔、不做引号转义。Windows 上 git 默认会把中文文件名输出成 "\345\256\211…" 这样的
 // 八进制转义（本仓库有 7 个中文名文件），照原样读会读到不存在的路径 —— 必须用 -z 拿原始字节。
 function listPublishFiles() {
@@ -533,6 +541,36 @@ function nextSteps({ version, zipPath, tag }) {
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────
+const 顶层 = rel => (rel.includes('/') ? `${rel.slice(0, rel.indexOf('/'))}/` : rel);
+
+// L3 = L2 + 安装时注入：把注入项连理由一起显示，省得有人以为包里有它。
+function 安装时注入清单() {
+  return 安装时注入.map(e => (Array.isArray(e) ? `${e[0]}（${e[1]}）` : e)).join('、');
+}
+
+// 打印分类结果：让「这回到底给用户送了什么」一眼可见（--dry 时还会列出完整清单）。
+function printLayers({ 发布, 仅开发, 未分类, 冲突, 失效发布, 失效开发 }) {
+  const 分布 = new Map();
+  for (const rel of 发布) 分布.set(顶层(rel), (分布.get(顶层(rel)) ?? 0) + 1);
+  const 清单 = [...分布].sort().map(([名, 数]) => (名.endsWith('/') ? `${名}${数}` : 名)).join('、');
+  info(`L2 发布层 ${发布.length} 个文件（进用户包）：${清单}`);
+  info(`L1 仅开发 ${仅开发.length} 个文件（留在仓库：开发文档、构建脚本、测试…）：${仅供开发.map(e => (Array.isArray(e) ? e[0] : e)).join('、')}`);
+  if (失效开发.length) info(`○ 仅开发清单里对不上文件的过期条目（不影响发布，顺手清一下）：${失效开发.join('、')}`);
+
+  // 拿不准就停下：清单没归类、两边都归类、或发布层指向的文件已经不在仓库里 —— 三种都拒绝打包。
+  const 问题 = [];
+  if (未分类.length) {
+    问题.push(`这些文件既不在「发布层」也不在「仅供开发」：\n     ${未分类.join('\n     ')}\n     → 去 release/publish-files.mjs 里做决定：给用户看的加进「发布层」，开发用的加进「仅供开发」。`);
+  }
+  if (冲突.length) {
+    问题.push(`这些文件同时被归类为「发布层」和「仅供开发」（清单自相矛盾）：\n     ${冲突.join('\n     ')}\n     → 同一个文件不许两边都列，删掉其中一条。`);
+  }
+  if (失效发布.length) {
+    问题.push(`「发布层」里这些条目在仓库里找不到对应文件（产物会缺件）：\n     ${失效发布.join('\n     ')}\n     → 文件改名/删除后同步改 release/publish-files.mjs。`);
+  }
+  if (问题.length) die(`发布清单没对上仓库（三层模型见 release/README.md）：\n\n   ${问题.join('\n\n   ')}`);
+}
+
 function parseArgs(argv) {
   const opt = { dry: false, tag: false, version: null, help: false, runtime: true };
   for (let i = 0; i < argv.length; i++) {
@@ -560,16 +598,26 @@ function main() {
 
   console.log(`发布闸门${opt.dry ? '（预演 --dry：只审计，不打包、不打标签）' : ''}   ${new Date().toLocaleString('zh-CN')}`);
 
-  // ① 文件清单
-  stepHead('①', '取文件清单（git 将跟踪的全部文件 = 下一次 push 会公开的范围）');
+  // ① 文件清单 + 三层分类
+  stepHead('①', '取文件清单：L1 开发层（git 将跟踪的全部文件 = 下一次 push 会公开的范围）');
   const { files, missing } = listPublishFiles();
-  info(`共 ${files.length} 个文件`);
+  info(`L1 ${files.length} 个文件`);
   if (missing.length) info(`○ 索引里有、磁盘上已删除（不扫）：${missing.join('、')}`);
   if (!files.length) die('一个文件都没取到 —— 确认当前目录是 git 仓库、且在仓库根目录下跑这个脚本');
+  // L1 → L2：没被 publish-files.mjs 显式列进「发布层」的文件一律不进包（默认拒绝）。
+  const 层次 = 分类(files);
+  printLayers(层次);
 
   // 规则表先加载：规则写错就别往下走了
   const { rules, exemptions, localCount } = loadRules();
   const { texts, binary, bytes } = readPublishables(files);
+
+  // 包内引用自洽：清单分错类（某个运行时文件被误归为开发件）会在这里暴露，
+  // 否则要到用户机器上才发现「程序打不开」。
+  const 悬空 = 检查悬空引用(rel => texts.get(rel), 层次.发布);
+  if (悬空.length) {
+    die(`发布层内部引用对不上（包会缺件）：\n\n   ${悬空.map(p => `${p.文件} → ${p.引用}`).join('\n   ')}\n\n   → 对照 release/publish-files.mjs 看是不是漏列或错分类。`);
+  }
 
   // ② 审计
   const audit = runAudit({ files, texts }, rules, exemptions);
@@ -608,16 +656,31 @@ function main() {
   if (opt.dry) {
     stepHead('④ ⑤', '预演模式：跳过打包与打标签');
     const 运行时数 = runtime.files.length ? ` + 便携运行时 ${runtime.files.length} 个文件（${humanSize(runtime.bytes)}）` : '（不含运行时）';
-    info(`正式发布会打包：代码 ${files.length} 个文件${运行时数} → dist/${ZIP_BASE}-v${version}.zip`);
+    info(`正式发布会打包：L2 发布层 ${层次.发布.length} 个文件${运行时数} → dist/${ZIP_BASE}-v${version}.zip`);
+    blank();
+    info(`给用户的包（L2）逐条列出 —— 这就是用户解压/装完看到的东西：`);
+    let 上组 = null;
+    for (const rel of 层次.发布) {
+      const 组 = 顶层(rel);
+      if (组 !== 上组) { if (上组 !== null && 组.endsWith('/')) console.log(''); 上组 = 组; }
+      console.log(`     ${rel}`);
+    }
+    if (runtime.files.length) {
+      console.log('');
+      console.log(`     ${运行时目录}${runtime.files.length === 1 ? 'node.exe' : `（便携运行时 ${runtime.files.length} 个文件）`}`);
+    }
+    blank();
+    info(`安装时还会追加（L3 = L2 + 注入，由安装器写入）：${安装时注入清单()}`);
     info(`正式发布跑：node release/publish.mjs${opt.tag ? ' --tag' : ''}`);
     return 0;
   }
 
-  // ④ 打包
+  // ④ 打包（只打 L2 发布层 + 便携运行时）
   stepHead('④', '打包');
-  const zip = packZip(files, version, runtime);
+  const zip = packZip(层次.发布, version, runtime);
   ok(`${path.relative(ROOT, zip.zipPath).split(path.sep).join('/')}  ${humanSize(zip.size)}（原始 ${humanSize(zip.rawBytes)}，${zip.count} 个文件，自检通过）`);
   info(`压缩包内一级目录：${zip.prefix}     dist/ 已在 .gitignore 里，不会进仓库`);
+  info(`包内 = L2 发布层 ${层次.发布.length} 个文件${zip.runtimeFiles ? ' + 便携 Node 运行时' : ''}（清单：release/publish-files.mjs）`);
   if (zip.runtimeFiles) {
     info(`含便携 Node 运行时 runtime/node.exe（${humanSize(runtime.exeBytes)}）—— 它是二进制，不逐行审计，改由 SHA256 核对来源`);
   } else {

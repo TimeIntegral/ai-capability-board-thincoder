@@ -3,11 +3,40 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-import { ROOT_DIR } from '../lib/common.mjs';
+import { ROOT_DIR, loadConfig } from '../lib/common.mjs';
 
 const root = ROOT_DIR;                       // 项目根（config.json / secrets.json / data 那一层）
 const CODE = path.join(root, '程序');         // 程序代码目录：tools\ 以及各 .mjs 都在这里
 const names = ['codex', 'deepseek', 'glm'];
+// 提醒阈值：连接窗口只露四条「提醒线」——用量到多少 % / 余额低于多少钱时**开始提醒**
+// （程序\alert\rules.mjs 的 codex5hWarn / codexWeekWarn / dsLow / glmLow）。
+// 紧急阈值（*Critical）与预测、异常参数不在窗口里，保持配置文件里的值不动；
+// 键名与取值范围与命令行白名单 tools/edit-config.mjs 同源（多实现面纪律：各面独立实现、语义同源）。
+export const THRESHOLD_RANGES = {
+  codex5hWarn: [50, 100],
+  codexWeekWarn: [50, 100],
+  dsLow: [1, 1000],
+  glmLow: [1, 1000],
+};
+// 交给窗口预填的现状值：配置语义的唯一权威在 node 侧（模板默认 + 用户值合并，见 lib/common.mjs:21），
+// 窗口只负责显示。经环境变量下发：不进命令行、不进 URL、不落盘（阈值不是密钥，但仍沿用同一条通路纪律）。
+// 取不到值的键不放进结果——窗口自己回退到内置默认值（与 config.template.json 同源）。
+export function thresholdEditorValues(cfg) {
+  const out = {};
+  for (const key of Object.keys(THRESHOLD_RANGES)) {
+    const value = Number(cfg?.thresholds?.[key]);
+    if (Number.isFinite(value)) out[key] = value;
+  }
+  return out;
+}
+// 看板卡片上的「启用平台」经协议发来 aiquotaboard://connect?platform=xxx（契约见 docs/连接与发布隔离.md）。
+// 只认这三个名字；缺参数、空值、其它值一律返回 '' = 完整窗口（老行为）。
+// 这里是浏览器字符串进入本进程的唯一入口，所以白名单校验放在最外层，不进命令行。
+export function parsePlatform(argv = process.argv.slice(2)) {
+  const hit = argv.find(a => String(a).startsWith('--platform='));
+  const value = hit ? String(hit).slice('--platform='.length).trim().toLowerCase() : '';
+  return names.includes(value) ? value : '';
+}
 function readObject(file) {
   if (!fs.existsSync(file)) return {};
   try {
@@ -22,12 +51,32 @@ function atomic(file, value) {
   finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
 }
 export function saveConnections(directory, input) {
-  if (!input || !input.platforms || names.some(n => typeof input.platforms[n] !== 'boolean')) throw new Error('请选择要连接的平台。');
-  if (Object.keys(input.platforms).some(n => !names.includes(n))) throw new Error('不支持的平台。');
+  // platforms 允许只给一部分：聚焦窗口（点某张卡片的「启用平台」）只写选中那一家，其余平台原样保留。
+  // 逐项校验：没给平台、给了不认识的名字、值不是布尔，一律拒绝（全量窗口仍然三家都送来，行为不变）。
+  const platforms = input?.platforms;
+  if (!platforms || typeof platforms !== 'object' || Array.isArray(platforms)) throw new Error('请选择要连接的平台。');
+  const chosen = Object.keys(platforms);
+  if (!chosen.length) throw new Error('请选择要连接的平台。');
+  if (chosen.some(n => !names.includes(n))) throw new Error('不支持的平台。');
+  if (chosen.some(n => typeof platforms[n] !== 'boolean')) throw new Error('请选择要连接的平台。');
   const keys = input.keys ?? {};
   if (Object.keys(keys).some(n => !['deepseek', 'glm'].includes(n))) throw new Error('不支持的密钥类型。');
   for (const key of Object.values(keys)) {
     if (typeof key !== 'string' || key.length > 4096 || /[\r\n\0]/.test(key)) throw new Error('密钥格式不正确，请重新粘贴。');
+  }
+  // thresholds 同样允许只给一部分（聚焦窗口只写那一家）；整段缺省 = 老载荷，一条不写（向后兼容）。
+  // 逐项白名单 + 范围校验：不认识的键、非数值、越界一律拒绝——拒绝发生在任何写入之前。
+  const thresholds = input.thresholds;
+  const thresholdPatch = {};
+  if (thresholds != null) {
+    if (typeof thresholds !== 'object' || Array.isArray(thresholds)) throw new Error('提醒数值无法读取，请重新打开窗口。');
+    for (const [key, raw] of Object.entries(thresholds)) {
+      const range = THRESHOLD_RANGES[key];
+      if (!range) throw new Error('不支持的提醒设置。');
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < range[0] || value > range[1]) throw new Error('提醒数值超出范围，请重新填写。');
+      thresholdPatch[key] = value;
+    }
   }
   const configFile = path.join(directory, 'config.json');
   const secretsFile = path.join(directory, 'secrets.json');
@@ -37,7 +86,11 @@ export function saveConnections(directory, input) {
   for (const n of ['deepseek', 'glm']) if (keys[n]?.trim()) { secrets[n] = keys[n].trim(); changed = true; }
   const previous = fs.existsSync(secretsFile) ? fs.readFileSync(secretsFile) : null;
   if (changed) atomic(secretsFile, secrets);
-  try { atomic(configFile, { ...config, platforms: { ...config.platforms, ...input.platforms } }); }
+  const next = { ...config, platforms: { ...config.platforms, ...input.platforms } };
+  // 阈值只合并送来的键：窗口没露的（紧急阈值 / 预测 / 异常）与其余字段原样保留。
+  // 一个键都没送 = 不新建 thresholds 段，也不把已有值改写成空。
+  if (Object.keys(thresholdPatch).length) next.thresholds = { ...config.thresholds, ...thresholdPatch };
+  try { atomic(configFile, next); }
   catch (error) {
     if (changed) {
       if (previous === null) fs.unlinkSync(secretsFile);
@@ -69,9 +122,15 @@ async function main() {
     lines.push(development ? '开发预览：未注册后台任务。日常使用请安装发布包。' : automatic ? '自动采集已开启，可返回看板。' : '设置已保存，但自动采集未开启，请重试。');
     process.stdout.write(lines.join('\n'));
   } else {
+    const platform = parsePlatform();
     run('tools/setup-check.mjs');
     const env = { ...process.env }; delete env.PSModulePath;
-    execFileSync('powershell.exe', ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path.join(CODE, 'tools/connections.ps1'), '-NodeExe', process.execPath], { env, windowsHide: true, stdio: 'ignore' });
+    // 窗口的阈值预填值：读不到配置就不注入，窗口回退到内置默认值（少一次崩溃面）
+    try { env.BOARD_THRESHOLDS = JSON.stringify(thresholdEditorValues(loadConfig())); }
+    catch { delete env.BOARD_THRESHOLDS; }
+    const args = ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path.join(CODE, 'tools/connections.ps1'), '-NodeExe', process.execPath];
+    if (platform) args.push('-Platform', platform);   // 只配置这一家；不带 = 三家都显示（老行为）
+    execFileSync('powershell.exe', args, { env, windowsHide: true, stdio: 'ignore' });
   }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

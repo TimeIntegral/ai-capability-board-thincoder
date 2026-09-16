@@ -4,11 +4,9 @@
 
 ## 维护者微信
 
-有安装、额度显示或升级上的问题，也可以直接加维护者微信：
+有安装、额度显示或升级上的问题，可以直接加维护者微信：**lixiangcheng2017**
 
-![维护者微信二维码](https://github.com/TimeIntegral/ai-capability-board-thincoder/blob/main/assets/wechat-contact.png?raw=true)
-
-> 提示：这是个人的「添加朋友」二维码，仅用于交流与反馈。加好友请注明来意（例如「看板」），便于快速通过。
+> 加好友请注明来意（例如「看板」），便于快速通过。
 
 ## 用户微信群
 

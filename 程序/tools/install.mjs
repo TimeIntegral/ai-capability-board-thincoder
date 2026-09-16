@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadConfig, ROOT_DIR } from '../lib/common.mjs';
 import { runFirstRunCheck } from './first-run-check.mjs';
+import { 清理旧版遗留, 读取安装清单 } from './install-legacy.mjs';
 
 const ROOT = ROOT_DIR;                       // 项目根（config.json / dashboard.html / data 那一层）
 const PROG = path.join(ROOT, '程序');         // 程序代码（本文件就在它的 tools\ 下）
@@ -22,25 +23,8 @@ if (fs.existsSync(path.join(ROOT, '.git'))) {
   process.exit(1);
 }
 const LEGACY_TASK_NAMES = ['AI-Quota-Board-Collect'];
-// 2026-09-17 以来的旧目录结构（脚本散在根目录、程序代码散在根目录/
-// tools/lib/alert/collectors）。覆盖安装或解压升级会同时留下它们，
-// 不清掉用户看到的就还是那堆散文件。只删这份固定清单。
-const LEGACY_PATHS = [
-  'start.vbs', '运行采集.vbs', '连接平台.vbs', '启用自动采集.vbs', '托盘图标.vbs',
-  '安装定时任务.bat', '卸载定时任务.bat', '静音2小时.bat', '取消静音.bat',
-  'collect.mjs', 'mute.mjs', 'balance-mute.mjs', '运行协议.vbs',
-  'lib', 'collectors', 'alert', 'tools',
-];
-// 递归删除不用 fs.rmSync(recursive)：中文路径下 Node 的递归 fs API 踩过原生崩溃
-// （见 backup.mjs 里 fs.cpSync 的同类记录），逐层自走是已验证安全的做法。
-function removeTree(target) {
-  if (fs.lstatSync(target).isDirectory()) {
-    for (const name of fs.readdirSync(target)) removeTree(path.join(target, name));
-    fs.rmdirSync(target);
-  } else {
-    fs.unlinkSync(target);
-  }
-}
+// 旧版遗留清单（旧目录结构 + 旧发布包漏发的开发件）与清理逻辑在 install-legacy.mjs：
+// 它是一次真实删除操作，所以单独成模块 + 带测试（test-install-legacy.mjs），不埋在安装脚本里。
 const SHORTCUT_NAME = 'AI 能力看板';
 const LEGACY_SHORTCUT_NAMES = ['AI 额度看板'];
 if (!fs.existsSync(path.join(ROOT, 'config.json'))) {
@@ -67,14 +51,10 @@ const step = (name, fn) => {
 // 0) 旧结构清理：只删固定清单，删不掉的（被占用）留给下次；绝不让安装因此失败。
 //    必须在注册启动项之前跑：旧任务/旧快捷方式指向的路径随后会被新注册覆盖。
 {
-  const removed = [];
-  const stuck = [];
-  for (const rel of LEGACY_PATHS) {
-    const target = path.join(ROOT, rel);
-    if (!fs.existsSync(target)) continue;
-    try { removeTree(target); removed.push(rel); } catch { stuck.push(rel); }
-  }
+  // 清单保护：当前这份安装自身的文件（L3 安装清单）一律不删（详见 install-legacy.mjs 顶部）。
+  const { removed, stuck, kept } = 清理旧版遗留(ROOT, 读取安装清单(ROOT));
   if (removed.length) console.log(`🧹 已清理旧版遗留：${removed.join('、')}`);
+  if (kept.length) console.log(`○ 清单保护跳过（属于当前安装）：${kept.join('、')}`);
   if (stuck.length) console.error(`⚠️ 旧版遗留清理未完成（可忽略，不影响使用）：${stuck.join('、')}`);
 }
 

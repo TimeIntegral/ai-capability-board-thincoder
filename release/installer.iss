@@ -4,6 +4,9 @@
 #ifndef AppVersion
   #error AppVersion required
 #endif
+#ifndef FileList
+  #error FileList required
+#endif
 [Setup]
 AppId=AI-Capability-Board-ThinCoder{code:TestSuffix}
 AppName=AI 能力看板
@@ -34,7 +37,13 @@ LicenseFile={#StageDir}\LICENSE
 Name: "zhcn"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Files]
-Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 安装文件清单由构建时生成：release/build-installer.mjs 从 release/publish-files.mjs 的发布层
+; （L2）推导出安装层（L3）后，逐条列出每个要安装的文件。
+; 这里**不再**用 Source: "{#StageDir}\*" 递归全装 —— 那样 stage 里任何东西都会被装进用户
+; 机器，安装层就管不住了（开发文件漏进安装目录就是这么发生的）。清单之外的文件一律不装。
+; 写法注意：#include 的参数是 ISPP **表达式**，不能写成 "{#FileList}" —— 那样只会拿到字面量
+; `{#FileList}` 然后报 File not found；直接写变量名即可，值就是 /DFileList 传进来的路径。
+#include FileList
 Source: "{#StageDir}\runtime\node.exe"; DestDir: "{tmp}"; DestName: "board-maintenance.exe"; Flags: dontcopy
 
 [Icons]

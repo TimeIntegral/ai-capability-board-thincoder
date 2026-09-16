@@ -30,7 +30,9 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
 
   /* ---------- 顶栏 ---------- */
   header { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); padding: 10px 0 12px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
-  .hrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  /* gap 10（不是 12）：顶栏第一行在 1152 宽的窗口里只剩 1px 余量——状态文案一长（「数据过期 · N 小时前」）
+     就会折行。每格省 2px（一行 12 格 = 24px）是最低代价的余量，视觉上看不出来。 */
+  .hrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .brand { width: 26px; height: 26px; flex: 0 0 auto; }
   .mark { width: 20px; height: 20px; flex: 0 0 auto; display: inline-block; vertical-align: -4px; }
   h2 .mark { margin-right: 2px; }
@@ -200,12 +202,15 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   /* 快捷键帮助浮层 & 配置编辑弹窗 */
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); z-index: 100; display: none; align-items: center; justify-content: center; }
   .overlay.on { display: flex; }
+  /* 轻提示：页面底部飘一句（原先借用「工具区」里的 #toolNote，工具区移除后自带宿主） */
+  .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 60;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 16px;
+    font-size: 12.5px; box-shadow: var(--shadow); opacity: 0; transition: opacity .18s; pointer-events: none; }
+  .toast.on { opacity: 1; }
   .modal { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; min-width: 380px; max-width: 560px; max-height: 80vh; overflow: auto; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
   .modal h3 { margin: 0 0 12px; font-size: 15px; }
   .keys { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: 13px; }
   .keys kbd { background: var(--card2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; font: 600 11.5px/1.7 var(--mono, ui-monospace, monospace); }
-  .cfg-grid { display: grid; grid-template-columns: 1fr auto; gap: 9px 14px; align-items: center; font-size: 13px; }
-  .cfg-grid input { width: 92px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; text-align: right; }
   .modal .actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 16px; }
 
   /* ---------- 配置检查横幅 + 配置面板 ---------- */
@@ -230,19 +235,6 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
     display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .btn.sm { padding: 3px 10px; font-size: 11.5px; }
   .btn.danger { color: var(--bad); }
-
-  /* ---------- 配置向导（看板内首次配置） ---------- */
-  .wz { width: 560px; max-width: 94vw; }
-  .wz h3 { margin: 0; font-size: 15px; }
-  .srow { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-top: 1px dashed var(--line); font-size: 13px; flex-wrap: wrap; }
-  .srow:first-of-type { border-top: 0; }
-  .srow .nm { width: 76px; font-weight: 600; flex: 0 0 auto; }
-  .srow .st { flex: 1; min-width: 150px; color: var(--muted); font-size: 12px; }
-  .msg { font-size: 12.5px; color: var(--muted); line-height: 1.8; margin: 8px 0; }
-  .msg.ok { color: var(--ok); }
-  .msg.warn { color: var(--warn); }
-  .msg.bad { color: var(--bad); }
-  .nd-fb { margin-top: 8px; }
 
   /* ---------- 概览状态条 ---------- */
   .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-bottom: 16px; }
@@ -324,18 +316,17 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
       <h1>AI 能力看板</h1>
       <span class="chip" id="fresh">加载中…</span>
       <span class="muted" id="updated"></span>
-      <span class="chip warn" id="mute" style="display:none"></span>
       <span class="spacer"></span>
       <svg class="ring" viewBox="0 0 36 36" id="ring" title="下次自动刷新倒计时">
         <circle class="bgc" cx="18" cy="18" r="15"></circle>
         <circle class="fgc" cx="18" cy="18" r="15" stroke-dasharray="94.2" stroke-dashoffset="0"></circle>
         <text class="rtxt" x="18" y="22" text-anchor="middle" id="ringTxt">--</text>
       </svg>
-      <button class="btn" id="pauseBtn" title="暂停/继续自动刷新">暂停</button>
       <button class="btn" id="refreshBtn" title="立即刷新数据">刷新</button>
-      <button class="btn" id="exportBtn" title="导出当前时间窗历史数据">导出</button>
       <button class="btn" id="themeBtn" title="切换主题">主题</button>
-      <button class="btn" id="cfgPanelBtn" title="配置：平台开关、密钥、提醒阈值">配置</button>
+      <button class="btn" id="backupBtn" title="把配置、全部记录与日志打包到项目的 backups 目录（可长期留存）">备份</button>
+      <button class="btn" id="supportBtn" title="帮助、反馈与检查更新">帮助与反馈 · 检查更新</button>
+      <button class="btn" id="cfgPanelBtn" title="配置：平台开关与连接入口">配置</button>
     </div>
     <div class="hrow" style="margin-top:9px">
       <span class="muted">时间窗口</span>
@@ -346,6 +337,9 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
         <button data-win="all">全部</button>
       </span>
       <span class="muted" id="intervalNote"></span>
+      <span class="spacer"></span>
+      <span class="chip warn" id="mute" style="display:none"></span>
+      <button class="btn" id="muteBtn" title="静音 2 小时">静音 2 小时</button>
     </div>
   </header>
 
@@ -449,17 +443,6 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
     <div class="hint" id="tcHint"></div>
   </div>
 
-  <div class="sec" style="margin-top:20px">工具 <span class="span"></span><span class="muted">快捷键按 ? 查看</span></div>
-  <div class="card">
-    <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
-      <button class="btn" id="cfgBtn">编辑阈值与预警</button>
-      <button class="btn" id="backupBtn">一键备份</button>
-      <button class="btn" id="helpBtn">快捷键帮助</button>
-      <button class="btn" id="supportBtn">帮助与反馈 · 检查更新</button>
-      <span class="muted" id="toolNote" style="font-size:12px"></span>
-    </div>
-  </div>
-
   <div class="overlay" id="helpOverlay">
     <div class="modal">
       <h3>键盘快捷键</h3>
@@ -468,7 +451,6 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
         <kbd>2</kbd><span>打开 DeepSeek 用量页</span>
         <kbd>3</kbd><span>打开 GLM 财务页</span>
         <kbd>R</kbd><span>立即刷新数据</span>
-        <kbd>空格</kbd><span>暂停 / 继续自动刷新</span>
         <kbd>T</kbd><span>切换主题（自动 → 深色 → 浅色）</span>
         <kbd>W</kbd><span>切换时间窗口（24 小时 → 7 天 → 30 天 → 全部）</span>
         <kbd>点选</kbd><span>在趋势图上点两下选择区间（第一下起点、第二下终点），统计该区间用量与花费；<kbd>Esc</kbd> 取消</span>
@@ -479,19 +461,6 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
       <div class="actions"><button class="btn primary" data-close="helpOverlay">知道了</button></div>
     </div>
   </div>
-
-  <div class="overlay" id="cfgOverlay">
-    <div class="modal">
-      <h3>阈值与预警设置</h3>
-      <div class="hint" style="margin-bottom:12px">保存后写回 <code>config.json</code>，下一次采集生效（页面刷新后同步显示）。</div>
-      <div class="cfg-grid" id="cfgGrid"></div>
-      <div class="actions">
-        <button class="btn" data-close="cfgOverlay">取消</button>
-        <button class="btn primary" id="cfgSave">保存并应用</button>
-      </div>
-    </div>
-  </div>
-
 
   <div class="group alt"><span class="gbar"></span><span class="gtxt">历史与记录</span><span class="gsub">充值凭证与提醒流水</span><span class="gline"></span></div>
 
@@ -514,7 +483,8 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   <footer>
     数据来源：Codex = chatgpt.com/backend-api/codex/usage（OAuth）；DeepSeek = api.deepseek.com/user/balance（官方）；GLM = bigmodel.cn 财务接口（逆向，失效会显示「数据陈旧」并提醒）。<br>
     采集：Windows 计划任务按最小间隔触发，各平台按各自间隔取数（Codex 与余额可不同）；关机/睡眠期间无数据，唤醒后自动补跑。<br>
-    临时不想被打扰：双击项目目录下的 <b>静音2小时.bat</b>（恢复：<b>取消静音.bat</b>）。
+    临时不想被打扰：点顶栏的 <b>静音 2 小时</b>（托盘图标右键也有同一项）。<br>
+    键盘快捷键：按 <b>?</b> 查看。
   </footer>
 </div>
 
@@ -522,7 +492,6 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
 const $ = id => document.getElementById(id);
 let D = {};
 let win = 'h24';
-let paused = false;
 let refreshSec = 60;
 let countdown = 60;
 
@@ -554,7 +523,7 @@ const MARK = {
 
 /* ================= 首次使用：还没有数据时的引导 =================
    dashboard-data.js 是采集生成的，不进仓库。新用户克隆后、第一次采集之前打开看板会白屏——
-   这里给一条明确的路：主入口 = 页面内的配置向导；其余路径降级为「自己动手」的备选。 */
+   这里给一条明确的路：点「开始配置」直接开本机连接窗口（页面不写盘、不碰密钥）。 */
 function showNoData() {
   let el = $('noData');
   if (!el) {
@@ -568,13 +537,7 @@ function showNoData() {
         <button class="btn primary" id="setupStartBtn" data-setup-open>开始配置</button>
         <span class="muted-note">选平台 → 自动复用账号或补充密钥 → 验证连接</span>
       </div>
-      <details class="nd-fb">
-        <summary class="nd-s" style="cursor:pointer;margin:0">我更想自己动手（备选方式）</summary>
-        <ol class="nd-l">
-          <li data-fallback><b>双击「快捷操作」里的「安装定时任务.bat」</b> —— 注册采集任务、桌面快捷方式与托盘图标（之后自动更新）</li>
-          <li data-fallback>或者手动采集一次：双击「快捷操作」里的「立即采集一次」（等价命令 <code>node 程序\collect.mjs --all</code>），完成后点右上角「<b>刷新</b>」</li>
-        </ol>
-      </details>`;
+`;
     document.querySelector('.wrap')?.prepend(el);
   }
   el.style.display = '';
@@ -633,7 +596,8 @@ function applyTheme() {
 }
 
 setInterval(() => {
-  if (paused || refreshSec === 0) { $('fresh').title = paused ? '已暂停自动刷新' : '自动刷新已关闭'; $('ringTxt').textContent = '⏸'; return; }
+  if (muteState().active !== lastMuteActive) renderHeader();   // 静音到点自动恢复：按钮与状态 chip 一起翻回来
+  if (refreshSec === 0) { $('fresh').title = '自动刷新已关闭'; $('ringTxt').textContent = '⏸'; return; }
   countdown -= 1;
   const ring = document.querySelector('#ring .fgc');
   if (ring) ring.setAttribute('stroke-dashoffset', String(94.2 * (1 - Math.max(0, countdown) / refreshSec)));
@@ -658,6 +622,47 @@ function render() {
   renderCfg();
 }
 
+/* ================= 提醒静音：页面按钮 ↔ 本机 mute.mjs =================
+   页面只发协议（aiquotaboard://mute / unmute，动作清单见 程序/运行协议.vbs），不写盘、不碰密钥。
+   状态来自采集写进看板数据的 D.mute（程序/tools/build-dashboard-data.mjs 由 data/mute.json 生成，约 5 分钟一次）。
+   点过之后、下一份数据回来之前先用本地覆盖值显示，数据一转回来就交还给数据。
+   铁律：按钮上的字永远等于点下去会发生的事——静音到点后文案自己翻回「静音 2 小时」。 */
+const MUTE_HOLD_MS = 2 * 3600e3;   // 与 程序/运行协议.vbs 的 mute 动作一致（那里执行的是 mute.mjs 2h）
+let muteOverride = null;           // { active, untilMs, atMs }：点击瞬间起效的本地值
+let lastMuteActive = null;         // 每秒比对：到点或数据变化时把文案翻回来
+
+function muteState() {
+  if (muteOverride && (D.generatedAtMs ?? 0) <= muteOverride.atMs) {
+    const o = muteOverride;
+    return { active: o.active && o.untilMs > Date.now(), untilMs: o.untilMs, untilText: o.active ? fmtTime(o.untilMs, false) : null };
+  }
+  muteOverride = null;
+  const untilMs = D.mute?.until ?? null;
+  return {
+    active: !!D.mute?.active && (untilMs == null || untilMs > Date.now()),
+    untilMs,
+    untilText: (D.mute?.untilText ?? '').slice(-5) || null,   // 数据里是「YYYY-MM-DD HH:MM」，只取时分
+  };
+}
+
+function renderMuteBtn() {
+  const st = muteState();
+  lastMuteActive = st.active;
+  const b = $('muteBtn');
+  if (!b) return;
+  b.textContent = st.active ? '取消静音' : '静音 2 小时';
+  b.title = b.textContent;
+}
+
+function toggleMute() {
+  const now = Date.now();
+  const on = muteState().active;
+  muteOverride = on ? { active: false, untilMs: 0, atMs: now } : { active: true, untilMs: now + MUTE_HOLD_MS, atMs: now };
+  fireProtocol(on ? 'aiquotaboard://unmute' : 'aiquotaboard://mute');
+  toastNote(on ? '已取消静音' : '已静音 2 小时');
+  renderHeader();
+}
+
 function renderHeader() {
   const ageMin = D.collectedAtMs ? Math.round((Date.now() - D.collectedAtMs) / 60000) : null;
   const stale = D.config?.staleMinutes ?? 15;
@@ -668,8 +673,10 @@ function renderHeader() {
   else { f.textContent = `数据过期 · ${fmtAge(ageMin)}`; f.className = 'chip bad'; }
   $('updated').textContent = D.collectedAtText ? `更新于 ${D.collectedAtText}` : '';
 
+  const st = muteState();
   const m = $('mute');
-  if (D.mute?.active) { m.style.display = ''; m.textContent = `🔇 静音至 ${(D.mute.untilText ?? '').slice(-5)}`; } else m.style.display = 'none';
+  if (st.active) { m.style.display = ''; m.textContent = `🔇 静音至 ${st.untilText ?? ''}`; } else m.style.display = 'none';
+  renderMuteBtn();
 
   const iv = D.intervals ?? {};
   $('intervalNote').textContent = `采集：Codex ${iv.codex ?? '?'} 分钟 · 余额 ${iv.balance ?? '?'} 分钟 · 页面 ${refreshSec || '—'} 秒刷新`;
@@ -845,7 +852,8 @@ function idleCard(name, x, mark = '', platform = '') {
   const off = x?.disabled;
   const isCodex = platform === 'codex';
   const how = isCodex ? '先在 Codex 客户端登录，再连接。' : '已有密钥自动复用，没有的话粘贴一次即可。';
-  return `<div class="card idle"><h2>${mark} ${name} <span class="tag">${off ? '未启用' : '未连接'}</span></h2><div class="sub">${how} 不影响其他平台使用。</div><div class="hint"><button class="btn sm" data-setup-open>${off ? '启用平台' : '连接平台'}</button></div></div>`;
+  // data-platform：卡片上的按钮只针对自己这一家（协议带 platform 参数，连接窗口聚焦该平台）
+  return `<div class="card idle"><h2>${mark} ${name} <span class="tag">${off ? '未启用' : '未连接'}</span></h2><div class="sub">${how} 不影响其他平台使用。</div><div class="hint"><button class="btn sm" data-platform="${platform}" data-setup-open>${off ? '启用平台' : '连接平台'}</button></div></div>`;
 }
 
 /* ================= 图表引擎（含悬停 tooltip） ================= */
@@ -1310,12 +1318,19 @@ function openLinkHtml(key, n) {
     title="打开 ${esc(l.name)} 官方页面（快捷键 ${n}）">↗</a>`;
 }
 
+// 轻提示：底部飘一句（节点按需创建；工具区移除后不再借用那里的 #toolNote）
 function toastNote(msg) {
-  const el = $('toolNote');
-  if (!el) return;
+  let el = $('toastNote');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toastNote';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
   el.textContent = msg;
+  el.classList.add('on');
   clearTimeout(toastNote._t);
-  toastNote._t = setTimeout(() => { el.textContent = ''; }, 6000);
+  toastNote._t = setTimeout(() => el.classList.remove('on'), 2600);
 }
 
 // 通用排序：dir < 0 为降序；中文项目名按 zh-CN 比较
@@ -1511,7 +1526,7 @@ function renderConfigPanel() {
       ? `<a class="btn sm danger" href="aiquotaboard://config?set=platforms.${m.id}:false" title="关闭后不采集、不参与提醒，看板上仍保留卡片">关闭</a>`
       : `<a class="btn sm" href="aiquotaboard://config?set=platforms.${m.id}:true" title="开启后下一次采集生效">开启</a>`;
     const fix = info.tone === 'warn'
-      ? `<button class="btn sm" data-setup-open title="打开配置向导，补上这家需要的凭据">去配置…</button>`
+      ? `<button class="btn sm" data-platform="${m.id}" data-setup-open title="打开连接窗口，只处理这一家">去配置…</button>`
       : '';
     return `<div class="cp-row">
       <span class="cp-name">${esc(m.name)}</span>
@@ -1523,8 +1538,8 @@ function renderConfigPanel() {
     <p class="cp-sub">平台开关会写入项目目录的 <code>config.json</code>，<b>下一次采集生效</b>（最多 1 分钟；也可用「刷新」手动触发）。</p>
     ${rows}
     <div class="cp-sec">
-      <button class="btn sm" data-setup-open>打开配置向导</button>
-      <span class="cp-sub" style="margin:0">提醒阈值在页面底部「工具区」里改。</span>
+      <button class="btn sm" data-setup-open>打开连接窗口（三家一起）</button>
+      <span class="cp-sub" style="margin:0">提醒阈值在 <code>config.json</code> 的 <code>thresholds</code> 里改，改完下一次采集生效。</span>
     </div>`;
 }
 
@@ -1542,7 +1557,7 @@ function renderSetupBar() {
   const label = need.map(x => `${x.m.name}（${x.info.tone === 'off' ? '已关闭' : x.info.tone === 'warn' ? '缺密钥' : '异常'}）`).join('· ');
   el.innerHTML = `<span class="sb-warn">⚙</span>
     <span><b>${need.length} 个平台没在用</b>：${esc(label)}</span>
-    <span class="muted">—— 想用就补上，不想用可以忽略；也可以在配置向导里一次改完</span>
+    <span class="muted">—— 想用就补上，不想用可以忽略；也可以点右上角「配置」一次改完</span>
     <span class="spacer"></span>
     <button class="btn sm" id="sbOpen">打开配置</button>
     <button class="btn sm" id="sbHide">隐藏</button>`;
@@ -1562,516 +1577,23 @@ function toggleConfig(force) {
 
 function renderCfg() { renderSetupBar(); renderConfigPanel(); }
 
-/* ================= 配置向导（看板内首次配置） =================
-   目标：不懂技术的用户只在这个页面里完成「选平台 → 准备密钥 → 写配置 → 试采 → 让它自动采」。
-   密钥纪律（NFR-1，2026-09-17 用户裁定改口径）：向导不接收、不保存、不显示密钥值——密钥只存在于
-   ThinCoder 配置 / secrets.json / 环境变量（由 ThinCoder 或用户自行维护），本页只读「有没有、从哪来」。
-   所以这里没有密钥输入框，也不写、不读 secrets.json；密钥永不进 URL / iframe src / 存储 API / console / 日志。
-   写盘 = 目录句柄（File System Access，只写所选目录的 config.json）；系统动作 = aiquotaboard:// 协议（隐藏 iframe）。
-   打开前不创建任何 DOM（首屏零代价）；打开为同步渲染（T31 依赖）。 */
-const SETUP_STEPS = ['看板在哪儿', '检查哪几家能用', '选要看哪几家', '准备密钥', '保存', '先拉一次数据', '让它自己更新', '完成'];
-const THINCODER_SETUP_URL = 'https://thincoder.com/install.html';   // 密钥统一由 ThinCoder 管（一处存放）：本页只引导，不接触密钥值
-const SETUP_TIMEOUTS = { probeMs: 10000, collectMs: 90000, pollMs: 600, installWaitMs: 3000 };
-const setupWait = ms => new Promise(r => setTimeout(r, ms));
-const setupSrcName = s => (!s ? '—' : s === 'secrets.json' ? '你之前填的' : s);
-let setupStep = 0, setupDir = null, setupStatus = null, setupSel = null, setupBusy = false, setupProbe = null;
-
+/* ================= 协议动作（页面按钮 → 本机执行） =================
+   file:// 页面不能写文件、也不能执行系统动作：页面上每个「按钮」都只做一件事——
+   用隐藏 iframe 触发 aiquotaboard:// 协议（见 fireProtocol），动作清单以 程序/运行协议.vbs 为准。
+   连接窗口是本机独立进程（程序/tools/connections.mjs）：页面这边没有向导、不申请目录句柄、不接触密钥。 */
 function fireProtocol(url) {
-  // 隐藏 iframe 触发协议，避免页面跳转（saveConfigEdits / runBackup 共用）
+  // 隐藏 iframe 触发协议，避免页面跳转（连接 / 备份 / 平台开关等按钮共用）
   const f = document.createElement('iframe');
   f.style.display = 'none';
   f.src = url;
   document.body.appendChild(f);
   setTimeout(() => f.remove(), 2000);
 }
-function hasFsaAccess() { return typeof window.showDirectoryPicker === 'function'; }
-function setupPageDirName() { try { return decodeURIComponent(location.pathname).replace(/\/+$/, '').split('/').pop(); } catch { return ''; } }
-// 本页所在文件夹的完整路径（file:// 下从 location.pathname 还原）——第 1 步直接给用户路径，省得他在弹出框里翻找
-function setupPageDirPath() {
-  try {
-    const p = decodeURIComponent(location.pathname).replace(/^\//, '').replace(/\/[^/]*$/, '');
-    return /^[A-Za-z]:/.test(p) ? p.replace(/\//g, '\\') : p;
-  } catch { return ''; }
-}
-function setupSay(id, cls, html) { const el = $(id); if (el) { el.className = 'msg' + (cls ? ' ' + cls : ''); el.innerHTML = html; } }
-function setupGoStep(n) { setupStep = n; setupStepRender(n); }
-function setupErrText(e, id) {
-  const n = String(e?.name ?? '');
-  if (n === 'NotAllowedError' || n === 'SecurityError') return '系统不让程序改这个文件夹（可能它被移动了，或者权限不足）——重新选一次试试';
-  if (n === 'NotFoundError') return '这个文件夹找不到了（可能被移动或改过名）——重新选一次';
-  const s = String(e?.message ?? e ?? '原因不明');
-  // 原始错误翻成人话（口径同 程序/tools/first-run-check.mjs 的 friendlyError）：用户不该看到状态码这类黑话
-  if (/40[13]|验证不正确|Authentication Fails|令牌已过期/i.test(s)) return id === 'codex' ? 'Codex 的登录可能过期了：打开 Codex 客户端重新登录一次' : '密钥没通过（可能配错了，或者已经失效了）';
-  if (/429/.test(s)) return '问得太频繁了，过几分钟再试';
-  if (/5\d\d/.test(s)) return '对方服务器暂时没响应，过一会儿再试';
-  if (/网络|代理|fetch failed|socket hang up|timeout|ECONN|ENOTFOUND/i.test(s)) return id === 'codex' ? '网络连不上（Codex 一般要开着代理工具）' : '网络连不上';
-  return s.slice(0, 120);
-}
 
-function setupWizardOpen() {
-  let panel = $('connectionPanel');
-  if (!panel) {
-    panel = document.createElement('div'); panel.id = 'connectionPanel'; panel.className = 'overlay';
-    panel.innerHTML = '<div class="modal"><h3>连接平台</h3><p>在本机窗口中选择平台，已有账号自动复用；缺少的密钥只需填写一次。</p><p>Codex 显示订阅额度；DeepSeek 和 GLM 显示 API 余额，不代表聊天订阅或 Coding Plan 额度。</p><p class="muted-note">连接后自动开始采集。若窗口没有出现，请通过安装版的桌面入口打开看板，或双击看板文件夹里「快捷操作」中的「连接平台」。</p><div class="actions"><button class="btn primary" id="openConnections">打开连接窗口</button><button class="btn" data-close="connectionPanel">返回看板</button><button class="btn" id="legacyConnections">高级：旧版配置</button></div></div>';
-    document.body.appendChild(panel);
-    $('openConnections').onclick = () => fireProtocol('aiquotaboard://connect');
-    $('legacyConnections').onclick = () => { panel.classList.remove('on'); setupLegacyWizardOpen(); };
-  }
-  panel.classList.add('on');
-}
-function setupLegacyWizardOpen() {
-  let ov = $('setupOverlay');
-  if (!ov) {
-    ov = document.createElement('div');
-    ov.id = 'setupOverlay';
-    ov.className = 'overlay';
-    ov.innerHTML = '<div class="modal wz"><div style="display:flex;align-items:center;gap:10px">'
-      + '<h3 style="flex:1">设置向导</h3><button class="btn sm" data-close="setupOverlay">关闭</button></div>'
-      + '<div class="muted-note" id="setupStepNote" style="margin:6px 0 10px"></div><div id="setupBody"></div></div>';
-    document.body.appendChild(ov);
-  }
-  ov.classList.add('on');
-  if (!hasFsaAccess()) { setupFallbackPanel(); return; }
-  setupStepRender(setupStep);
-  setupRestoreHandle();                     // 尽力而为（open-1）：取不到就等用户重选，流程不依赖
-}
-
-function setupWizardClose() {
-  const ov = $('setupOverlay');
-  if (ov) { ov.classList.remove('on'); ov.querySelectorAll('input').forEach(i => { i.value = ''; }); }
-}
-
-function setupFallbackPanel() {
-  const b = $('setupBody');
-  if (!b) return;
-  $('setupStepNote').textContent = '';
-  b.innerHTML = `<div id="setupFallback">
-    <div class="msg">这个浏览器不能在页面里替你存设置。请用 <b>Edge</b> 或 <b>Chrome</b> 打开看板再试一次。</div></div>`;
-}
-
-function setupIdb() {
-  try {
-    const r = indexedDB.open('quota-setup', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('h');
-    return r;
-  } catch { return null; }
-}
-function setupSaveHandle(h) {
-  const r = setupIdb();                    // 尽力而为：存不进就算了，流程不依赖它
-  if (!r) return;
-  r.onsuccess = () => { try { r.result.transaction('h', 'readwrite').objectStore('h').put(h, 'dir'); } catch { /* 忽略 */ } };
-}
-function setupRestoreHandle() {
-  const r = setupIdb();
-  if (!r) return;
-  r.onsuccess = () => {
-    try {
-      const g = r.result.transaction('h').objectStore('h').get('dir');
-      g.onsuccess = () => { if (g.result) setupAfterPick(g.result).catch(() => {}); };
-    } catch { /* 忽略 */ }
-  };
-}
-
-function setupStepRender(n) {
-  const b = $('setupBody');
-  if (!b) return;
-  $('setupStepNote').textContent = `第 ${n + 1} 步 / 共 ${SETUP_STEPS.length} 步：${SETUP_STEPS[n]}`;
-  [setupRender0, setupRender1, setupRender2, setupRender3, setupRender4, setupRender5, setupRender6, setupRender7][n]();
-}
-
-function setupRender0() {
-  const here = setupPageDirPath();
-  $('setupBody').innerHTML = `<div class="msg">先授权一次：让看板能保存设置。<br>点下面的按钮，选中这个文件夹就对了：</div>
-    ${here ? `<div class="msg" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><code id="setupHerePath" style="user-select:all;word-break:break-all">${esc(here)}</code><button class="btn sm" id="setupCopyPath">复制</button><span class="muted" style="font-size:12px">（在弹出框里粘贴这条路径，回车就到）</span></div>` : ''}
-    <div class="msg" id="setupMsg0"></div>
-    <div class="actions"><button class="btn primary" id="setupPick">选择文件夹</button></div>`;
-  const cp = $('setupCopyPath');
-  if (cp) cp.onclick = async () => {
-    try { await navigator.clipboard.writeText(here); cp.textContent = '已复制 ✓'; setTimeout(() => { cp.textContent = '复制路径'; }, 1500); }
-    catch { const el = $('setupHerePath'); if (el) { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); cp.textContent = '已选中，按 Ctrl+C'; } }
-  };
-  $('setupPick').onclick = setupPickFolder;
-}
-async function setupPickFolder() {
-  try {
-    await setupAfterPick(await window.showDirectoryPicker({ mode: 'readwrite' }));
-  } catch (e) {
-    if (e?.name === 'AbortError') setupSay('setupMsg0', '', '没关系，随时能重来。准备好了再点一次「选择文件夹」。');
-    else setupSay('setupMsg0', 'bad', `没能打开文件夹：${esc(setupErrText(e))}`);
-  }
-}
-async function setupAfterPick(h) {
-  if (!h || setupDir || setupStep !== 0) return;
-  let names = [];
-  try { for await (const e of h.values()) names.push(e.name); }
-  catch { setupSay('setupMsg0', 'bad', '打不开这个文件夹，可能它被移动或改过名了。请重新选一次。'); return; }
-  // 目录判据（2026-09-17 安装目录结构整理后）：顶层必须有 dashboard.html，且能找到程序侧标志之一——
-  // 老结构（未整理）：顶层 collect.mjs；新结构：顶层 程序/（内含 collect.mjs）或 快捷操作/。两代结构都认，老装用户升级后不会被拒。
-  const hasPage = names.includes('dashboard.html');
-  const hasApp = names.includes('collect.mjs') || names.includes('程序') || names.includes('快捷操作');
-  if (!hasPage || !hasApp) { setupSay('setupMsg0', 'bad', `这里不是看板所在的文件夹（没找到看板文件）。<b>什么都没改</b>，请重新选一次。`); return; }
-  // 二段能力检测：目录句柄没有 createWritable，可写性看它给出的文件句柄
-  const fh = await h.getFileHandle('dashboard.html').catch(() => null);
-  if (typeof fh?.createWritable !== 'function') { setupFallbackPanel(); return; }
-  setupDir = h;
-  const here = setupPageDirName();
-  if (h.name && here && h.name !== here) {
-    setupSay('setupMsg0', 'warn', `这个文件夹叫「${esc(h.name)}」，但你现在看的看板在「${esc(here)}」。确定是同一个吗？`
-      + `<span style="display:inline-flex;gap:8px;margin-left:8px"><button class="btn sm" id="setupGo">确认，继续</button><button class="btn sm" id="setupRe">重选</button></span>`);
-    $('setupGo').onclick = () => { setupSaveHandle(h); setupGoStep(1); };
-    $('setupRe').onclick = setupPickFolder;
-    return;
-  }
-  setupSaveHandle(h);
-  setupGoStep(1);
-}
-
-function setupRender1() {
-  $('setupBody').innerHTML = `<div class="msg" id="setupMsg1">正在检查：Codex 登录了吗、DeepSeek / GLM 的密钥找得到吗？（几秒钟）</div>
-    <div id="setupProbe"></div>
-    <div class="actions" id="setupAct1"></div>`;
-  setupAct1('probing');
-  setupProbeFlow();
-}
-function setupAct1(mode) {
-  const el = $('setupAct1');
-  if (!el) return;
-  if (mode === 'ok') {
-    el.innerHTML = '<button class="btn primary" id="setupNext1">下一步</button>';
-    $('setupNext1').onclick = () => setupGoStep(2);
-  } else if (mode === 'timeout') {
-    el.innerHTML = '<button class="btn" id="setupRecheck">重新检查</button><button class="btn" id="setupSkip">先跳过，我自己选</button>';
-    $('setupRecheck').onclick = () => { setupSay('setupMsg1', '', '正在重新检查…'); setupAct1('probing'); setupProbeFlow(); };
-    $('setupSkip').onclick = () => { setupStatus = null; setupGoStep(2); };
-  } else {
-    el.innerHTML = '<button class="btn primary" id="setupNext1" disabled>下一步</button>';
-  }
-}
-async function setupProbeCore() {
-  if (setupProbe) return setupProbe;      // 在途检测直接复用：并发点击不会被当成「超时」
-  setupProbe = (async () => {
-    const startedAt = Date.now();
-    fireProtocol('aiquotaboard://setupcheck');
-    const st = await setupWaitStatus(startedAt, SETUP_TIMEOUTS.probeMs);
-    setupStatus = st;
-    setupProbe = null;
-    return st;
-  })();
-  return setupProbe;
-}
-async function setupProbeFlow() {
-  const st = await setupProbeCore();
-  if (!$('setupProbe')) return;             // 用户已经离开这一步
-  if (!st) {
-    $('setupProbe').innerHTML = '<div class="msg warn" data-guide="vbs"><b>只差一步</b>：打开看板文件夹 → 进「<b>快捷操作</b>」→ <b>双击「启用自动采集」</b>（不会弹黑窗口）。<br>双击后会弹个提示告诉你成功没有，完了回这里点「重新检查」。</div>';
-    setupSay('setupMsg1', '', '');
-    setupAct1('timeout');
-    return;
-  }
-  setupSay('setupMsg1', '', '检查完了。下面的建议只是参考，你随时能改。');
-  setupRenderProbe();
-  setupAct1('ok');
-}
-async function setupWaitStatus(startedAt, ms) {
-  const until = Date.now() + ms;
-  for (;;) {
-    const st = await setupReadStatus();
-    if (st && Number(st.checkedAtMs) >= startedAt) return st;
-    if (Date.now() >= until) return null;
-    await setupWait(SETUP_TIMEOUTS.pollMs);
-  }
-}
-async function setupReadStatus() {
-  try {
-    const dh = await setupDir.getDirectoryHandle('data');
-    const fh = await dh.getFileHandle('setup-status.json');
-    return JSON.parse(await (await fh.getFile()).text());
-  } catch { return null; }
-}
-function setupRenderProbe() {
-  const box = $('setupProbe');
-  if (!box) return;
-  const st = setupStatus;
-  const row = (id, name) => {
-    const d = (id === 'codex' ? st.codex : st[id]) ?? {};
-    const txt = id === 'codex'
-      ? (d.found ? '已经登录了' : '还没登录')
-      : (d.found ? `已经有密钥了（来自：${esc(setupSrcName(d.source))}）` : '还没有密钥');
-    return `<div class="srow" data-plat="${id}"><span class="nm">${name}</span><span class="st">${txt}</span></div>`;
-  };
-  box.innerHTML = row('codex', 'Codex') + row('deepseek', 'DeepSeek') + row('glm', 'GLM')
-    + (st.config?.parse === 'broken'
-      ? '<div class="msg bad" id="setupCfgBroken">你的设置文件坏了、读不出来。现在用的是默认设置，你自己改过的那部分暂时没生效——<b>不影响看数据</b>。下一步保存时，会先把坏文件留一份备份，再写一份新的。</div>' : '');
-}
-
-function setupRowState(id) {
-  if (!setupStatus) return { state: 'unknown', on: true, hint: '刚才跳过了检查——可以点「重新检查」，也可以自己选。' };
-  const on = setupStatus.platforms?.[id] !== false;
-  const d = (id === 'codex' ? setupStatus.codex : setupStatus[id]) ?? {};
-  if (!on) return { state: 'off', on: false, hint: '现在关着。' };
-  if (d.found) return { state: 'ready', on: true, src: d.source, hint: id === 'codex' ? '已经登录了，建议保持开启。' : `已经有密钥了（来自：${esc(setupSrcName(d.source))}），建议保持开启。` };
-  return { state: 'missing', on: true, hint: id === 'codex' ? '还没登录 Codex——建议先装并登录 Codex 客户端（不影响其他两家）。' : '还没有密钥——下一步会告诉你怎么补上（不用在这里填）。' };
-}
-function setupRender2() {
-  const rows = PLATFORM_META.map(m => {
-    const s = setupRowState(m.id);
-    return `<div class="srow" data-plat="${m.id}" data-setup-state="${s.state}"${s.src ? ` data-src="${esc(s.src)}"` : ''}>`
-      + `<label class="nm"><input type="checkbox" id="setupPlat-${m.id}"${s.on ? ' checked' : ''}> ${m.name}</label>`
-      + `<span class="st">${s.hint}</span></div>`;
-  }).join('');
-  $('setupBody').innerHTML = `<div class="msg">想看哪几家就勾哪几家。没勾的不会去拉数据，也不会提醒你。</div>${rows}
-    <div class="msg" id="setupMsg2"></div>
-    <div class="actions"><button class="btn" id="setupRecheck2">重新检查</button><button class="btn primary" id="setupNext2">下一步</button></div>`;
-  $('setupNext2').onclick = () => { setupSel = setupReadSel(); setupGoStep(3); };
-  $('setupRecheck2').onclick = () => setupGoStep(1);   // 手动模式（跳过检测）后也能回去重测（M1 的行内入口）
-  $('setupBody').onchange = setupSelWarn;
-  setupSelWarn();
-}
-function setupReadSel() { const sel = {}; for (const m of PLATFORM_META) sel[m.id] = !!$('setupPlat-' + m.id)?.checked; return sel; }
-function setupSelWarn() {
-  const msg = $('setupMsg2');
-  if (!msg) return;
-  const anyOn = PLATFORM_META.some(m => $('setupPlat-' + m.id)?.checked);
-  msg.className = 'msg' + (anyOn ? '' : ' warn');
-  msg.dataset.sel = anyOn ? 'has-on' : 'all-off';
-  msg.innerHTML = anyOn ? '' : '三家都没勾 = 什么数据都看不到（程序照常在跑，但没东西可拉）。勾上你想用的，或者点「仍要保存」——以后随时能改。';
-  $('setupNext2').textContent = anyOn ? '下一步' : '仍要保存';
-}
-
-function setupRender3() {
-  const sel = setupSel ?? {};
-  const missing = [];                        // 勾选内、本机还没找到密钥的平台名
-  const rows = PLATFORM_META.filter(m => sel[m.id]).map(m => {
-    if (m.id === 'codex') {
-      const found = !!setupStatus?.codex?.found;
-      return `<div class="srow" data-plat="codex"><span class="nm">Codex</span><span class="st">${found ? '它用你电脑上 Codex 的登录信息，不用填——已经找到了。' : '它用 Codex 客户端的登录信息，不用在这里填——装了、登录了就会自动生效。'}</span></div>`;
-    }
-    const d = setupStatus?.[m.id] ?? {};
-    if (d.found) return `<div class="srow" data-plat="${m.id}" data-key="found"><span class="nm">${m.name}</span><span class="st">已经有密钥了（来自：${esc(setupSrcName(d.source))}）</span></div>`;
-    missing.push(m.name);
-    return `<div class="srow" data-plat="${m.id}" data-key="${setupStatus ? 'missing' : 'unknown'}"><span class="nm">${m.name}</span><span class="st">${setupStatus ? '还没有找到' : '还没检查过这家'}</span></div>`;
-  }).join('') || '<div class="msg">这一步不用填什么，直接下一步就行。</div>';
-  // 密钥不在本页填（NFR-1 改口径）：统一由 ThinCoder 维护，页面只报「有没有、从哪来」
-  const guide = missing.length
-    ? `<div class="msg" data-guide="thincoder">这几家还没有密钥：点「重新检查」确认一下；确实没有的话，装一次 <b>ThinCoder</b>，在里面把 <b>${esc(missing.join('、'))}</b> 配好（只配这一次），回来点「重新检查」。</div>
-      <div class="actions"><a class="btn primary" id="setupTcLink" href="${THINCODER_SETUP_URL}" target="_blank" rel="noopener noreferrer">打开 ThinCoder 下载页</a><button class="btn" id="setupRecheck3">重新检查</button></div>`
-    : '';
-  $('setupBody').innerHTML = `<div class="msg">密钥不在这里填——看板直接用你电脑上已经有的（ThinCoder 配置 / 密钥文件 / 环境变量）。下面只告诉你有几家已经能用。</div>
-    ${rows}${guide}
-    <div class="msg" id="setupMsg3"></div>
-    <div class="msg" id="setupPrivacy">🔒 密钥只存在你自己的电脑上，不会上传到任何地方。</div>
-    <div class="actions"><button class="btn primary" id="setupNext3">下一步</button></div>`;
-  const rc = $('setupRecheck3');
-  if (rc) rc.onclick = setupRecheck3;
-  $('setupNext3').onclick = () => setupGoStep(4);
-}
-async function setupRecheck3() {
-  const b = $('setupRecheck3');
-  if (b) b.disabled = true;
-  setupSay('setupMsg3', '', '正在重新检查…（几秒钟）');
-  const st = await setupProbeCore();         // 复用探测核心：重新跑一次 setupcheck 并回读状态文件
-  if (!$('setupNext3')) return;              // 用户已经离开这一步
-  setupStepRender(3);                        // 按新状态重渲染本步
-  setupSay('setupMsg3', st ? '' : 'warn', st ? '检查完了。' : '没等到回应——过一会儿再点一次「重新检查」。');
-}
-
-function setupRender4() {
-  $('setupBody').innerHTML = `<div class="msg">点「保存」就行。你原来有的其它设置原样保留，不会被盖掉。</div>
-    <div class="msg" id="setupMsg4"></div>
-    <div class="actions" id="setupAct4"><button class="btn primary" id="setupSave">保存</button></div>`;
-  $('setupSave').onclick = setupSaveAll;
-}
-async function setupReadJson(name) {
-  let fh;
-  try { fh = await setupDir.getFileHandle(name); }
-  catch (e) { if (e?.name === 'NotFoundError') return { data: {}, exists: false, broken: false, text: null }; throw e; }
-  const text = await (await fh.getFile()).text();
-  try {
-    const j = JSON.parse(text);
-    return (j && typeof j === 'object' && !Array.isArray(j)) ? { data: j, exists: true, broken: false, text } : { data: {}, exists: true, broken: true, text };
-  } catch { return { data: {}, exists: true, broken: true, text }; }
-}
-async function setupWriteJson(name, obj, prevText) {
-  const fh = await setupDir.getFileHandle(name, { create: true });
-  const text = JSON.stringify(obj, null, 1);
-  try {
-    const w = await fh.createWritable();
-    await w.write(text);
-    await w.close();
-    return;
-  } catch (e) {
-    // 无原子替换可用（File System Access 没有 rename）：失败时把原内容写回去
-    let rb = 'none';
-    if (prevText != null) {
-      try { const w2 = await fh.createWritable(); await w2.write(prevText); await w2.close(); rb = 'ok'; }
-      catch { rb = 'failed'; }
-    }
-    e.setupRollback = rb;
-    throw e;
-  }
-}
-async function setupSaveAll() {
-  if (setupBusy) return;
-  setupBusy = true;
-  setupSay('setupMsg4', '', '正在保存…');
-  try {
-    // 只写 config.json：密钥文件既不写也不读（密钥由 ThinCoder / secrets.json / 环境变量各自维护）
-    const cfg = await setupReadJson('config.json');
-    if (cfg.broken) setupRebuildUI([['config.json', cfg]]);   // 不点「备份并重建」= 零写入
-    else await setupWriteAll({ 'config.json': cfg });
-  } catch (e) { setupSaveError(e); }
-  setupBusy = false;
-}
-async function setupWriteAll(prev) {
-  const sel = setupSel ?? {};
-  const cfg = prev['config.json'] ?? await setupReadJson('config.json');
-  const next = { ...cfg.data, platforms: { ...(cfg.data.platforms && typeof cfg.data.platforms === 'object' ? cfg.data.platforms : {}), ...sel } };
-  await setupWriteJson('config.json', next, cfg.text);
-  const back = await setupReadJson('config.json');    // 回读核对：说的和存的一致才算数
-  const bad = PLATFORM_META.filter(m => (back.data.platforms?.[m.id] !== false) !== !!sel[m.id]);
-  if (bad.length) throw new Error(`没能保存：${bad.map(m => m.name).join('、')} 没存上`);
-  const lines = [
-    `平台开关：${PLATFORM_META.map(m => `${m.name} ${sel[m.id] ? '开' : '关'}`).join(' · ')}`,
-    '没有改动你的密钥文件（密钥只存在你自己的电脑上，不会上传）',
-  ];
-  setupSay('setupMsg4', 'ok', `✓ ${lines.join('<br>✓ ')}<br>大约 1 分钟后就会生效。`);
-  $('setupAct4').innerHTML = '<button class="btn primary" id="setupNext4">下一步：先拉一次数据</button>';
-  $('setupNext4').onclick = () => setupGoStep(5);
-}
-function setupRebuildUI(broken) {
-  $('setupBody').innerHTML = `<div class="msg bad">${broken.map(x => `「${x[0]}」坏了、读不出来。`).join('')}点下面的按钮：先把原来的文件留一份备份，再写一份新的；不点就什么都不动。</div>
-    <div class="msg" id="setupMsg4"></div>
-    <div class="actions" id="setupAct4"><button class="btn primary" id="setupRebuild">备份并重建</button></div>`;
-  $('setupRebuild').onclick = async () => {
-    setupSay('setupMsg4', '', '正在备份并重建…');
-    try {
-      for (const [n, r] of broken) {
-        const dh = await setupDir.getDirectoryHandle('data', { create: true });
-        const bh = await dh.getFileHandle(n + '.broken.bak', { create: true });
-        const w = await bh.createWritable();
-        await w.write(String(r.text ?? ''));
-        await w.close();
-      }
-      await setupWriteAll({});
-    } catch (e) { setupSaveError(e); }
-  };
-}
-function setupSaveError(e) {
-  const msg = $('setupMsg4');
-  if (!msg) return;
-  const rb = e?.setupRollback ?? 'none';
-  msg.className = 'msg bad';
-  msg.dataset.rollback = rb;
-  msg.innerHTML = `没保存成功${rb === 'failed' ? '，而且原来的内容也没能写回去——这几个文件可能已经读不出来了' : rb === 'ok' ? '（已经试着把原来的内容写回去了）' : '（那个文件本来是新建的）'}：${esc(setupErrText(e))}<br>怎么办：点「重试」再存一次；还不行就把看板换个位置再试。`;
-  $('setupAct4').innerHTML = '<button class="btn primary" id="setupRetry4">重试</button>';
-  $('setupRetry4').onclick = setupSaveAll;
-}
-
-function setupRender5() {
-  $('setupBody').innerHTML = `<div class="msg">设置存好了。现在拉一次数据，看看是不是真能拿到（要联网，最多一分半）。</div>
-    <div class="msg" id="setupMsg5"></div>
-    <div id="setupCollectRows"></div>
-    <div class="actions" id="setupAct5"><button class="btn primary" id="setupCollect">现在拉一次</button></div>`;
-  $('setupCollect').onclick = setupCollectTest;
-}
-async function setupReadPayload() {
-  try {
-    const fh = await setupDir.getFileHandle('dashboard-data.js');
-    const text = await (await fh.getFile()).text();
-    const i = text.indexOf('{'), j = text.lastIndexOf('}');
-    return i >= 0 && j > i ? JSON.parse(text.slice(i, j + 1)) : null;
-  } catch { return null; }
-}
-async function setupCollectTest() {
-  if (setupBusy) return;
-  setupBusy = true;
-  setupSay('setupMsg5', '', '正在拉数据…（最多一分半，先别关这个页面）');
-  $('setupCollectRows').innerHTML = '';
-  const before = await setupReadPayload();
-  const base = before && Number.isFinite(Number(before.collectedAtMs)) ? Number(before.collectedAtMs) : null;
-  fireProtocol('aiquotaboard://collect');
-  const until = Date.now() + SETUP_TIMEOUTS.collectMs;
-  for (;;) {
-    await setupWait(SETUP_TIMEOUTS.pollMs);
-    const p = await setupReadPayload();
-    const at = p ? Number(p.collectedAtMs) : 0;
-    if (at && (base == null || at > base)) { setupCollectDone(p); break; }
-    if (Date.now() >= until) { setupCollectTimeout(); break; }
-  }
-  setupBusy = false;
-}
-function setupCollectDone(p) {
-  $('setupCollectRows').innerHTML = PLATFORM_META.map(m => {
-    const r = p[m.id] ?? {};
-    let state = 'ok', text = '已经能拿到数据了', fix = '';
-    if (r.disabled) { state = 'off'; text = '这次没勾它（想用就回上一步勾上）'; }
-    else if (r.unconfigured || !r.ok) {
-      state = r.unconfigured ? 'unconfigured' : 'fail';
-      text = m.id === 'codex'
-        ? 'Codex 现在拿不到：先装并登录 Codex 客户端'
-        : (r.unconfigured ? '这家还没有密钥：照上一步的提示装一次 ThinCoder，在里面配好就行' : `这次没拿到：${esc(setupErrText(r.error ?? '原因不明', m.id))}`);
-      fix = m.id === 'codex' ? 'login-codex' : 'rekey';
-    }
-    return `<div class="srow" data-plat="${m.id}" data-state="${state}"${fix ? ` data-fix="${fix}"` : ''}><span class="nm">${m.name}</span><span class="st">${text}</span></div>`;
-  }).join('');
-  const allOff = setupSel && !PLATFORM_META.some(m => setupSel[m.id]);
-  setupSay('setupMsg5', allOff ? 'warn' : 'ok', allOff ? '三家都关着，拿不到任何数据——想拉就回上一步勾上至少一家。' : '拉完了。没成功的，照着提示处理就行。');
-  const msg = $('setupMsg5');
-  msg.dataset.sum = allOff ? 'all-off' : 'done';
-  $('setupAct5').innerHTML = '<button class="btn primary" id="setupNext5">下一步：让它自己更新</button>';
-  $('setupNext5').onclick = () => setupGoStep(6);
-}
-function setupCollectTimeout() {
-  setupSay('setupMsg5', 'warn', '等太久了还没结果（可能是网络慢）。可以点「重试」再等等。');
-  const msg = $('setupMsg5');
-  msg.dataset.sum = 'timeout';
-  msg.dataset.manual = 'vbs';
-  $('setupAct5').innerHTML = '<button class="btn primary" id="setupRetry5">重试</button><button class="btn" id="setupNext5">跳过，下一步</button>';
-  $('setupRetry5').onclick = setupCollectTest;
-  $('setupNext5').onclick = () => setupGoStep(6);
-}
-
-function setupRender6() {
-  const st = setupStatus, state = !st ? 'unknown' : st.autoRun?.taskRegistered ? 'on' : 'off';
-  const off = state !== 'on';   // 未开启（含手动模式的「还不知道」）：主路径 = 页面上的「现在就开启」按钮，装着文件夹双击只作小字兜底
-  $('setupBody').innerHTML = `<div class="msg">让它自己在后台更新，设一次就不用管了。</div>
-    <div class="srow" data-plat="autorun"><span class="nm">自动更新</span><span class="st" id="setupAutoState" data-auto="${state}">${state === 'on' ? '已经开着：每隔几分钟它自己拉一次' : state === 'off' ? '还没开' : '还不知道（刚才跳过了检查）'}</span></div>
-    <div class="msg" id="setupMsg6"></div>
-    <div class="actions" id="setupAct6">${off ? '<button class="btn primary" id="setupInstall" style="font-size:14px;padding:8px 20px">现在就开启</button>' : ''}<button class="btn${off ? '' : ' primary'}" id="setupNext6">下一步</button></div>
-    ${off ? `<div class="muted-note" data-guide="vbs" style="margin-top:8px">按钮点不动时（很少见）：打开看板文件夹 → 进「快捷操作」→ 双击「启用自动采集」，完了回这里点「重新检查」。</div>
-    <div class="actions" style="margin-top:8px"><button class="btn sm" id="setupRecheck6">重新检查</button></div>` : ''}`;
-  const ins = $('setupInstall');
-  if (ins) ins.onclick = setupInstall;
-  $('setupNext6').onclick = () => setupGoStep(7);
-  const rc = $('setupRecheck6');
-  if (rc) rc.onclick = async () => {
-    setupSay('setupMsg6', '', '正在重新检查…');
-    const st2 = await setupProbeCore();
-    setupStepRender(6);
-    setupSay('setupMsg6', st2?.autoRun?.taskRegistered ? 'ok' : 'warn', st2
-      ? (st2.autoRun?.taskRegistered ? '✓ 已经开着：以后它自己更新。' : '还是没开——点「现在就开启」；不行再打开看板文件夹，进「快捷操作」双击「启用自动采集」。')
-      : '还是没回应：稍等一下再试，或打开看板文件夹，进「快捷操作」双击「启用自动采集」。');
-  };
-}
-async function setupInstall() {
-  if (setupBusy) return;
-  setupBusy = true;
-  setupSay('setupMsg6', '', '正在开启…（要几十秒，开好了这里会变成「已经开着」）');
-  fireProtocol('aiquotaboard://setupinstall');
-  await setupWait(SETUP_TIMEOUTS.installWaitMs);
-  setupBusy = false;
-  const st = await setupProbeCore();
-  setupStepRender(6);
-  setupSay('setupMsg6', st?.autoRun?.taskRegistered ? 'ok' : 'warn', st?.autoRun?.taskRegistered
-    ? '✓ 已经开着：以后它自己更新。'
-    : '还没看到它开起来（可能还在装）。点「重新检查」再看看；还不行就打开看板文件夹，进「快捷操作」双击「启用自动采集」。');
-}
-
-function setupRender7() {
-  $('setupBody').innerHTML = `<div class="msg ok">设置好了。以后它自己拉，大约 1 分钟后这页就会有数据；也可以现在就点「刷新」。</div>
-    <div class="msg">想改哪一家：右上角「设置」→「打开设置向导」。密钥只留在你这台电脑上，不会上传、不会写进记录。</div>
-    <div class="actions"><button class="btn primary" id="setupDone">完成</button></div>`;
-  $('setupDone').onclick = () => { setupWizardClose(); refreshData(true); };
+function setupWizardOpen(platform = '') {
+  // 卡片上的「启用平台 / 连接平台」= 只配置这一家：带 platform 参数开本机连接窗口，
+  // 窗口那边把这一家置顶/预勾选；不带参数 = 三家都显示（首屏「开始配置」与配置面板共用）。
+  fireProtocol('aiquotaboard://connect' + (platform ? '?platform=' + encodeURIComponent(platform) : ''));
 }
 
 /* ================= AI 能力构成（模型使用画像） =================
@@ -2239,38 +1761,8 @@ function renderHealth() {
 /* ================= 快捷键与浮层 ================= */
 const WINDOW_ORDER = ['h24', 'd7', 'd30', 'all'];
 
-function closeOverlayEl(el) { if (el.id === 'setupOverlay') setupWizardClose(); else el.classList.remove('on'); }
+function closeOverlayEl(el) { el.classList.remove('on'); }
 function closeOverlays() { document.querySelectorAll('.overlay.on').forEach(closeOverlayEl); }
-
-function buildConfigEditor() {
-  const grid = $('cfgGrid');
-  const th = D.thresholds ?? {}, pr = D.predict ?? {}, an = D.anomaly ?? {};
-  const fields = [
-    ['thresholds.codex5hWarn', 'Codex 5h 提醒阈值（已用 %）', th.codex5hWarn ?? 80],
-    ['thresholds.codex5hCritical', 'Codex 5h 紧急阈值（已用 %）', th.codex5hCritical ?? 95],
-    ['thresholds.codexWeekWarn', 'Codex 7 天提醒阈值（已用 %）', th.codexWeekWarn ?? 80],
-    ['thresholds.dsLow', 'DeepSeek 余额偏低（¥）', th.dsLow ?? 20],
-    ['thresholds.dsCritical', 'DeepSeek 余额紧急（¥）', th.dsCritical ?? 10],
-    ['thresholds.glmLow', 'GLM 余额偏低（¥）', th.glmLow ?? 5],
-    ['thresholds.glmCritical', 'GLM 余额紧急（¥）', th.glmCritical ?? 2],
-    ['predict.warnMinutes', '触顶预警提前量（分钟）', pr.warnMinutes ?? 30],
-    ['predict.minUsedPercent', '触顶预测起步用量（%）', pr.minUsedPercent ?? 40],
-    ['anomaly.factor', '异常消耗倍数（vs 7 日均值）', an.factor ?? 3],
-    ['anomaly.minAmount', '异常消耗最小金额（¥）', an.minAmount ?? 5],
-  ];
-  grid.innerHTML = fields.map(([k, label, v]) =>
-    `<label for="cfg-${k}">${esc(label)}</label><input id="cfg-${k}" data-key="${k}" type="number" step="any" value="${esc(String(v))}">`).join('');
-}
-
-function saveConfigEdits() {
-  const pairs = [...document.querySelectorAll('#cfgGrid input')]
-    .map(i => `${i.dataset.key}:${i.value}`).join(',');
-  if (!pairs) return;
-  // file:// 页面不能直接写文件：走 aiquotaboard:// 协议（隐藏 iframe 触发，避免页面跳转）
-  fireProtocol(`aiquotaboard://config?set=${encodeURIComponent(pairs)}`);
-  closeOverlays();
-  toastNote('已经改好了，下次更新时生效');
-}
 
 function runBackup() {
   fireProtocol('aiquotaboard://backup');
@@ -2284,7 +1776,6 @@ document.addEventListener('keydown', e => {
   const lower = k.toLowerCase();
   if (k === '1' || k === '2' || k === '3') { openPlatform(PLATFORMS[Number(k) - 1]); return; }
   if (lower === 'r') { refreshData(true); toastNote('正在刷新…'); return; }
-  if (k === ' ') { e.preventDefault(); $('pauseBtn').click(); return; }
   if (lower === 't') { $('themeBtn').click(); return; }
   if (lower === 'w') {
     const next = WINDOW_ORDER[(WINDOW_ORDER.indexOf(win) + 1) % WINDOW_ORDER.length];
@@ -2307,7 +1798,8 @@ document.addEventListener('click', e => {
   const c = e.target.closest('[data-close]');
   if (c) { closeOverlayEl($(c.dataset.close)); return; }
   if (e.target.classList?.contains('overlay')) { closeOverlayEl(e.target); return; }
-  if (e.target.closest?.('[data-setup-open]')) { setupWizardOpen(); return; }
+  const sp = e.target.closest?.('[data-setup-open]');   // 卡片/面板上的连接入口：带 data-platform 的只聚焦那一家
+  if (sp) { setupWizardOpen(sp.dataset.platform ?? ''); return; }
   const a = e.target.closest('[data-attr]');
   if (a) {
     attrDays = a.dataset.attr === 'all' ? 'all' : Number(a.dataset.attr);
@@ -2553,11 +2045,6 @@ $('winSeg').addEventListener('click', e => {
   renderCharts();
 });
 $('refreshBtn').addEventListener('click', () => refreshData(true));
-$('pauseBtn').addEventListener('click', () => {
-  paused = !paused;
-  $('pauseBtn').textContent = paused ? '继续' : '暂停';
-  $('pauseBtn').classList.toggle('primary', paused);
-});
 $('themeBtn').addEventListener('click', () => {
   // 三态循环：自动 →（换成反色）→ 再换 → 回到自动；每点一次画面都变化
   if (manualTheme === null) manualTheme = resolveTheme() === 'dark' ? 'light' : 'dark';
@@ -2569,28 +2056,6 @@ $('themeBtn').addEventListener('click', () => {
   } catch { /* 存储不可用时仅本次会话有效 */ }
   applyTheme();
 });
-$('exportBtn').addEventListener('click', () => {
-  const H = D.history ?? {};
-  const map = new Map();
-  const put = (k, fn) => { for (const p of ((H[k] ?? {})[win] ?? [])) { const r = map.get(p[0]) ?? { ts: p[0] }; fn(r, p); map.set(p[0], r); } };
-  put('codex', (r, p) => { r.r5 = p[1] != null ? (100 - Number(p[1])).toFixed(0) : ''; r.r7 = p[2] != null ? (100 - Number(p[2])).toFixed(0) : ''; });
-  put('deepseek', (r, p) => { r.ds = p[1] ?? ''; });
-  put('glm', (r, p) => { r.glm = p[1] ?? ''; });
-  const rows = [...map.values()].sort((a, b) => a.ts - b.ts);
-  if (!rows.length) { alert('当前时间窗没有数据'); return; }
-  // 采样间隔：便于事后识别「数据停滞（关机/离线）」时段
-  const head = 'time,codex_5h_remaining_pct,codex_7d_remaining_pct,deepseek_balance_cny,glm_balance_cny,gap_minutes';
-  const body = rows.map((r, i) => {
-    const gap = i ? ((r.ts - rows[i - 1].ts) / 60000).toFixed(1) : '';
-    return [fmtTime(r.ts), r.r5 ?? '', r.r7 ?? '', r.ds ?? '', r.glm ?? '', gap].join(',');
-  }).join('\n');
-  const blob = new Blob(['\ufeff' + head + '\n' + body], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `quota-${win}-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-});
 window.addEventListener('resize', () => { if (D.history) renderCharts(); });
 
 // 初始化热力图指标开关
@@ -2600,12 +2065,10 @@ document.querySelectorAll('#attrSeg button').forEach(b => b.classList.toggle('on
 // 初始化 ThinCoder 范围开关
 document.querySelectorAll('#tcSeg button').forEach(b => b.classList.toggle('on', b.dataset.tc === String(tcDays)));
 
-// 工具按钮
+// 顶栏按钮（配置面板 / 备份 / 静音；快捷键帮助浮层由 ? 打开、Esc 关闭）
 $('cfgPanelBtn').addEventListener('click', () => toggleConfig());
-$('cfgBtn').addEventListener('click', () => { buildConfigEditor(); $('cfgOverlay').classList.add('on'); });
-$('cfgSave').addEventListener('click', saveConfigEdits);
 $('backupBtn').addEventListener('click', runBackup);
-$('helpBtn').addEventListener('click', () => $('helpOverlay').classList.toggle('on'));
+$('muteBtn').addEventListener('click', toggleMute);
 
 // 首帧即应用已保存的主题（避免先闪一下默认主题）
 applyTheme();

@@ -18,7 +18,7 @@ const localRules = path.join(root, 'release/audit-rules.local.json');
 if (fs.existsSync(localRules)) fs.copyFileSync(localRules, path.join(target, 'release/audit-rules.local.json'));
 const env = { ...process.env, ISCC: process.env.ISCC || path.join(root, 'private/build-tools/inno/ISCC.exe') };
 const run = args => execFileSync(process.execPath, args, { cwd: target, env, windowsHide: true, stdio: 'inherit' });
-run(['--test', '程序/tools/test-connections.mjs', '程序/tools/test-distribution.mjs']);
+run(['--test', '程序/tools/test-publish-files.mjs', '程序/tools/test-install-legacy.mjs', '程序/tools/test-connections.mjs', '程序/tools/test-distribution.mjs']);
 run(['release/build-installer.mjs']);
 fs.mkdirSync(path.join(target, 'private/build-tools'), { recursive: true });
 run(['程序/tools/test-installer.mjs']);

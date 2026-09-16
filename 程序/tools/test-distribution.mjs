@@ -17,8 +17,9 @@ const manifest = { schema: 1, version: futureFixture, size: bytes.length, sha256
   urls: [`${repos[0]}/releases/download/v2.0.0/setup.exe`], releaseUrl: `${repos[0]}/releases/tag/v2.0.0`, notes: '更新说明' };
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'board-distribution-'));
-  fs.mkdirSync(path.join(root, 'release')); fs.writeFileSync(path.join(root, 'VERSION'), '1.0.0');
-  fs.writeFileSync(path.join(root, 'release/channels.json'), JSON.stringify(channels));
+  // 夹具按「装好的目录」搭：渠道地址与安装清单都在程序目录下（L3 形态，见 release/README.md）。
+  fs.mkdirSync(path.join(root, '程序')); fs.writeFileSync(path.join(root, 'VERSION'), '1.0.0');
+  fs.writeFileSync(path.join(root, '程序/channels.json'), JSON.stringify(channels));
   // Only the known temporary fixture root can be recursively cleaned.
   t.after(() => { if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith('board-distribution-')) throw new Error('unsafe fixture'); fs.rmSync(root, { recursive: true, force: true }); });
   return root;
@@ -110,7 +111,7 @@ test('snapshot and rollback preserve user data and restore old code', t => {
 });
 test('snapshot refuses traversal and keeps source intact', t => {
   const root = fixture(t);
-  fs.writeFileSync(path.join(root, 'release/installed-files.json'), JSON.stringify({ files: ['../outside'] }));
+  fs.writeFileSync(path.join(root, '程序/installed-files.json'), JSON.stringify({ files: ['../outside'] }));
   assert.throws(() => prepareUpgrade(root, { isolated: true }));
   assert.equal(fs.readFileSync(path.join(root, 'VERSION'), 'utf8'), '1.0.0');
 });

@@ -26,7 +26,7 @@ if not defined PROG (
 if errorlevel 1 (
   echo.
   echo [X] Install failed. If it says node was not found, either install Node.js ^(https://nodejs.org^)
-  echo     or run:  node release\make-portable.mjs   from a machine that has it.
+  echo     or use the ZIP package that includes the built-in runtime.
 )
 
 pause

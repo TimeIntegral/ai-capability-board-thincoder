@@ -61,7 +61,7 @@
   "backup": { "$comment": "一键备份：备份文件保留份数", "keep": 10 },
   "tray": { "$comment": "托盘常驻：轮询 state.json 的间隔秒数", "enabled": true, "pollSeconds": 60 },
   "dnd": { "enabled": true, "from": "23:00", "to": "08:00", "$comment": "免打扰时段内 P1/P2 提醒入队，时段结束后合并补发；P0（限流/余额耗尽/采集异常）始终即时弹" },
-  "mute": { "allowP0": true, "$comment": "静音（静音2小时.bat / node mute.mjs）期间：true = P0 仍送达，false = 全部静音" },
+  "mute": { "allowP0": true, "$comment": "静音期间（看板页面静音按钮 / node mute.mjs）：true = P0 仍送达，false = 全部静音" },
   "thresholds": {
     "codex5hWarn": 80,
     "codex5hCritical": 95,

@@ -33,6 +33,19 @@
     catch { return make('span', '入口尚未配置', 'muted'); }
     a.target = '_blank'; a.rel = 'noopener noreferrer'; return a;
   }
+  // 维护者微信号 + 一键复制（这串字母数字手抄容易错）
+  const WECHAT_ID = 'lixiangcheng2017';
+  function wechatBlock(status) {
+    const row = make('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 2px';
+    const id = make('strong', WECHAT_ID);
+    id.style.cssText = 'font: 600 14px/1.4 var(--mono, ui-monospace, monospace)';
+    row.append(make('span', '微信', 'muted'), id, button('复制', async () => {
+      try { await navigator.clipboard.writeText(WECHAT_ID); status.textContent = '已复制微信号'; }
+      catch { status.textContent = '请手动复制：' + WECHAT_ID; }
+    }));
+    return row;
+  }
   function open() { overlay.classList.add('on'); render(); modal.querySelector('button')?.focus(); poll(); }
   function close() { overlay.classList.remove('on'); document.getElementById('supportBtn')?.focus(); }
   function render() {
@@ -54,7 +67,7 @@
       const check = document.createElement('input'); check.type = 'checkbox'; check.checked = state[name] !== false;
       check.addEventListener('change', () => command(`${action}-${check.checked ? 'on' : 'off'}`)); row.append(check, document.createTextNode(` ${label}`)); modal.append(row);
     }
-    modal.append(make('h4', '交流与问题反馈'));
+    modal.append(make('h4', '交流与问题反馈'), wechatBlock(status));
     const contact = make('div', '', 'actions');
     contact.append(link('加入用户群', state.channels?.community), link('提交问题', state.channels?.github ? `${state.channels.github}/issues` : ''));
     contact.append(button('复制反馈信息', async () => {

@@ -33,11 +33,12 @@ export function prepareUpgrade(root = ROOT, { isolated = false } = {}) {
   if (!fs.existsSync(path.join(root, 'VERSION'))) return;
   const marker = path.join(root, 'data/upgrade-transaction.json');
   if (fs.existsSync(marker)) throw new Error('上一次升级尚未收尾，请先运行恢复');
-  const manifestPath = path.join(root, 'release/installed-files.json');
-  // 2026-09-17 目录整理后的清单（脚本 → 「快捷操作」、程序代码 → 「程序」）。
-  // 只在装好的版本里没有 installed-files.json 时用到（开发/便携场景）。
+  const manifestPath = path.join(root, '程序', 'installed-files.json');
+  // 安装清单由安装器写入（release/build-installer.mjs 从发布清单推导），它自己也是程序文件，
+  // 所以住在「程序」下 —— L1/L2/L3 三层模型见 release/README.md。
+  // 下面的兜底清单只用在「装好的目录里没有清单」的场景（便携 ZIP 解压、开发目录）。
   const files = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')).files :
-    ['VERSION', 'dashboard.html', '程序', '快捷操作', 'assets', 'release', 'runtime', 'config.template.json'];
+    ['VERSION', 'dashboard.html', '程序', '快捷操作', 'assets', 'docs', 'runtime', 'config.template.json', 'LICENSE', 'icon.ico', 'icon.svg', 'README.md', '先看我.txt'];
   const relative = `backups/upgrade-${Date.now()}`;
   const backup = contained(root, relative);
   // Write a guard before stopping tasks; the collector respects it even if manually triggered.

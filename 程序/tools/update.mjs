@@ -26,7 +26,9 @@ export async function runUpdate(action = 'auto', { root = ROOT, fetcher = fetch,
   const file = path.join(data, 'update-status.json');
   const prefsFile = path.join(data, 'update-preferences.json');
   const prefs = read(prefsFile, { automatic: true, notifications: true });
-  const channels = read(path.join(root, 'release/channels.json'), {});
+  // 渠道地址住在程序目录里（曾经在 release/，但那个目录是构建机专用的，不能随包发给用户）：
+  // 它与 发布清单里的 程序/channels.json 是同一个文件，构建器最新的 latest.json 也读它。
+  const channels = read(path.join(root, '程序', 'channels.json'), {});
   const currentVersion = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim();
   const state = { ...read(file, {}), currentVersion, automatic: prefs.automatic !== false,
     notifications: prefs.notifications !== false, channels, operation: action };

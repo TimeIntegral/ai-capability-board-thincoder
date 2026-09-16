@@ -82,6 +82,12 @@ ElseIf action = "suppress" Then
   cmdline = "cmd /c " & nodeExe & " """ & dir & "\balance-mute.mjs"" suppress " & platform & " >> """ & root & "\data\protocol.log"" 2>&1"
 ElseIf action = "resume" Then
   cmdline = "cmd /c " & nodeExe & " """ & dir & "\balance-mute.mjs"" off " & platform & " >> """ & root & "\data\protocol.log"" 2>&1"
+ElseIf action = "mute" Then
+  ' dashboard mute button: temporary do-not-disturb. mute.mjs defaults to 2 hours.
+  cmdline = "cmd /c " & nodeExe & " """ & dir & "\mute.mjs"" 2h >> """ & root & "\data\protocol.log"" 2>&1"
+ElseIf action = "unmute" Then
+  ' cancel the temporary mute. mute.mjs "off" clears it.
+  cmdline = "cmd /c " & nodeExe & " """ & dir & "\mute.mjs"" off >> """ & root & "\data\protocol.log"" 2>&1"
 ElseIf action = "config" Then
   ' dashboard threshold editor: aiquotaboard://config?set=codex5hWarn:75,glmLow:8
   cmdline = "cmd /c " & nodeExe & " """ & dir & "\tools\edit-config.mjs"" """ & setcmd & """ >> """ & root & "\data\protocol.log"" 2>&1"
@@ -99,7 +105,7 @@ ElseIf action = "openfile" Then
   cmdline = "cmd /c " & nodeExe & " """ & dir & "\tools\open-config-file.mjs"" " & nameval & " >> """ & root & "\data\protocol.log"" 2>&1"
 ElseIf action = "connect" Then
   sh.CurrentDirectory = dir
-  sh.Run Chr(34) & nodeExe & Chr(34) & " " & Chr(34) & dir & "\tools\connections.mjs" & Chr(34), 0, False
+  sh.Run Chr(34) & nodeExe & Chr(34) & " " & Chr(34) & dir & "\tools\connections.mjs" & Chr(34) & " --platform=" & platform, 0, False
   WScript.Quit
 ElseIf action = "openpath" Then
   ' open a project folder (dashboard quota-attribution rows); path is URI-encoded,
