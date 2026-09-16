@@ -12,238 +12,146 @@ public static class ConnectionWindow {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr handle);
 }
 '@
-$root = Split-Path (Split-Path -Parent $PSScriptRoot) -Parent   # 看板根目录（本脚本在 <程序>\tools\ 下）
-# 环境探测结果（connections.mjs 开窗口前先跑一遍 setup-check.mjs 写它）：本窗口只读，缺了或坏了就当没有——
-# 预填少一点，总好过窗口直接打不开。密钥「是从哪儿读到的」就写在里面（source），下面据此告诉用户来源。
+
+$root = Split-Path (Split-Path -Parent $PSScriptRoot) -Parent
 $statusFile = Join-Path $root 'data/setup-status.json'
 $status = $null
-if (Test-Path $statusFile) { try { $status = Get-Content -LiteralPath $statusFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $status = $null } }
-$form = New-Object Windows.Forms.Form
-$form.Text = 'AI 能力看板 · 连接平台'
-$form.ClientSize = New-Object Drawing.Size(680, 570)
-$form.StartPosition = 'CenterScreen'
-$form.FormBorderStyle = 'FixedDialog'
-$form.MaximizeBox = $false
-$form.Font = New-Object Drawing.Font('Microsoft YaHei UI', 10)
-$form.BackColor = [Drawing.Color]::White
-$form.Add_Shown({
-  # A hidden protocol host passes SW_HIDE to its first window. Explicitly reveal
-  # only this dialog after the message loop starts; keep the console hidden.
-  $null = $form.BeginInvoke([Action]{
-    [void][ConnectionWindow]::ShowWindow($form.Handle, 5)
-    [void][ConnectionWindow]::SetForegroundWindow($form.Handle)
-    $form.Activate()
-  })
-})
-function Label($text, $x, $y, $width, $height, $parent) {
-  $item = New-Object Windows.Forms.Label
-  $item.Text = $text; $item.Location = New-Object Drawing.Point($x,$y); $item.Size = New-Object Drawing.Size($width,$height)
-  if (!$parent) { $parent = $form }      # default = the form itself; focus mode puts the row inside the card panel
-  $parent.Controls.Add($item); return $item
+if (Test-Path $statusFile) { try { $status = Get-Content -LiteralPath $statusFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch {} }
+$colors = @{
+  Canvas=[Drawing.Color]::FromArgb(248,250,252); Card=[Drawing.Color]::White; Soft=[Drawing.Color]::FromArgb(241,245,249)
+  Accent=[Drawing.Color]::FromArgb(37,99,235); Text=[Drawing.Color]::FromArgb(15,23,42); Muted=[Drawing.Color]::FromArgb(100,116,139)
+  Success=[Drawing.Color]::FromArgb(22,101,52)
 }
-$heading = Label '连接你使用的平台' 28 22 610 38
-$heading.Font = New-Object Drawing.Font('Microsoft YaHei UI', 18, [Drawing.FontStyle]::Bold)
-$subtitle = Label '已有账号自动复用，只补缺少的密钥；选一家就可以开始。' 30 68 610 28
-$checks = @{}; $inputs = @{}; $hints = @{}; $descs = @{}
-$names = @('codex','deepseek','glm')
-$labels = @{ codex = 'Codex'; deepseek = 'DeepSeek'; glm = 'GLM' }
-# 密钥来源提示（DeepSeek / GLM 两行右侧那行小字）：来源写在探测结果里（data/setup-status.json 的 source，
-# 由 tools/setup-check.mjs 按 lib/common.mjs 的 resolveApiKey 顺序探测：secrets.json → ThinCoder 配置 → 环境变量）。
-# 装过 ThinCoder 的用户从没在这窗口里填过密钥 —— 必须让他看见「已经从我装过的 ThinCoder 里拿到了」，
-# 否则他会以为还得再填一次。右边标签只有 210px 宽，文案要一行放得下（见 test-connections.mjs 的截断断言）。
-function KeyHint($name) {
-  if (([string]$status.$name.source) -like '*ThinCoder*') { return '已从 ThinCoder 读到密钥' }
-  if ($status.$name.found) { return '已有密钥，留空复用' }
-  return '在左侧粘贴 API Key'
+$font=New-Object Drawing.Font('Microsoft YaHei UI',9)
+$fontSmall=New-Object Drawing.Font('Microsoft YaHei UI',8.5)
+$fontTitle=New-Object Drawing.Font('Microsoft YaHei UI',19,[Drawing.FontStyle]::Bold)
+$fontSection=New-Object Drawing.Font('Microsoft YaHei UI',10,[Drawing.FontStyle]::Bold)
+$fontStrong=New-Object Drawing.Font('Microsoft YaHei UI',9.5,[Drawing.FontStyle]::Bold)
+
+$form=New-Object Windows.Forms.Form
+$form.Text='AI 能力看板 · 连接平台'; $form.ClientSize=New-Object Drawing.Size(720,655); $form.StartPosition='CenterScreen'
+$form.FormBorderStyle='FixedDialog'; $form.MaximizeBox=$false; $form.MinimizeBox=$true; $form.Font=$font; $form.BackColor=$colors.Canvas
+$form.AutoScaleMode=[Windows.Forms.AutoScaleMode]::Dpi
+$form.Add_Shown({$null=$form.BeginInvoke([Action]{[void][ConnectionWindow]::ShowWindow($form.Handle,5);[void][ConnectionWindow]::SetForegroundWindow($form.Handle);$form.Activate()})})
+
+function New-Label($text,$x,$y,$width,$height,$parent=$form,$color=$colors.Text,$useFont=$font){
+  $item=New-Object Windows.Forms.Label; $item.Text=$text; $item.Location=New-Object Drawing.Point($x,$y); $item.Size=New-Object Drawing.Size($width,$height)
+  $item.ForeColor=$color; $item.Font=$useFont; $item.BackColor=[Drawing.Color]::Transparent; $parent.Controls.Add($item); return $item
 }
-# Focus mode: a card button on the dashboard opens this window with a platform
-# name (aiquotaboard://connect?platform=xxx -> connections.mjs --platform=x). It
-# must configure ONLY that one: the other two are neither rendered nor written.
-# No value, or a value outside the allowlist = the full window (unchanged).
-$focus = if ($Platform -and $names -contains $Platform.ToLower()) { $Platform.ToLower() } else { '' }
-# One platform row: checkbox + what it shows + key input (Codex has no key).
-# $x/$y are relative to $parent, so the same row works in the form and in the card.
-function Row($name, $x, $y, $parent) {
-  $check = New-Object Windows.Forms.CheckBox
-  $check.Text = $labels[$name]
-  $check.Location = New-Object Drawing.Point($x,$y); $check.Size = New-Object Drawing.Size(125,28)
-  # Prefill from the last probe; in focus mode the button that opened us promised
-  # to ENABLE this platform, so it comes up checked (uncheck it to back out).
-  $check.Checked = if ($focus -eq $name) { $true }
-    else { if ($status.lastCollect.atMs) { [bool]$status.platforms.$name } else { [bool]($status.platforms.$name -or $status.$name.found) } }
-  $parent.Controls.Add($check); $checks[$name] = $check
-  # 说明行只说「这家给你看的是什么账」——三家的账目性质不同：Codex 是订阅额度、DeepSeek 是按量计费余额
-  # （充值制，没有聊天订阅 / Coding Plan 这回事）、GLM 是 API 余额（它另有聊天订阅 / Coding Plan）。
-  $detail = if ($name -eq 'codex') { '查看订阅额度；请先在 Codex 客户端登录。' }
-    elseif ($name -eq 'deepseek') { '查看按量计费余额。' }
-    else { '查看 API 余额；不代表聊天订阅或 Coding Plan 额度。' }
-  $descs[$name] = Label $detail ($x+130) $y 490 25 $parent
-  if ($name -eq 'codex') {
-    $null = Label $(if ($status.codex.found) { '已发现本机登录，保存后验证连接。' } else { '登录后可直接点下方按钮验证，无需填写密钥。' }) ($x+130) ($y+30) 490 28 $parent
-  } else {
-    $box = New-Object Windows.Forms.TextBox
-    $box.Location = New-Object Drawing.Point(($x+130),($y+29)); $box.Size = New-Object Drawing.Size(280,28)
-    $box.UseSystemPasswordChar = $true; $box.MaxLength = 4096
-    $parent.Controls.Add($box); $inputs[$name] = $box
-    $hints[$name] = Label (KeyHint $name) ($x+419) ($y+28) 210 24 $parent
-    $link = New-Object Windows.Forms.LinkLabel
-    $link.Text = '打开平台获取密钥'
-    $link.Location = New-Object Drawing.Point(($x+419),($y+52)); $link.Size = New-Object Drawing.Size(190,24)
-    $link.Tag = if ($name -eq 'deepseek') { 'https://platform.deepseek.com/' } else { 'https://www.bigmodel.cn/' }
-    $link.Add_LinkClicked({ param($sender,$eventArgs) Start-Process $sender.Tag -WindowStyle Hidden })
-    $parent.Controls.Add($link)
+function New-Panel($x,$y,$width,$height,$color=$colors.Card){
+  $panel=New-Object Windows.Forms.Panel; $panel.Location=New-Object Drawing.Point($x,$y); $panel.Size=New-Object Drawing.Size($width,$height)
+  $panel.BackColor=$color; $form.Controls.Add($panel); return $panel
+}
+function New-Button($text,$x,$y,$width,$height,$primary=$false){
+  $item=New-Object Windows.Forms.Button; $item.Text=$text; $item.Location=New-Object Drawing.Point($x,$y); $item.Size=New-Object Drawing.Size($width,$height)
+  $item.FlatStyle='Flat'; $item.Cursor=[Windows.Forms.Cursors]::Hand; $item.FlatAppearance.BorderSize=if($primary){0}else{1}
+  $item.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(203,213,225); $item.BackColor=if($primary){$colors.Accent}else{$colors.Card}
+  $item.ForeColor=if($primary){[Drawing.Color]::White}else{$colors.Text}; $item.Font=if($primary){$fontStrong}else{$font}; $form.Controls.Add($item); return $item
+}
+
+$heading=New-Label '连接平台' 28 22 660 38 $form $colors.Text $fontTitle
+$subtitle=New-Label '选择要使用的平台。已有账号会自动复用。' 30 66 660 25 $form $colors.Muted $font
+$checks=@{}; $inputs=@{}; $hints=@{}; $descs=@{}
+$names=@('codex','deepseek','glm'); $labels=@{codex='Codex';deepseek='DeepSeek';glm='GLM'}
+$focus=if($Platform -and $names -contains $Platform.ToLower()){$Platform.ToLower()}else{''}
+function KeyHint($name){
+  if(([string]$status.$name.source)-like '*ThinCoder*'){return '已从 ThinCoder 读到密钥'}
+  if($status.$name.found){return '已有密钥，留空复用'}
+  return '尚未添加密钥'
+}
+function Set-CardState($check){
+  $check.Parent.BackColor=if($check.Checked){$colors.Card}else{$colors.Soft}
+  $check.BackColor=$check.Parent.BackColor
+  foreach($control in $check.Parent.Controls){
+    if($control -is [Windows.Forms.TextBox] -or $control -is [Windows.Forms.LinkLabel]){$control.Enabled=$check.Checked}
   }
 }
-if ($focus) {
-  # Focus mode: this window shows the clicked platform and nothing else. No
-  # "the other two stay unchanged" narration (he knows what he clicked) and no
-  # pointer to where the others live — density over completeness.
-  $form.Text = 'AI 能力看板 · 配置 ' + $labels[$focus]
-  $heading.Text = '只配置 ' + $labels[$focus]
-  $subtitle.Text = '已有账号自动复用，只补缺少的密钥。'
-  $cardHeight = if ($focus -eq 'codex') { 112 } else { 132 }
-  $card = New-Object Windows.Forms.Panel
-  $card.Location = New-Object Drawing.Point(16,104); $card.Size = New-Object Drawing.Size(648,$cardHeight)
-  $card.BackColor = [Drawing.Color]::FromArgb(244,248,255)
-  $card.BorderStyle = [Windows.Forms.BorderStyle]::FixedSingle
-  $form.Controls.Add($card)
-  Row $focus 30 22 $card
-  $sectionY = 104 + $cardHeight + 24   # one row instead of three: the window closes up, no dead band
-} else {
-  for ($i=0; $i -lt 3; $i++) { Row $names[$i] 30 (112 + $i * 84) $form }   # 行距 84：三行的总高直接决定窗口能否在 1366×768 上装下
-  $sectionY = 368
+function Add-PlatformCard($name,$y,$height){
+  $card=New-Panel 28 $y 664 $height
+  $check=New-Object Windows.Forms.CheckBox; $check.Text=$labels[$name]; $check.Location=New-Object Drawing.Point(18,16); $check.Size=New-Object Drawing.Size(118,30)
+  $check.Font=$fontStrong; $check.ForeColor=$colors.Text; $check.BackColor=$colors.Card
+  $check.Checked=if($focus-eq$name){$true}else{if($status.lastCollect.atMs){[bool]$status.platforms.$name}else{[bool]($status.platforms.$name-or$status.$name.found)}}
+  $card.Controls.Add($check); $checks[$name]=$check
+  $detail=if($name-eq'codex'){'订阅额度'}elseif($name-eq'deepseek'){'查看按量计费余额。'}else{'API 余额'}
+  $descs[$name]=New-Label $detail 150 13 220 24 $card $colors.Text $fontStrong
+  if($name-eq'codex'){
+    $ready=[bool]$status.codex.found; $text=if($ready){'已发现本机登录，保存后验证连接'}else{'请先在 Codex 客户端登录'}
+    $null=New-Label $text 150 38 450 22 $card $(if($ready){$colors.Success}else{$colors.Muted}) $fontSmall
+  }else{
+    $hints[$name]=New-Label (KeyHint $name) 150 39 210 22 $card $(if($status.$name.found){$colors.Success}else{$colors.Muted}) $fontSmall
+    $box=New-Object Windows.Forms.TextBox; $box.Location=New-Object Drawing.Point(376,13); $box.Size=New-Object Drawing.Size(244,27)
+    $box.UseSystemPasswordChar=$true; $box.MaxLength=4096; $box.BorderStyle='FixedSingle'; $box.Font=$font; $card.Controls.Add($box); $inputs[$name]=$box
+    $link=New-Object Windows.Forms.LinkLabel; $link.Text='获取 API Key'; $link.Location=New-Object Drawing.Point(529,45); $link.Size=New-Object Drawing.Size(92,21)
+    $link.Font=$fontSmall; $link.LinkColor=$colors.Accent; $link.ActiveLinkColor=$colors.Accent
+    $link.Tag=if($name-eq'deepseek'){'https://platform.deepseek.com/'}else{'https://www.bigmodel.cn/'}
+    $link.Add_LinkClicked({param($sender,$eventArgs) Start-Process $sender.Tag}); $card.Controls.Add($link)
+  }
+  $check.Add_CheckedChanged({param($sender,$eventArgs) Set-CardState $sender})
+  Set-CardState $check
+  return $card
 }
-# ---- 提醒时机（阈值）----
-# 只露四条「提醒线」：用量到多少 % / 余额低于多少钱时**开始提醒**。它们直接决定用户会收到哪条提醒
-# （程序\alert\rules.mjs 的 codex5hWarn / codexWeekWarn / dsLow / glmLow）；紧急阈值（*Critical，P0）、
-# 触顶预测与异常消耗参数保持默认值——要改时走命令行的 程序\tools\edit-config.mjs（同一份白名单与范围）。
-# 现状值由 connections.mjs 经环境变量 BOARD_THRESHOLDS 注入（配置语义的唯一权威在 node 侧：模板默认 + 用户值）；
-# 注入缺失（例如直接跑本脚本）时退回下面的默认值（与 config.template.json 同源），窗口照样画得出来。
-# 保存写的就是窗口里显示的值（所见即所写），范围由 node 侧白名单再校一遍。
-$thresholdFields = @(
-  [pscustomobject]@{ key='codex5hWarn';   platform='codex';    label='Codex 用到';        suffix='% 时提醒我'; min=50; max=100;  step=5; dflt=80 }
-  [pscustomobject]@{ key='codexWeekWarn'; platform='codex';    label='Codex 近 7 天用到'; suffix='% 时提醒我'; min=50; max=100;  step=5; dflt=80 }
-  [pscustomobject]@{ key='dsLow';         platform='deepseek'; label='DeepSeek 余额低于'; suffix=' 元时提醒我'; min=1;  max=1000; step=1; dflt=5 }
-  [pscustomobject]@{ key='glmLow';        platform='glm';      label='GLM 余额低于';      suffix=' 元时提醒我'; min=1;  max=1000; step=1; dflt=5 }
+if($focus){
+  $form.Text='AI 能力看板 · '+$labels[$focus]; $heading.Text='配置 '+$labels[$focus]; $subtitle.Text='只修改当前平台，其他平台保持不变。'
+  $null=Add-PlatformCard $focus 104 $(if($focus-eq'codex'){72}else{78}); $sectionY=210
+}else{
+  $null=Add-PlatformCard 'codex' 104 64; $null=Add-PlatformCard 'deepseek' 176 78; $null=Add-PlatformCard 'glm' 262 78; $sectionY=362
+}
+
+$thresholdFields=@(
+  [pscustomobject]@{key='codex5hWarn';platform='codex';label='5 小时用量';suffix='%';min=50;max=100;step=5;dflt=80}
+  [pscustomobject]@{key='codexWeekWarn';platform='codex';label='近 7 天用量';suffix='%';min=50;max=100;step=5;dflt=80}
+  [pscustomobject]@{key='dsLow';platform='deepseek';label='余额低于';suffix='元';min=1;max=1000;step=1;dflt=5}
+  [pscustomobject]@{key='glmLow';platform='glm';label='余额低于';suffix='元';min=1;max=1000;step=1;dflt=5}
 )
-$currentThresholds = $null
-if ($env:BOARD_THRESHOLDS) { try { $currentThresholds = $env:BOARD_THRESHOLDS | ConvertFrom-Json } catch { $currentThresholds = $null } }
-# 显示值 = 注入的现状值（取不到就用默认值），并夹进控件范围——配置被手改出离谱数值时窗口不能崩
-function ThresholdValue($field) {
-  $raw = $field.dflt
-  if ($currentThresholds) { $prop = $currentThresholds.PSObject.Properties[$field.key]; if ($prop) { $raw = $prop.Value } }
-  $n = 0.0
-  if (![double]::TryParse([string]$raw, [ref]$n)) { $n = [double]$field.dflt }
-  return [decimal][Math]::Min([double]$field.max, [Math]::Max([double]$field.min, [Math]::Round($n)))
+$currentThresholds=$null; if($env:BOARD_THRESHOLDS){try{$currentThresholds=$env:BOARD_THRESHOLDS|ConvertFrom-Json}catch{}}
+function ThresholdValue($field){
+  $raw=$field.dflt; if($currentThresholds){$prop=$currentThresholds.PSObject.Properties[$field.key];if($prop){$raw=$prop.Value}}
+  $n=0.0;if(![double]::TryParse([string]$raw,[ref]$n)){$n=$field.dflt};return [decimal][Math]::Min($field.max,[Math]::Max($field.min,[Math]::Round($n)))
 }
-$spins = @{}
-# One threshold row: right-aligned wording, the number box, then its unit ("[80]% 时提醒我").
-# 130/134/198/118 are the column geometry; two columns fit the 680-wide window (30 and 350).
-function ThresholdRow($field, $x, $y) {
-  $name = Label $field.label $x $y 130 28
-  $name.TextAlign = 'MiddleRight'
-  $spin = New-Object Windows.Forms.NumericUpDown
-  $spin.Location = New-Object Drawing.Point(($x+134),($y+1)); $spin.Size = New-Object Drawing.Size(58,26)
-  $spin.Minimum = [decimal]$field.min; $spin.Maximum = [decimal]$field.max
-  $spin.Increment = [decimal]$field.step; $spin.DecimalPlaces = 0; $spin.TextAlign = 'Right'
-  $spin.Value = ThresholdValue $field
-  $form.Controls.Add($spin); $spins[$field.key] = $spin
-  $null = Label $field.suffix ($x+198) $y 118 28
+$shownFields=@($thresholdFields|Where-Object{!$focus-or$_.platform-eq$focus})
+$null=New-Label '提醒设置' 30 $sectionY 200 25 $form $colors.Text $fontSection
+$null=New-Label '达到以下数值时提醒' 116 ($sectionY+1) 220 22 $form $colors.Muted $fontSmall
+$thresholdPanelHeight=if($shownFields.Count-gt 2){86}else{54}; $thresholdPanel=New-Panel 28 ($sectionY+28) 664 $thresholdPanelHeight $colors.Soft
+$spins=@{}
+for($i=0;$i-lt$shownFields.Count;$i++){
+  $field=$shownFields[$i];$col=$i%2;$row=[Math]::Floor($i/2);$x=18+$col*322;$y=13+$row*32
+  $labelText=if($focus){$field.label}else{"$($labels[$field.platform]) · $($field.label)"};$null=New-Label $labelText $x $y 154 25 $thresholdPanel $colors.Text $fontSmall
+  $spin=New-Object Windows.Forms.NumericUpDown;$spin.Location=New-Object Drawing.Point(($x+158),($y-1));$spin.Size=New-Object Drawing.Size(66,26)
+  $spin.Minimum=$field.min;$spin.Maximum=$field.max;$spin.Increment=$field.step;$spin.Value=ThresholdValue $field;$spin.TextAlign='Right';$spin.BorderStyle='FixedSingle';$spin.Font=$font
+  $thresholdPanel.Controls.Add($spin);$spins[$field.key]=$spin;$null=New-Label $field.suffix ($x+230) $y 34 25 $thresholdPanel $colors.Muted $fontSmall
 }
-# 聚焦模式只画被点那家的提醒线（与平台开关同一条纪律：不碰其它家）
-$shownFields = @($thresholdFields | Where-Object { !$focus -or $_.platform -eq $focus })
-$sectionTitle = Label '提醒时机' 30 $sectionY 200 26
-$sectionTitle.Font = New-Object Drawing.Font('Microsoft YaHei UI', 10, [Drawing.FontStyle]::Bold)
-for ($i = 0; $i -lt $shownFields.Count; $i++) { ThresholdRow $shownFields[$i] (30 + ($i % 2) * 320) ($sectionY + 34 + [Math]::Floor($i / 2) * 32) }
-$bottomY = $sectionY + 34 + [Math]::Ceiling($shownFields.Count / 2) * 32 + 12
-# The bottom block (privacy note / save button / result) keeps one geometry in both modes; the window
-# height is derived from it: note at $bottomY, button at +41 (h 40), result at +93 (h 72, 94 after a save).
-# Client heights = bottomY + 177 (655 full / 495 codex / 515 balances) and +199 after a save (677 / 517 / 537).
-# 为什么要这么抠：1366×768 笔记本上任务栏占 48，窗口外框必须 ≤ 720 —— 保存后的 677+39=716 是上限。
-$form.ClientSize = New-Object Drawing.Size(680, ($bottomY + 177))
-$null = Label '密钥仅保存到本机，不会传给看板页面。已有密钥留空不改。' 30 $bottomY 620 25
-$button = New-Object Windows.Forms.Button
-$button.Text = '保存并验证连接'; $button.Location = New-Object Drawing.Point(30,($bottomY+41)); $button.Size = New-Object Drawing.Size(190,40)
-$form.Controls.Add($button)
-$result = Label '完成后会开启自动采集；未连接的平台可以以后再补。' 30 ($bottomY+93) 625 72
-$timer = New-Object Windows.Forms.Timer; $timer.Interval = 250
-$script:worker = $null; $script:readTask = $null
+$bottomY=$sectionY+28+$thresholdPanelHeight+14;$form.ClientSize=New-Object Drawing.Size(720,($bottomY+166))
+$null=New-Label '密钥只保存在本机；留空不会覆盖已有密钥。' 30 $bottomY 650 24 $form $colors.Muted $fontSmall
+$button=New-Button '保存并验证' 30 ($bottomY+37) 152 38 $true;$cancel=New-Button '取消' 192 ($bottomY+37) 84 38 $false;$cancel.Add_Click({$form.Close()})
+$result=New-Label '保存后会立即验证，并开启后台自动采集。' 30 ($bottomY+88) 650 52 $form $colors.Muted $fontSmall
+$timer=New-Object Windows.Forms.Timer;$timer.Interval=250;$script:worker=$null;$script:readTask=$null
 $button.Add_Click({
-  try {
-    $payload = @{ platforms=@{}; keys=@{} }
-    # Only the rows actually rendered are written: focus mode must leave the other
-    # platforms exactly as they are (a platform the user did not open is not config).
-    foreach ($name in $(if ($focus) { @($focus) } else { $names })) { $payload.platforms[$name] = $checks[$name].Checked }
-    foreach ($name in @('deepseek','glm')) { if ($inputs.ContainsKey($name)) { $payload.keys[$name] = $inputs[$name].Text } }
-    # 阈值只写窗口里画出来的那几条（聚焦模式不碰其它家）；值取自媒体控件，别的来源一概不认
-    $payload.thresholds = @{}
-    foreach ($field in $shownFields) { $payload.thresholds[$field.key] = [int]$spins[$field.key].Value }
-    $psi = New-Object Diagnostics.ProcessStartInfo
-    $psi.FileName = $NodeExe; $psi.Arguments = '"' + (Join-Path $PSScriptRoot 'connections.mjs') + '" --save'
-    $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
-    $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-    $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
-    $script:worker = [Diagnostics.Process]::Start($psi)
-    $script:readTask = $script:worker.StandardOutput.ReadToEndAsync()
-    $script:errorTask = $script:worker.StandardError.ReadToEndAsync()
-    $script:worker.StandardInput.Write(($payload | ConvertTo-Json -Compress)); $script:worker.StandardInput.Close()
-    foreach ($box in $inputs.Values) { $box.Clear() }; $payload = $null
-    $button.Enabled = $false; $result.Text = '正在保存、验证并开启采集，最多约四分钟。'; $timer.Start()
-  } catch { $result.Text = '无法启动连接，请重新打开窗口后重试。'; $button.Enabled = $true }
+  try{
+    $payload=@{platforms=@{};keys=@{};thresholds=@{}};foreach($name in $(if($focus){@($focus)}else{$names})){$payload.platforms[$name]=$checks[$name].Checked}
+    foreach($name in @('deepseek','glm')){if($inputs.ContainsKey($name)){$payload.keys[$name]=$inputs[$name].Text}};foreach($field in $shownFields){$payload.thresholds[$field.key]=[int]$spins[$field.key].Value}
+    $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName=$NodeExe;$psi.Arguments='"'+(Join-Path $PSScriptRoot 'connections.mjs')+'" --save';$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
+    $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.StandardOutputEncoding=[Text.Encoding]::UTF8
+    $script:worker=[Diagnostics.Process]::Start($psi);$script:readTask=$script:worker.StandardOutput.ReadToEndAsync();$script:errorTask=$script:worker.StandardError.ReadToEndAsync()
+    $script:worker.StandardInput.Write(($payload|ConvertTo-Json -Compress));$script:worker.StandardInput.Close();foreach($box in $inputs.Values){$box.Clear()};$payload=$null
+    $button.Enabled=$false;$cancel.Enabled=$false;$button.Text='正在验证…';$result.ForeColor=$colors.Muted;$result.Text='正在保存设置并连接平台，请稍候。';$timer.Start()
+  }catch{$result.ForeColor=[Drawing.Color]::FromArgb(185,28,28);$result.Text='无法启动连接，请关闭窗口后重试。';$button.Enabled=$true;$cancel.Enabled=$true}
 })
-$timer.Add_Tick({
-  if ($script:worker.HasExited -and $script:readTask.IsCompleted) {
-    $timer.Stop(); $result.Text = $script:readTask.Result; $button.Enabled = $true
-    $form.ClientSize = New-Object Drawing.Size(680, ($bottomY + 199)); $result.Height = 94
-    $script:worker.Dispose(); $script:worker = $null
+$timer.Add_Tick({if($script:worker.HasExited-and$script:readTask.IsCompleted){$timer.Stop();$result.Text=$script:readTask.Result;$result.ForeColor=$colors.Text;$button.Text='保存并验证';$button.Enabled=$true;$cancel.Enabled=$true;$script:worker.Dispose();$script:worker=$null}})
+$form.Add_FormClosing({param($sender,$eventArgs)if($script:worker){$eventArgs.Cancel=$true;$result.Text='正在完成验证，请稍候。'}})
+
+if($PreviewPath){
+  $form.Show();$form.Refresh()
+  if($SmokeTest){
+    $probe=if($focus){$focus}else{'deepseek'};if(!$inputs[$probe]){throw '连接窗口交互测试只支持带密钥框的平台'};if($focus-and($checks.Count-ne 1-or!$checks.ContainsKey($focus))){throw '聚焦模式只能渲染被点的那一家'}
+    if(Test-Path $statusFile){if(!$status){throw '状态文件存在却未读入'};foreach($name in @('deepseek','glm')){if($hints.ContainsKey($name)){
+      $want=if(([string]$status.$name.source)-like '*ThinCoder*'){'已从 ThinCoder 读到密钥'}else{'已有密钥，留空复用'};if($hints[$name].Text-ne$want){throw "密钥来源提示不符（$name）"}
+      if([Windows.Forms.TextRenderer]::MeasureText($hints[$name].Text,$hints[$name].Font).Width-gt$hints[$name].Width){throw "密钥来源提示被截断（$name）"}
+    }}}
+    if($descs.ContainsKey('deepseek')){if($descs['deepseek'].Text-ne'查看按量计费余额。'-or$descs['deepseek'].Text-match'Coding Plan'){throw 'DeepSeek 说明行不符'}}
+    $checks[$probe].Checked=$true;$inputs[$probe].Text='fixture-value';foreach($field in $shownFields){$spin=$spins[$field.key];$spin.Value=if($spin.Value-ge$spin.Maximum){$spin.Minimum}else{$spin.Value+1}}
+    $button.PerformClick();$until=[DateTime]::UtcNow.AddSeconds(15);while($script:worker-and[DateTime]::UtcNow-lt$until){[Windows.Forms.Application]::DoEvents();Start-Sleep -Milliseconds 20}
+    if($script:worker-or$result.Text-ne'连接测试通过'-or$inputs[$probe].Text-ne''-or!$button.Enabled-or![ConnectionWindow]::IsWindowVisible($form.Handle)){throw '连接窗口交互测试失败'}
   }
-})
-$form.Add_FormClosing({ param($sender,$eventArgs)
-  if ($script:worker) { $eventArgs.Cancel = $true; $result.Text = '正在完成连接，请等待结果后关闭。' }
-})
-if ($PreviewPath) {
-  $form.Show(); $form.Refresh()
-  if ($SmokeTest) {
-    # Stub harness (see tools/test-connections.mjs): the row under test is the
-    # focused one when the window was opened for a single platform, else DeepSeek.
-    $probe = if ($focus) { $focus } else { 'deepseek' }
-    if (!$inputs[$probe]) { throw '连接窗口交互测试只支持带密钥框的平台（deepseek / glm）' }
-    if ($focus -and ($checks.Count -ne 1 -or !$checks.ContainsKey($focus))) { throw '聚焦模式只能渲染被点的那一家' }
-    # 密钥来源提示：桩状态（<根>\data\setup-status.json）里写什么来源，那一行小字就必须写出对应的话。
-    # 这是「装过 ThinCoder 就不用再填一次」唯一的对外说明，所以既要真的写出来，也要一行放得下（不被截断）。
-    if (Test-Path $statusFile) {
-      if (!$status) { throw '状态文件存在却没被读进窗口（密钥来源提示会退化成通用文案）' }
-      foreach ($name in @('deepseek','glm')) {
-        if (!$hints.ContainsKey($name)) { continue }
-        $want = if (([string]$status.$name.source) -like '*ThinCoder*') { '已从 ThinCoder 读到密钥' } else { '已有密钥，留空复用' }
-        if ($hints[$name].Text -ne $want) { throw "密钥来源提示不符（$name）：$($hints[$name].Text)" }
-        $need = [Windows.Forms.TextRenderer]::MeasureText($hints[$name].Text, $hints[$name].Font).Width
-        if ($need -gt $hints[$name].Width) { throw "密钥来源提示被截断（$name）：需 $need px，标签只有 $($hints[$name].Width) px" }
-      }
-    }
-    # 说明行：DeepSeek 是按量计费余额——「Coding Plan」是 GLM 的概念，不许安到它头上（用户就是这么被绕晕的）。
-    # 两行都留：改文案时若只改上一行、把概念带回来，下一行会把它扇回去。
-    if ($descs.ContainsKey('deepseek')) {
-      if ($descs['deepseek'].Text -ne '查看按量计费余额。') { throw "DeepSeek 说明行不符：$($descs['deepseek'].Text)" }
-      if ($descs['deepseek'].Text -match 'Coding Plan') { throw "DeepSeek 说明行混进了 Coding Plan：$($descs['deepseek'].Text)" }
-    }
-    $checks[$probe].Checked = $true
-    $inputs[$probe].Text = 'fixture-value'
-    # 阈值控件也要真的被改过：每条 +1（到顶就回到下限）。载荷必须反映控件里的新值，
-    # 而不是 connections.mjs 注入的现状值 —— 否则「用户改了数字、存的却是旧值」这类回归测不出来。
-    foreach ($field in $shownFields) {
-      $spin = $spins[$field.key]
-      $spin.Value = if ($spin.Value -ge $spin.Maximum) { $spin.Minimum } else { $spin.Value + 1 }
-    }
-    $button.PerformClick()
-    $until = [DateTime]::UtcNow.AddSeconds(15)
-    while ($script:worker -and [DateTime]::UtcNow -lt $until) {
-      [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 20
-    }
-    if ($script:worker -or $result.Text -ne '连接测试通过' -or $inputs[$probe].Text -ne '' -or !$button.Enabled -or ![ConnectionWindow]::IsWindowVisible($form.Handle)) { throw '连接窗口交互测试失败' }
-  }
-  $bitmap = New-Object Drawing.Bitmap($form.Width,$form.Height)
-  $form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height)))
-  $bitmap.Save($PreviewPath); $bitmap.Dispose(); $form.Dispose()
-} else { [void]$form.ShowDialog() }
+  $bitmap=New-Object Drawing.Bitmap($form.Width,$form.Height);$form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height)));$bitmap.Save($PreviewPath);$bitmap.Dispose();$form.Dispose()
+}else{[void]$form.ShowDialog()}
 $timer.Dispose()

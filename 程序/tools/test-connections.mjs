@@ -58,6 +58,25 @@ test('native window passes secrets only through stdin and clears input', { skip:
   assert.ok(fs.statSync(path.join(dir, 'preview.png')).size > 1000);
 });
 
+test('native tray menu renders in an isolated preview', { skip: process.platform !== 'win32' }, t => {
+  const dir = fixture(t);
+  const tools = path.join(dir, '程序', 'tools');
+  fs.mkdirSync(tools, { recursive: true });
+  fs.mkdirSync(path.join(dir, 'data'));
+  fs.copyFileSync(path.join(import.meta.dirname, 'tray.ps1'), path.join(tools, 'tray.ps1'));
+  fs.writeFileSync(path.join(dir, 'dashboard.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ tray: { pollSeconds: 60 } }));
+  fs.writeFileSync(path.join(dir, 'data', 'state.json'), JSON.stringify({ current: {
+    codex: { ok: true, data: { fiveHour: { usedPercent: 25 } } },
+    deepseek: { ok: true, data: { totalBalance: 12.5 } },
+    glm: { ok: true, data: { balance: 8 } },
+  } }));
+  const preview = path.join(dir, 'tray.png');
+  const env = { ...process.env }; delete env.PSModulePath;
+  execFileSync('powershell.exe', ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path.join(tools, 'tray.ps1'), '-PreviewPath', preview], { env, timeout: 25000, windowsHide: true, stdio: 'pipe' });
+  assert.ok(fs.statSync(preview).size > 1000);
+});
+
 test('focused window passes secrets only through stdin, clears input and saves one platform', { skip: process.platform !== 'win32' }, t => {
   const dir = fixture(t);
   const tools = path.join(dir, '程序', 'tools');
