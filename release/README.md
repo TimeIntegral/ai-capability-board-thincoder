@@ -113,7 +113,7 @@
 
 - **审计过的代码** —— 就是 ① 那份清单，审计什么就发布什么（一个不多、一个不少）；
 - **便携 Node 运行时** `runtime/node.exe` —— 给没装 Node 的用户"解压即用"
-  （`安装定时任务.bat`、`运行采集.vbs` 都优先用它）。
+  （`快捷操作\安装定时任务.bat`、`快捷操作\立即采集一次.vbs` 都优先用它）。
   它 80MB、被 `.gitignore` 排除，所以**不在逐行审计范围**里 —— 换来的是
   **SHA256 核对**：必须与 `release/portable-node.json` 里记录的官方校验和一致，否则拒绝打包。
   确实要发纯代码包时用 `--no-runtime`（输出里会明说"没装 Node 的用户无法直接用"）。
@@ -122,9 +122,9 @@
 
 ## 为什么打包不用 PowerShell 的 Compress-Archive
 
-`tools/backup.mjs`（备份）用的是 `Compress-Archive`，发布包**故意不用**它：
+`程序/tools/backup.mjs`（备份）用的是 `Compress-Archive`，发布包**故意不用**它：
 
-1. 本仓库有 7 个中文文件名的文件（`安装定时任务.bat` 等）。Windows PowerShell 5.1 的
+1. 本仓库半数以上的文件路径含中文（`快捷操作\安装定时任务.bat`、`程序\运行协议.vbs` 等）。Windows PowerShell 5.1 的
    `Compress-Archive` 不写 zip 的「UTF-8 名称」标志位，换台机器、换个解压工具就可能全是乱码。
 2. 本项目目录名本身含中文，外部工具的代码页/区域设置正是最容易翻车的地方
    （同类坑已踩过：Node 的 `fs.cpSync` 在中文路径下会原生崩溃）。

@@ -10,11 +10,12 @@
 2. 双击安装，完成后打开看板，点击「开始配置」。
 3. 打开本机连接窗口，选择平台；已有账号自动复用，缺少的 API Key 粘贴一次，点击「保存并验证连接」。
 
-想解压即用，可以选择同一发行版中的便携 ZIP，解压后双击 `start.vbs`。GitHub 自动生成的 Source code 仅供开发使用，不含运行环境。
+想解压即用，可以选择同一发行版中的便携 ZIP，解压后双击「快捷操作 → 启动看板.vbs」。GitHub 自动生成的 Source code 仅供开发使用，不含运行环境。
 
 ### 更新与交流
 
 - 软件内「帮助与反馈」可检查更新、查看更新说明并升级；自动检查每天最多一次，升级保留配置和历史。
+- **用便携 ZIP 覆盖升级的，升级后请双击一次「快捷操作 → 安装定时任务.bat」**：安装版升级会自动把自动采集重新接好，覆盖解压不会——自动采集还在按升级前的位置找程序文件（那些文件已经挪进「程序」），表现是看板能打开、数字却不再更新。双击一次即可，配置和历史都不受影响。
 - [用户微信群与反馈入口](docs/community.md) · [提交使用问题](https://github.com/TimeIntegral/ai-capability-board-thincoder/issues)
 - 微信群尚未开放，最新二维码会放在固定反馈页面。Gitee 下载入口后续补充。
 - Windows 应用列表可完整卸载；默认保留数据，选择删除时才清理配置与历史。
@@ -70,13 +71,13 @@
 
 - **场景化提醒**：额度释放、5h / 周阈值、限流、余额告急与耗尽、订阅闲置、触顶预测、消耗异常、采集异常与降级恢复等（完整矩阵见下文）——每条通知都能点开看板。
 - **降噪设计**：一次采集最多弹 **1 条**通知（多事件聚合）；阈值用 armed/滞回（穿越一次只报一次）；连接状态双向滞回（连续 15 分钟降级才报、30 分钟稳定才算恢复）；滞回按**分钟**配置——采集频率从 5 分钟改到 1 分钟时灵敏度不变（代码按各平台实际间隔换算样本数）。
-- **免打扰与静音**：免打扰时段内 P1/P2 入队、时段结束后合并补发，P0 仍即时送达（无提示音）；`静音2小时.bat` 或 `node mute.mjs 30m` 临时静音，看板显示静音状态。
+- **免打扰与静音**：免打扰时段内 P1/P2 入队、时段结束后合并补发，P0 仍即时送达（无提示音）；`快捷操作\静音2小时.bat` 或 `node 程序/mute.mjs 30m` 临时静音，看板显示静音状态。
 - **按平台的余额提醒开关**：某个模型不打算继续用了，但它的低余额提醒一直弹——在通知或看板余额卡上点「不再提醒」，**直到该平台充值（余额回升）自动恢复**（详见下文）。
 - **采集健康**：每平台近 24 小时的成功率、采集次数、平均耗时与最近错误——数据存疑时可自证清白。
 
 ### ⑤ 装一次就不用管
 
-- **一键安装**：`node tools/install.mjs`（或双击 `安装定时任务.bat`）一条命令完成六步——计划任务、图标、桌面快捷方式、通知应用名、按钮协议、托盘自启；旧版本的残留任务与快捷方式会被自动清理。
+- **一键安装**：`node 程序/tools/install.mjs`（或双击「快捷操作 → 安装定时任务.bat」）一条命令完成六步——计划任务、图标、桌面快捷方式、通知应用名、按钮协议、托盘自启；旧版本的残留任务与快捷方式会被自动清理。
 - **定时采集**：计划任务按最小间隔触发（默认 1 分钟），开机自动恢复、错过的点补跑、睡眠不唤醒、隐藏运行、防并发重叠。
 - **托盘常驻**：任务栏图标悬停显示三平台当前状态，右键可打开看板/立即采集/静音/退出，双击打开看板，随开机自启（不想要就把 `config.json` 的 `tray.enabled` 设为 `false` 后重跑安装）。
 - **一键备份**：把全部历史与配置打包为 zip（自动轮转保留最近 N 份）——永久保留的数据有了导出出口。
@@ -111,7 +112,7 @@
 
 1. **把项目放到本机任意可写目录**（`data/`、`backups/` 会持续写入）。
 
-2. **复制配置**（跑过「首次配置.bat」的话这步已完成，可跳过）：
+2. **复制配置**（用安装版的「开始配置 → 本机连接窗口」配过的话，`config.json` 已经生成，可跳过复制）：
 
    ```bat
    copy config.template.json config.json
@@ -131,42 +132,42 @@
 3. **试跑一次采集**：
 
    ```bat
-   node collect.mjs
+   node 程序/collect.mjs
    ```
 
-   首次会创建 `data/` 并写入 `state.json`，控制台打印三平台取数结果与提醒判定。忽略间隔强制全采：`node collect.mjs --all`。
+   首次会创建 `data/` 并写入 `state.json`，控制台打印三平台取数结果与提醒判定。忽略间隔强制全采：`node 程序/collect.mjs --all`。
 
 4. **跑一遍规则测试**（可选，确认环境正常）：
 
    ```bat
-   node tools/test-rules.mjs
+   node 程序/tools/test-rules.mjs
    ```
 
 5. **安装**（计划任务 + 图标 + 桌面快捷方式 + 通知应用名 + 按钮协议 + 托盘自启）：
 
    ```bat
-   node tools\install.mjs
+   node 程序/tools/install.mjs
    ```
 
-   等价于双击 `安装定时任务.bat`。装完采集就按间隔自动运行了。
+   等价于双击「快捷操作 → 安装定时任务.bat」。装完采集就按间隔自动运行了。
 
 6. **打开看板**：双击桌面的「AI 能力看板」快捷方式，或直接双击项目里的 `dashboard.html`。
-   想卸载：双击 `卸载定时任务.bat`（只删计划任务，看板与数据保留）。
+   想卸载：双击「快捷操作 → 卸载定时任务.bat」（只删计划任务，看板与数据保留）。
 
 **常用命令**
 
 | 命令 | 用途 |
 |---|---|
-| `node collect.mjs` | 立即采集一次（`--all` 忽略间隔强制全采） |
-| `node tools/install.mjs` | 一键安装 / 修复（计划任务、图标、快捷方式、协议、托盘） |
-| `node tools/test-rules.mjs` | 规则引擎测试（回归用例 + 真实历史回放 + 降采样 + 预测/异常 + 配置白名单 + 向导契约；`--slow` 单跑真机不外泄扫描） |
-| `node tools/test-dashboard.mjs` | 看板桩测试（无头浏览器 + 假目录句柄；需 Edge/Chrome，属重 IO） |
-| `node tools/set-task-interval.mjs` | 改完 `intervals` 后同步计划任务触发间隔 |
-| `node tools/attribution.mjs` | 单独跑一次额度归因（`--rebuild` 清空增量缓存全量重建） |
-| `node tools/backup.mjs` | 立即备份（把历史与配置打包为 zip） |
-| `node mute.mjs 30m` / `status` / `off` | 临时静音 / 查看 / 取消（`静音2小时.bat` 即 `node mute.mjs 2h`） |
-| `node balance-mute.mjs suppress glm` / `off glm` / `status` | 按平台关闭余额提醒 / 恢复 / 查看 |
-| `node tools/open-path.mjs <路径> --dry` · `node tools/open-tc.mjs <路径> --dry` | 试运行看板里的「打开文件夹 / 启动项目」动作（校验路径是否在白名单内） |
+| `node 程序/collect.mjs` | 立即采集一次（`--all` 忽略间隔强制全采） |
+| `node 程序/tools/install.mjs` | 一键安装 / 修复（计划任务、图标、快捷方式、协议、托盘） |
+| `node 程序/tools/test-rules.mjs` | 规则引擎测试（回归用例 + 真实历史回放 + 降采样 + 预测/异常 + 配置白名单 + 向导契约；`--slow` 单跑真机不外泄扫描） |
+| `node 程序/tools/test-dashboard.mjs` | 看板桩测试（无头浏览器 + 假目录句柄；需 Edge/Chrome，属重 IO） |
+| `node 程序/tools/set-task-interval.mjs` | 改完 `intervals` 后同步计划任务触发间隔 |
+| `node 程序/tools/attribution.mjs` | 单独跑一次额度归因（`--rebuild` 清空增量缓存全量重建） |
+| `node 程序/tools/backup.mjs` | 立即备份（把历史与配置打包为 zip） |
+| `node 程序/mute.mjs 30m` / `status` / `off` | 临时静音 / 查看 / 取消（`快捷操作\静音2小时.bat` 即 `node 程序/mute.mjs 2h`） |
+| `node 程序/balance-mute.mjs suppress glm` / `off glm` / `status` | 按平台关闭余额提醒 / 恢复 / 查看 |
+| `node 程序/tools/open-path.mjs <路径> --dry` · `node 程序/tools/open-tc.mjs <路径> --dry` | 试运行看板里的「打开文件夹 / 启动项目」动作（校验路径是否在白名单内） |
 
 **日志与历史**：`data/collect.log`（采集日志，超 5MB 轮转）；通知失败记录 `data/notify-errors.log`；按钮协议记录 `data/protocol.log`。改动历史见 [`CHANGELOG.md`](CHANGELOG.md)。
 
@@ -174,14 +175,14 @@
 
 场景：某个模型你不打算继续用了，但它的低余额提醒会一直弹。
 
-- **触发方式**（三处等价）：通知上的「不再提醒XX余额」按钮 · 看板余额卡上的同名按钮 · 命令行 `node balance-mute.mjs suppress glm`
+- **触发方式**（三处等价）：通知上的「不再提醒XX余额」按钮 · 看板余额卡上的同名按钮 · 命令行 `node 程序/balance-mute.mjs suppress glm`
 - **恢复条件**（自动）：该平台**余额回升 ≥ ¥0.01**（即充值到账）→ 下次采集自动解除并恢复提醒
-- **手动恢复**：看板上的「恢复提醒」按钮 · `node balance-mute.mjs off glm` · `node balance-mute.mjs off all`
-- **查看状态**：`node balance-mute.mjs status`
+- **手动恢复**：看板上的「恢复提醒」按钮 · `node 程序/balance-mute.mjs off glm` · `node 程序/balance-mute.mjs off all`
+- **查看状态**：`node 程序/balance-mute.mjs status`
 
-实现：`data/balance-mute.json` 记录 `{平台: {抑制时刻, 当时余额}}`；规则引擎跳过被抑制平台的余额提醒（**余额与消耗速率仍照常采集与展示**，只是不弹通知）；`collect.mjs` 每次采集比较当前余额与抑制时的余额，检测到回升即自动解除。
+实现：`data/balance-mute.json` 记录 `{平台: {抑制时刻, 当时余额}}`；规则引擎跳过被抑制平台的余额提醒（**余额与消耗速率仍照常采集与展示**，只是不弹通知）；`程序/collect.mjs` 每次采集比较当前余额与抑制时的余额，检测到回升即自动解除。
 
-> 按钮依赖自定义 URL 协议 `aiquotaboard://`（由 `node tools/install.mjs` 或 `node tools/register-protocol.mjs` 注册；未注册时按钮点击无效，用上面的命令行替代）。
+> 按钮依赖自定义 URL 协议 `aiquotaboard://`（由 `node 程序/tools/install.mjs` 或 `node 程序/tools/register-protocol.mjs` 注册；未注册时按钮点击无效，用上面的命令行替代）。
 
 ## 配置
 
@@ -205,7 +206,7 @@
 | `history` | 原始粒度保留天数、降采样档位、总保留天数 |
 | `staleMinutes` | 看板判定「数据陈旧」的分钟数 |
 
-**采集频率与分平台调度**：计划任务按**最小间隔**触发，各平台按自己的间隔取数（未到期的平台沿用上次结果，看板标注「沿用上次」与数据年龄；失败立即重试）。GLM 余额接口是从前端逆向的非公开接口，默认 5 分钟一采以降低风控风险；Codex 走官方后端、压力小，默认 1 分钟。改完 `config.json` 后运行 `node tools/install.mjs` 或 `node tools/set-task-interval.mjs` 同步任务间隔。
+**采集频率与分平台调度**：计划任务按**最小间隔**触发，各平台按自己的间隔取数（未到期的平台沿用上次结果，看板标注「沿用上次」与数据年龄；失败立即重试）。GLM 余额接口是从前端逆向的非公开接口，默认 5 分钟一采以降低风控风险；Codex 走官方后端、压力小，默认 1 分钟。改完 `config.json` 后运行 `node 程序/tools/install.mjs` 或 `node 程序/tools/set-task-interval.mjs` 同步任务间隔。
 
 ## 数据源与口径（重要）
 
@@ -284,15 +285,15 @@
 ## 测试
 
 ```bat
-node tools/test-rules.mjs
+node 程序/tools/test-rules.mjs
 ```
 
-一个文件 15 组用例：回归复现、阈值 armed/滞回与释放语义、**真实历史回放**、其他场景、采集频率变化下的滞回换算、跳采平台、分级降采样、余额提醒抑制、触顶预测、异常消耗、配置白名单，加上配置向导的四组——**状态文件契约**（真跑 `tools/setup-check.mjs`）、**写出的密钥可被读出**、**中文提示载荷**（成功 / 失败 / 守卫三态 + `.vbs` 内嵌退化载荷）、**运行时文件不外泄扫描**（重 IO，默认跳过，单跑：`node tools/test-rules.mjs --slow`）。
+一个文件 15 组用例：回归复现、阈值 armed/滞回与释放语义、**真实历史回放**、其他场景、采集频率变化下的滞回换算、跳采平台、分级降采样、余额提醒抑制、触顶预测、异常消耗、配置白名单，加上配置向导的四组——**状态文件契约**（真跑 `程序/tools/setup-check.mjs`）、**写出的密钥可被读出**、**中文提示载荷**（成功 / 失败 / 守卫三态 + `.vbs` 内嵌退化载荷）、**运行时文件不外泄扫描**（重 IO，默认跳过，单跑：`node 程序/tools/test-rules.mjs --slow`）。
 
 看板本身另有一套桩测试（需要 Edge/Chrome；启动真实浏览器属重 IO，不进快速门禁）：
 
 ```bat
-node tools/test-dashboard.mjs
+node 程序/tools/test-dashboard.mjs
 ```
 
 它把 `dashboard.html` 复制到 `data/__test-dashboard__/` 并注入假目录句柄与插桩，用无头浏览器真实点击驱动，覆盖配置向导的能力检测/目录校验/合并写入/坏文件重建/写失败回滚/密钥不外泄/试采等待与超时/回退等分支。原生文件夹选择器无法被自动化驱动——真实选择器 + 真实落盘、真实启用自动采集、真实试采与句柄持久化归人工验收。
@@ -304,42 +305,52 @@ node tools/test-dashboard.mjs
 ## 文件结构
 
 ```
-collect.mjs                    采集入口（分平台调度→落盘→统计→规则引擎→通知→看板数据）
-collectors/codex.mjs           Codex 实时额度（代理→直连自动回退）
-collectors/codex-fallback.mjs  Codex 降级源（本地会话文件快照解析）
-collectors/deepseek.mjs / glm.mjs
-alert/rules.mjs                规则引擎（状态机 + 滞回；不使用易变的 reset_at 作窗口身份）
-alert/notify.mjs               通知投递（单条聚合、静音、免打扰、点击跳看板、动作按钮、自定义应用名）
-mute.mjs                       全局静音开关 CLI
-balance-mute.mjs               按平台的余额提醒开关 CLI（suppress/off/status）
-运行协议.vbs                    URL 协议处理器（按钮动作：不再提醒/恢复提醒/配置编辑/备份/打开，以及向导的探测 setupcheck / 一键开启 setupinstall）
+先看我.txt                     第一次打开先看这个：哪些能点、哪些别动
+快捷操作/                      ★ 平时只用这一层，双击即可（无窗口）
+  启动看板.vbs                 打开看板（桌面快捷方式指向它）
+  连接平台.vbs                 选平台、填密钥（本机窗口；看板页面不接触密钥）
+  启用自动采集.vbs             首次启用（双击、无窗口）：静默跑安装链路，装完弹中文结果提示
+  立即采集一次.vbs             计划任务隐藏运行器（也供「想马上看到最新数字」时双击）
+  托盘图标.vbs                 启动托盘常驻图标（隐藏窗口）
+  安装定时任务.bat / 卸载定时任务.bat
+  静音2小时.bat / 取消静音.bat    一键静音 / 恢复
+程序/                          程序代码（看板自己的零件，不用打开；名字非 ASCII，脚本按内容定位它）
+  collect.mjs                  采集入口（分平台调度→落盘→统计→规则引擎→通知→看板数据）
+  mute.mjs                     全局静音开关 CLI
+  balance-mute.mjs             按平台的余额提醒开关 CLI（suppress/off/status）
+  运行协议.vbs                 URL 协议处理器（按钮动作：不再提醒/恢复提醒/配置编辑/备份/打开，以及向导的探测 setupcheck / 一键开启 setupinstall）
+  collectors/codex.mjs         Codex 实时额度（代理→直连自动回退）
+  collectors/codex-fallback.mjs Codex 降级源（本地会话文件快照解析）
+  collectors/deepseek.mjs / glm.mjs
+  alert/rules.mjs              规则引擎（状态机 + 滞回；不使用易变的 reset_at 作窗口身份）
+  alert/notify.mjs             通知投递（单条聚合、静音、免打扰、点击跳看板、动作按钮、自定义应用名）
+  tools/install.mjs            一键安装（计划任务 + 图标 + 桌面快捷方式 + 通知应用名 + 按钮协议 + 托盘自启）
+  tools/tray.ps1               托盘图标本体（PowerShell + WinForms NotifyIcon，零依赖）
+  tools/attribution.mjs        额度去向归因（解析 Codex 会话文件按项目聚合 token；增量扫描）
+  tools/backup.mjs             一键备份（打包历史与配置为 zip，自动保留最近 N 份）
+  tools/edit-config.mjs        看板内配置编辑的执行端（白名单校验后写 config.json）
+  tools/open-path.mjs          打开项目文件夹的执行端（存在性 + 根目录白名单校验；--dry 试运行）
+  tools/open-tc.mjs            在该项目启动 ThinCoder 工作台的执行端（同样是白名单校验；--dry 试运行）
+  tools/make-icon.mjs          由 icon.svg 生成多尺寸 icon.ico（桌面快捷方式用）
+  tools/set-task-interval.mjs  按配置同步计划任务触发间隔
+  tools/register-protocol.mjs  注册 aiquotaboard:// 按钮协议
+  tools/register-app-id.mjs    注册通知应用名
+  tools/build-dashboard-data.mjs 看板数据注入生成
+  tools/setup-check.mjs        环境探测（写 data/setup-status.json；只报状态与来源，不打印/不落盘任何密钥值）
+  tools/setup-notify.mjs       首次启用的中文完成提示（供 启用自动采集.vbs 调用；--emit-b64 再生成内嵌载荷）
+  tools/test-rules.mjs         规则引擎测试（回归用例 + 真实历史回放 + 降采样 + 预测/异常 + 配置白名单 + 向导状态契约/中文载荷；--slow 单跑真机不外泄扫描）
+  tools/test-dashboard.mjs     看板桩测试（无头浏览器 + 假目录句柄；启动浏览器属重 IO，不进快速门禁）
 dashboard.html                 本地看板（悬停查看数值、四个时间窗、主题切换、CSV 导出、框选统计、热力图、归因、健康面板）
-托盘图标.vbs                    启动托盘常驻图标（隐藏窗口）
+dashboard-data.js              看板数据（由采集写入，dashboard.html 读它；不入库）
+config.template.json           配置模板（复制为 config.json 后按需修改）
+config.json                    本机实际配置（不入库；看板里点「配置」改最不容易写坏）
 icon.svg / icon.ico            应用标识：标签页图标（内联 SVG）与桌面快捷方式图标
-tools/tray.ps1                 托盘图标本体（PowerShell + WinForms NotifyIcon，零依赖）
-tools/attribution.mjs          额度去向归因（解析 Codex 会话文件按项目聚合 token；增量扫描）
-tools/backup.mjs               一键备份（打包历史与配置为 zip，自动保留最近 N 份）
-tools/edit-config.mjs          看板内配置编辑的执行端（白名单校验后写 config.json）
-tools/open-path.mjs           打开项目文件夹的执行端（存在性 + 根目录白名单校验；--dry 试运行）
-tools/open-tc.mjs             在该项目启动 ThinCoder 工作台的执行端（同样是白名单校验；--dry 试运行）
-tools/install.mjs              一键安装（计划任务 + 图标 + 桌面快捷方式 + 通知应用名 + 按钮协议 + 托盘自启）
-tools/make-icon.mjs            由 icon.svg 生成多尺寸 icon.ico（桌面快捷方式用）
-tools/set-task-interval.mjs    按配置同步计划任务触发间隔
-tools/register-protocol.mjs    注册 aiquotaboard:// 按钮协议
-tools/register-app-id.mjs      注册通知应用名
-tools/build-dashboard-data.mjs 看板数据注入生成
-tools/test-rules.mjs           规则引擎测试（回归用例 + 真实历史回放 + 降采样 + 预测/异常 + 配置白名单 + 向导状态契约/中文载荷；--slow 单跑真机不外泄扫描）
-tools/setup-check.mjs          环境探测（写 data/setup-status.json；只报状态与来源，不打印/不落盘任何密钥值）
-tools/setup-notify.mjs         首次启用的中文完成提示（供 启用自动采集.vbs 调用；--emit-b64 再生成内嵌载荷）
-tools/test-dashboard.mjs       看板桩测试（无头浏览器 + 假目录句柄；启动浏览器属重 IO，不进快速门禁）
-运行采集.vbs                   计划任务隐藏运行器
-启用自动采集.vbs               首次启用（双击、无窗口）：静默跑安装链路，装完弹中文结果提示
-静音2小时.bat / 取消静音.bat    一键静音 / 恢复
-安装定时任务.bat / 卸载定时任务.bat
-CHANGELOG.md                   项目日志（新记录在最上方）
+release/                       发布工具（开发用，见 release/README.md）
 data/                          运行时数据（state.json / history/*.jsonl / series-cache.json /
                                alerts.json / attribution.json / balance-mute.json / mute.json / collect.log）
 backups/                       一键备份产出的 zip（自动轮转保留最近 N 份）
+runtime/                       便携 Node 运行时（发行包内置；用系统 Node 开发时为空）
+CHANGELOG.md                   项目日志（新记录在最上方）
 ```
 
 ## 已知边界
@@ -353,10 +364,10 @@ backups/                       一键备份产出的 zip（自动轮转保留最
 - **跨通道「统一 token 用量」做不到**：ThinCoder 本地不持久化 token 用量（会话与日志里的 `prompt_tokens` 都是工具输出引用的源码片段，`~/.thincoder/` 下也没有统计文件）。因此 Codex 只有 tokens、DeepSeek/GLM 只有金额、ThinCoder 只有回合与消息数——**不硬凑统一数字**。
 - 归因数字是**本地会话文件里的 token 计数**，与官方账单可能有出入（重试、缓存命中等不计入），用于比较项目间的相对占比是可靠的。
 - 托盘常驻会占用一个 PowerShell 进程（约 80MB 内存、CPU 接近 0）；不想要就设 `tray.enabled=false` 并重跑安装。
-- **本项目不使用 `fs.cpSync`**：Node v24.14.0 在中文路径下调用它会原生崩溃（exit `0xC0000409`，无 JS 异常可捕获），批量拷贝一律走逐文件 `copyFileSync`（`tools/backup.mjs` 内有说明）。
-- **四个 `.vbs` 必须保持纯 ASCII**：Windows 脚本宿主按系统 ANSI 代码页读取 `.vbs`（中文 Windows 为 GBK 一类），UTF-8 中文注释可能吞掉行尾换行并破坏解析（已发生过一次，报 `'loop' 没有 'do'`）。文件头已写明原因；`启用自动采集.vbs` 的中文提示经 `tools/setup-notify.mjs`（正常路径）与内嵌 base64 载荷（退化路径）承载，源码本身零非 ASCII 字节。
+- **本项目不使用 `fs.cpSync`**：Node v24.14.0 在中文路径下调用它会原生崩溃（exit `0xC0000409`，无 JS 异常可捕获），批量拷贝一律走逐文件 `copyFileSync`（`程序/tools/backup.mjs` 内有说明）。
+- **所有 `.vbs` / `.bat` 必须保持纯 ASCII**（当前 6 个 `.vbs` + 4 个 `.bat`，已逐字节核对）：Windows 脚本宿主按系统 ANSI 代码页读取 `.vbs`（中文 Windows 为 GBK 一类），UTF-8 中文注释可能吞掉行尾换行并破坏解析（已发生过一次，报 `'loop' 没有 'do'`）。文件头已写明原因；`快捷操作\启用自动采集.vbs` 的中文提示经 `程序/tools/setup-notify.mjs`（正常路径）与内嵌 base64 载荷（退化路径）承载。
 - **`运行协议.vbs` 里"剥离尾随斜杠"那段不能删**：ShellExecute 会把 `aiquotaboard://action?params` 规范化成 `aiquotaboard://action/?params`（在 `?` 前插入斜杠），不剥离就匹配不到任何动作、静默失败——曾导致看板与通知上的**所有**按钮失效。
-- **通知应用名的校验不能用 `reg query` 的输出比对中文**：它按控制台代码页输出，非 UTF-8 代码页下会乱码，造成"明明写对了却报失败"的环境相关假故障；现改为 PowerShell 读注册表 + 码点比对（`tools/register-app-id.mjs` 内有说明）。
+- **通知应用名的校验不能用 `reg query` 的输出比对中文**：它按控制台代码页输出，非 UTF-8 代码页下会乱码，造成"明明写对了却报失败"的环境相关假故障；现改为 PowerShell 读注册表 + 码点比对（`程序/tools/register-app-id.mjs` 内有说明）。
 
 ## 许可
 

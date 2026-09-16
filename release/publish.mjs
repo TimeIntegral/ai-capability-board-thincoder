@@ -423,7 +423,7 @@ function verifyZip(zipPath, expectedNames) {
 }
 
 // ── ④a 便携 Node 运行时（随发布包走，不进 git） ─────────────────────────
-// 项目对用户的承诺是「解压即用」（CHANGELOG、安装定时任务.bat:9、运行采集.vbs:16 都优先用 runtime\node.exe）。
+// 项目对用户的承诺是「解压即用」（CHANGELOG、快捷操作/安装定时任务.bat、快捷操作/立即采集一次.vbs 都优先用 runtime\node.exe）。
 // 它 80MB、被 .gitignore 排除，所以不在 git 清单里、也不做逐行审计 —— 替代品是
 // 「下载时记录的官方 SHA256」：对不上就拒绝，绝不把来路不明的运行时打进发布包。
 function walkDir(dir, base = '') {

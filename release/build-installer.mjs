@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { powershell, psQuote } from '../tools/windows-integration.mjs';
-import { repositories } from '../lib/updates.mjs';
+import { powershell, psQuote } from '../程序/tools/windows-integration.mjs';
+import { repositories } from '../程序/lib/updates.mjs';
 
 const root = path.dirname(import.meta.dirname);
 const version = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim();

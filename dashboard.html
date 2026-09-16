@@ -571,11 +571,9 @@ function showNoData() {
       <details class="nd-fb">
         <summary class="nd-s" style="cursor:pointer;margin:0">我更想自己动手（备选方式）</summary>
         <ol class="nd-l">
-          <li data-fallback><b>双击项目里的「安装定时任务.bat」</b> —— 注册采集任务、桌面快捷方式与托盘图标（之后自动更新）</li>
-          <li data-fallback>或者手动采集一次：<code>node collect.mjs --all</code>，完成后点右上角「<b>刷新</b>」</li>
-          <li data-fallback>老式向导（一问一答）：<a class="btn sm" href="aiquotaboard://setup">打开</a></li>
+          <li data-fallback><b>双击「快捷操作」里的「安装定时任务.bat」</b> —— 注册采集任务、桌面快捷方式与托盘图标（之后自动更新）</li>
+          <li data-fallback>或者手动采集一次：双击「快捷操作」里的「立即采集一次」（等价命令 <code>node 程序\collect.mjs --all</code>），完成后点右上角「<b>刷新</b>」</li>
         </ol>
-        <div class="nd-s">密钥也可以自己填在 <code>secrets.json</code>（不会被提交到 git）。</div>
       </details>`;
     document.querySelector('.wrap')?.prepend(el);
   }
@@ -1526,9 +1524,6 @@ function renderConfigPanel() {
     ${rows}
     <div class="cp-sec">
       <button class="btn sm" data-setup-open>打开配置向导</button>
-      <a class="btn sm" data-fallback href="aiquotaboard://setup">老式向导</a>
-      <a class="btn sm" data-fallback href="aiquotaboard://openfile?name=secrets">编辑密钥文件</a>
-      <a class="btn sm" data-fallback href="aiquotaboard://openfile?name=config">编辑配置文件</a>
       <span class="cp-sub" style="margin:0">提醒阈值在页面底部「工具区」里改。</span>
     </div>`;
 }
@@ -1605,7 +1600,7 @@ function setupErrText(e, id) {
   if (n === 'NotAllowedError' || n === 'SecurityError') return '系统不让程序改这个文件夹（可能它被移动了，或者权限不足）——重新选一次试试';
   if (n === 'NotFoundError') return '这个文件夹找不到了（可能被移动或改过名）——重新选一次';
   const s = String(e?.message ?? e ?? '原因不明');
-  // 原始错误翻成人话（口径同 tools/first-run-check.mjs 的 friendlyError）：用户不该看到状态码这类黑话
+  // 原始错误翻成人话（口径同 程序/tools/first-run-check.mjs 的 friendlyError）：用户不该看到状态码这类黑话
   if (/40[13]|验证不正确|Authentication Fails|令牌已过期/i.test(s)) return id === 'codex' ? 'Codex 的登录可能过期了：打开 Codex 客户端重新登录一次' : '密钥没通过（可能配错了，或者已经失效了）';
   if (/429/.test(s)) return '问得太频繁了，过几分钟再试';
   if (/5\d\d/.test(s)) return '对方服务器暂时没响应，过一会儿再试';
@@ -1617,7 +1612,7 @@ function setupWizardOpen() {
   let panel = $('connectionPanel');
   if (!panel) {
     panel = document.createElement('div'); panel.id = 'connectionPanel'; panel.className = 'overlay';
-    panel.innerHTML = '<div class="modal"><h3>连接平台</h3><p>在本机窗口中选择平台，已有账号自动复用；缺少的密钥只需填写一次。</p><p>Codex 显示订阅额度；DeepSeek 和 GLM 显示 API 余额，不代表聊天订阅或 Coding Plan 额度。</p><p class="muted-note">连接后自动开始采集。若窗口没有出现，请通过安装版的桌面入口打开看板，或双击「连接平台」。</p><div class="actions"><button class="btn primary" id="openConnections">打开连接窗口</button><button class="btn" data-close="connectionPanel">返回看板</button><button class="btn" id="legacyConnections">高级：旧版配置</button></div></div>';
+    panel.innerHTML = '<div class="modal"><h3>连接平台</h3><p>在本机窗口中选择平台，已有账号自动复用；缺少的密钥只需填写一次。</p><p>Codex 显示订阅额度；DeepSeek 和 GLM 显示 API 余额，不代表聊天订阅或 Coding Plan 额度。</p><p class="muted-note">连接后自动开始采集。若窗口没有出现，请通过安装版的桌面入口打开看板，或双击看板文件夹里「快捷操作」中的「连接平台」。</p><div class="actions"><button class="btn primary" id="openConnections">打开连接窗口</button><button class="btn" data-close="connectionPanel">返回看板</button><button class="btn" id="legacyConnections">高级：旧版配置</button></div></div>';
     document.body.appendChild(panel);
     $('openConnections').onclick = () => fireProtocol('aiquotaboard://connect');
     $('legacyConnections').onclick = () => { panel.classList.remove('on'); setupLegacyWizardOpen(); };
@@ -1651,11 +1646,7 @@ function setupFallbackPanel() {
   if (!b) return;
   $('setupStepNote').textContent = '';
   b.innerHTML = `<div id="setupFallback">
-    <div class="msg">这个浏览器不能在页面里替你存设置（用 Edge 或 Chrome 就没这个限制）。还有两条路：</div>
-    <div class="srow"><span class="nm">自己填</span><span class="st">用记事本打开密钥文件，把密钥粘进去 <button class="btn sm" id="setupFallbackNotepad">打开密钥文件</button></span></div>
-    <div class="srow"><span class="nm">老式方式</span><span class="st">一步一步问着来（会打开一个黑色窗口） <button class="btn sm" id="setupFallbackConsole">打开</button></span></div></div>`;
-  $('setupFallbackNotepad').onclick = () => fireProtocol('aiquotaboard://openfile?name=secrets');
-  $('setupFallbackConsole').onclick = () => fireProtocol('aiquotaboard://setup');
+    <div class="msg">这个浏览器不能在页面里替你存设置。请用 <b>Edge</b> 或 <b>Chrome</b> 打开看板再试一次。</div></div>`;
 }
 
 function setupIdb() {
@@ -1714,8 +1705,11 @@ async function setupAfterPick(h) {
   let names = [];
   try { for await (const e of h.values()) names.push(e.name); }
   catch { setupSay('setupMsg0', 'bad', '打不开这个文件夹，可能它被移动或改过名了。请重新选一次。'); return; }
-  const miss = ['collect.mjs', 'dashboard.html'].filter(n => !names.includes(n));
-  if (miss.length) { setupSay('setupMsg0', 'bad', `这里不是看板所在的文件夹（没找到看板文件）。<b>什么都没改</b>，请重新选一次。`); return; }
+  // 目录判据（2026-09-17 安装目录结构整理后）：顶层必须有 dashboard.html，且能找到程序侧标志之一——
+  // 老结构（未整理）：顶层 collect.mjs；新结构：顶层 程序/（内含 collect.mjs）或 快捷操作/。两代结构都认，老装用户升级后不会被拒。
+  const hasPage = names.includes('dashboard.html');
+  const hasApp = names.includes('collect.mjs') || names.includes('程序') || names.includes('快捷操作');
+  if (!hasPage || !hasApp) { setupSay('setupMsg0', 'bad', `这里不是看板所在的文件夹（没找到看板文件）。<b>什么都没改</b>，请重新选一次。`); return; }
   // 二段能力检测：目录句柄没有 createWritable，可写性看它给出的文件句柄
   const fh = await h.getFileHandle('dashboard.html').catch(() => null);
   if (typeof fh?.createWritable !== 'function') { setupFallbackPanel(); return; }
@@ -1769,7 +1763,7 @@ async function setupProbeFlow() {
   const st = await setupProbeCore();
   if (!$('setupProbe')) return;             // 用户已经离开这一步
   if (!st) {
-    $('setupProbe').innerHTML = '<div class="msg warn" data-guide="vbs"><b>只差一步</b>：打开看板文件夹，<b>双击「启用自动采集」</b>（不会弹黑窗口）。<br>双击后会弹个提示告诉你成功没有，完了回这里点「重新检查」。</div>';
+    $('setupProbe').innerHTML = '<div class="msg warn" data-guide="vbs"><b>只差一步</b>：打开看板文件夹 → 进「<b>快捷操作</b>」→ <b>双击「启用自动采集」</b>（不会弹黑窗口）。<br>双击后会弹个提示告诉你成功没有，完了回这里点「重新检查」。</div>';
     setupSay('setupMsg1', '', '');
     setupAct1('timeout');
     return;
@@ -1859,7 +1853,7 @@ function setupRender3() {
   }).join('') || '<div class="msg">这一步不用填什么，直接下一步就行。</div>';
   // 密钥不在本页填（NFR-1 改口径）：统一由 ThinCoder 维护，页面只报「有没有、从哪来」
   const guide = missing.length
-    ? `<div class="msg" data-guide="thincoder">这几家还没有密钥：点「重新检查」确认一下；确实没有的话，装一次 <b>ThinCoder</b>，在里面把 <b>${esc(missing.join('、'))}</b> 配好（只配这一次），回来点「重新检查」。<br>不想装 ThinCoder 也行：关掉向导，用「配置」里的「老式向导」或「编辑密钥文件」。</div>
+    ? `<div class="msg" data-guide="thincoder">这几家还没有密钥：点「重新检查」确认一下；确实没有的话，装一次 <b>ThinCoder</b>，在里面把 <b>${esc(missing.join('、'))}</b> 配好（只配这一次），回来点「重新检查」。</div>
       <div class="actions"><a class="btn primary" id="setupTcLink" href="${THINCODER_SETUP_URL}" target="_blank" rel="noopener noreferrer">打开 ThinCoder 下载页</a><button class="btn" id="setupRecheck3">重新检查</button></div>`
     : '';
   $('setupBody').innerHTML = `<div class="msg">密钥不在这里填——看板直接用你电脑上已经有的（ThinCoder 配置 / 密钥文件 / 环境变量）。下面只告诉你有几家已经能用。</div>
@@ -1968,7 +1962,7 @@ function setupSaveError(e) {
   const rb = e?.setupRollback ?? 'none';
   msg.className = 'msg bad';
   msg.dataset.rollback = rb;
-  msg.innerHTML = `没保存成功${rb === 'failed' ? '，而且原来的内容也没能写回去——这几个文件可能已经读不出来了' : rb === 'ok' ? '（已经试着把原来的内容写回去了）' : '（那个文件本来是新建的）'}：${esc(setupErrText(e))}<br>怎么办：点「重试」再存一次；还不行就把看板换个位置，或者改用「老式方式」（在右上角的设置面板里）。`;
+  msg.innerHTML = `没保存成功${rb === 'failed' ? '，而且原来的内容也没能写回去——这几个文件可能已经读不出来了' : rb === 'ok' ? '（已经试着把原来的内容写回去了）' : '（那个文件本来是新建的）'}：${esc(setupErrText(e))}<br>怎么办：点「重试」再存一次；还不行就把看板换个位置再试。`;
   $('setupAct4').innerHTML = '<button class="btn primary" id="setupRetry4">重试</button>';
   $('setupRetry4').onclick = setupSaveAll;
 }
@@ -2039,12 +2033,13 @@ function setupCollectTimeout() {
 
 function setupRender6() {
   const st = setupStatus, state = !st ? 'unknown' : st.autoRun?.taskRegistered ? 'on' : 'off';
+  const off = state !== 'on';   // 未开启（含手动模式的「还不知道」）：主路径 = 页面上的「现在就开启」按钮，装着文件夹双击只作小字兜底
   $('setupBody').innerHTML = `<div class="msg">让它自己在后台更新，设一次就不用管了。</div>
     <div class="srow" data-plat="autorun"><span class="nm">自动更新</span><span class="st" id="setupAutoState" data-auto="${state}">${state === 'on' ? '已经开着：每隔几分钟它自己拉一次' : state === 'off' ? '还没开' : '还不知道（刚才跳过了检查）'}</span></div>
     <div class="msg" id="setupMsg6"></div>
-    ${state === 'on' ? '' : `<div class="msg" data-guide="vbs">或者打开看板文件夹，<b>双击「启用自动采集」</b>（不会弹黑窗口），完了点「重新检查」。</div>
-    <div class="actions" style="margin-top:10px"><button class="btn" id="setupRecheck6">重新检查</button></div>`}
-    <div class="actions" id="setupAct6">${state === 'on' ? '' : '<button class="btn primary" id="setupInstall">现在就开启</button>'}<button class="btn primary" id="setupNext6">下一步</button></div>`;
+    <div class="actions" id="setupAct6">${off ? '<button class="btn primary" id="setupInstall" style="font-size:14px;padding:8px 20px">现在就开启</button>' : ''}<button class="btn${off ? '' : ' primary'}" id="setupNext6">下一步</button></div>
+    ${off ? `<div class="muted-note" data-guide="vbs" style="margin-top:8px">按钮点不动时（很少见）：打开看板文件夹 → 进「快捷操作」→ 双击「启用自动采集」，完了回这里点「重新检查」。</div>
+    <div class="actions" style="margin-top:8px"><button class="btn sm" id="setupRecheck6">重新检查</button></div>` : ''}`;
   const ins = $('setupInstall');
   if (ins) ins.onclick = setupInstall;
   $('setupNext6').onclick = () => setupGoStep(7);
@@ -2054,8 +2049,8 @@ function setupRender6() {
     const st2 = await setupProbeCore();
     setupStepRender(6);
     setupSay('setupMsg6', st2?.autoRun?.taskRegistered ? 'ok' : 'warn', st2
-      ? (st2.autoRun?.taskRegistered ? '✓ 已经开着：以后它自己更新。' : '还是没开——点「现在就开启」；或者打开文件夹双击那个叫「启用自动采集」的文件。')
-      : '还是没回应：稍等一下再试，或打开文件夹双击那个叫「启用自动采集」的文件。');
+      ? (st2.autoRun?.taskRegistered ? '✓ 已经开着：以后它自己更新。' : '还是没开——点「现在就开启」；不行再打开看板文件夹，进「快捷操作」双击「启用自动采集」。')
+      : '还是没回应：稍等一下再试，或打开看板文件夹，进「快捷操作」双击「启用自动采集」。');
   };
 }
 async function setupInstall() {
@@ -2069,7 +2064,7 @@ async function setupInstall() {
   setupStepRender(6);
   setupSay('setupMsg6', st?.autoRun?.taskRegistered ? 'ok' : 'warn', st?.autoRun?.taskRegistered
     ? '✓ 已经开着：以后它自己更新。'
-    : '还没看到它开起来（可能还在装）。点「重新检查」再看看；还不行就打开文件夹双击那个叫「启用自动采集」的文件。');
+    : '还没看到它开起来（可能还在装）。点「重新检查」再看看；还不行就打开看板文件夹，进「快捷操作」双击「启用自动采集」。');
 }
 
 function setupRender7() {

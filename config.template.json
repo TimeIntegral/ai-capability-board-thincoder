@@ -1,7 +1,7 @@
 {
   "$comment": "复制为 config.json 后可按需修改；未提供的字段用默认值。密钥不存这里——运行时按 $secretsComment 的优先级自动读取。",
   "intervals": {
-    "$comment": "分平台采集间隔（分钟）。改变后运行 node tools/set-task-interval.mjs 同步计划任务（任务按最小间隔触发，各平台按自己的间隔取数）",
+    "$comment": "分平台采集间隔（分钟）。改变后运行 node 程序/tools/set-task-interval.mjs 同步计划任务（任务按最小间隔触发，各平台按自己的间隔取数）",
     "codexMinutes": 1,
     "balanceMinutes": 5
   },

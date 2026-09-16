@@ -38,12 +38,11 @@ Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs c
 Source: "{#StageDir}\runtime\node.exe"; DestDir: "{tmp}"; DestName: "board-maintenance.exe"; Flags: dontcopy
 
 [Icons]
-Name: "{autoprograms}\AI 能力看板"; Filename: "{app}\start.vbs"; IconFilename: "{app}\icon.ico"; Check: NotIsolated
+Name: "{autoprograms}\AI 能力看板"; Filename: "{app}\快捷操作\启动看板.vbs"; IconFilename: "{app}\icon.ico"; Check: NotIsolated
 Name: "{autoprograms}\卸载 AI 能力看板"; Filename: "{uninstallexe}"; Check: NotIsolated
 
 [Run]
-Filename: "{app}\start.vbs"; Description: "打开看板，开始配置"; Flags: postinstall shellexec skipifsilent; Check: NotIsolated
-Filename: "https://github.com/TimeIntegral/ai-capability-board-thincoder/blob/main/docs/community.md"; Description: "了解用户群与反馈方式"; Flags: postinstall shellexec skipifsilent unchecked; Check: NotIsolated
+Filename: "{app}\快捷操作\启动看板.vbs"; Description: "打开看板，开始配置"; Flags: postinstall shellexec skipifsilent; Check: NotIsolated
 
 [Code]
 var
@@ -65,10 +64,18 @@ begin
 end;
 
 function Lifecycle(Action: String): Boolean;
-var Code: Integer;
+var Code: Integer; Exe, Script: String;
 begin
-  Result := Exec(ExpandConstant('{tmp}\board-maintenance.exe'),
-    '"' + ExpandConstant('{app}\tools\upgrade-lifecycle.mjs') + '" ' + Action + ModeArg,
+  Exe := ExpandConstant('{tmp}\board-maintenance.exe');
+  { 2026-09-17 安装目录整理：新结构把程序代码放在程序子目录的 tools 下，
+    旧安装（小于等于 1.2.0）则是 tools 直接在根目录。升级时优先用新路径，
+    旧安装尚未被覆盖时回退旧路径，否则老用户的升级会被直接挡下。
+    注意：Pascal 的反斜杠花括号注释不嵌套，注释文字里不得出现那种符号。 }
+  Script := ExpandConstant('{app}\程序\tools\\upgrade-lifecycle.mjs');
+  if not FileExists(Script) then
+    Script := ExpandConstant('{app}\tools\\upgrade-lifecycle.mjs');
+  Result := Exec(Exe,
+    '"' + Script + '" ' + Action + ModeArg,
     ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
 end;
 
@@ -83,7 +90,8 @@ begin
       if StrToVersion(Trim(String(OldVersion)), OldPacked) and StrToVersion('{#AppVersion}', NewPacked) and (ComparePackedVersion(OldPacked, NewPacked) > 0) then begin
         Result := '已安装较新版本，请使用最新安装包。'; exit;
       end;
-    if not FileExists(ExpandConstant('{app}\tools\upgrade-lifecycle.mjs')) then begin
+    if not FileExists(ExpandConstant('{app}\tools\\upgrade-lifecycle.mjs'))
+       and not FileExists(ExpandConstant('{app}\程序\tools\\upgrade-lifecycle.mjs')) then begin
       Result := '旧便携目录请先备份，安装到新目录后再迁移配置与历史。'; exit;
     end;
     if not Prepared then begin
@@ -99,7 +107,7 @@ begin
   if CurStep = ssPostInstall then begin
     if NotIsolated then begin
       if not Exec(ExpandConstant('{app}\runtime\node.exe'),
-        '"' + ExpandConstant('{app}\tools\install.mjs') + '" --skip-verify',
+        '"' + ExpandConstant('{app}\程序\tools\install.mjs') + '" --skip-verify',
         ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then begin
         IntegrationFailed := True;
         if Prepared then Lifecycle('rollback');
@@ -130,7 +138,7 @@ begin
   Result := True;
   if NotIsolated then
     DeleteUserData := SuppressibleMsgBox('是否同时删除配置、密钥、历史记录及备份？选择“否”可在重装后继续使用这些数据。', mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES;
-  if not Exec(ExpandConstant('{app}\runtime\node.exe'), '"' + ExpandConstant('{app}\tools\uninstall.mjs') + '"' + ModeArg,
+  if not Exec(ExpandConstant('{app}\runtime\node.exe'), '"' + ExpandConstant('{app}\程序\tools\\uninstall.mjs') + '"' + ModeArg,
     ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then begin
     Result := False;
     SuppressibleMsgBox('后台清理未完成，请稍后重试卸载。', mbError, MB_OK, IDOK);
