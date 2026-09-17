@@ -46,9 +46,14 @@ export const 发布层 = [
   ['快捷操作/安装定时任务.bat', '一条命令重装/修复（调 程序/tools/install.mjs）'],
   ['快捷操作/卸载定时任务.bat', '彻底关掉自动采集（保留配置与历史）'],
 
-  // ── 看板前端资源（dashboard.html 与「帮助与反馈」面板读它们）──
+  // ── 前端资源与 README 配图（前者由 dashboard.html 与「帮助与反馈」面板读取）──
   ['assets/product-info.js', '窗口全局 BOARD_PRODUCT：版本与渠道地址'],
   ['assets/support.js', '「帮助与反馈」面板'],
+  // README 里引用的截图（页面不读它们，只有 README.md 引用）：README.md 在包里，图也得在包里，
+  // 否则用户打开说明只能看见三条坏链接
+  ['assets/dashboard-main.png', 'README「它长什么样」：主界面（三家额度同屏与用量趋势）'],
+  ['assets/dashboard-history.png', 'README「它长什么样」：每日热力图（本地长期历史）'],
+  ['assets/dashboard-attribution.png', 'README「它长什么样」：额度去向（按项目聚合的 token 用量）'],
 
   // ── 程序入口（计划任务、快捷操作、协议按钮调的就是这几个）──
   ['程序/collect.mjs', '采集入口：计划任务每次跑的就是它'],
