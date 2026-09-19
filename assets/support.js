@@ -28,6 +28,19 @@
     const b = make('button', label, 'btn');
     b.addEventListener('click', action); return b;
   }
+  // 「去下载」：检测到新版本时开的那扇门——普通外链，浏览器打开该版本的 Release 页面。
+  // 不走 aiquotaboard:// 协议白名单：那条路只给本机动作用，而且页面对结果一无所知；
+  // 做法与看板既有外链（卡片 ↗、「安装 ThinCoder」）一致：<a target="_blank" rel="noopener noreferrer">。
+  // 地址取 manifest.releaseUrl（latest.json 的字段，由 程序/lib/updates.mjs 的 allowedUrl 校验：只允许本项目发布渠道的 https 地址），
+  // 这里不硬编码任何 URL。拿不到有效地址就不给按钮：点了不会发生任何事的按钮不该出现。
+  function downloadLink() {
+    let url;
+    try { url = new URL(state.manifest?.releaseUrl); } catch { return null; }
+    if (url.protocol !== 'https:' || url.username || url.password) return null;
+    const a = make('a', '去下载', 'btn');
+    a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    return a;
+  }
   // 维护者微信号 + 一键复制（这串字母数字手抄容易错）；
   // 复制结果就地在按钮旁反馈：原来写进标题下的状态行，离按钮 8 行远，点了像没反应
   const WECHAT_ID = 'lixiangcheng2017';
@@ -56,13 +69,18 @@
     status.id = 'updateMessage'; status.setAttribute('aria-live', 'polite');
     row.append(status, button('检查更新', () => command('check')));
     modal.append(row);
-    if (state.available && state.manifest) {
+    // 「有新版本」只判断一处：弹窗与横幅要给一模一样的两个动作，两份条件各自演化会变成一边有门一边没有
+    const newer = !!(state.available && state.manifest);
+    if (newer) {
       modal.append(make('h4', `新版本 v${state.manifest.version}`));
       const notes = make('p', state.manifest.notes || '改进与修复', 'muted'); notes.style.whiteSpace = 'pre-wrap'; modal.append(notes);
-      // 检测到新版本时只保留一个动作：跳过该版本（用户 2026-09-17 定：不做自动下载 / 自动安装，要升级的自己下安装包）。
+      // 检测到新版本时给两个动作：去下载（外链，去该版本的 Release 页——2026-09-20 用户定：仍不自动下载、不自动安装，
+      // 但要有地方可去）与 跳过该版本（2026-09-17 用户定：跳过只按版本记，不作废后续版本）。
       // 动作名 skip 三处同名：本文件 → 协议白名单（程序/运行协议.vbs 的固定动作表）→ tools/update.mjs。
       // 三处必须一起改：对不上的表现是「点了没反应」，静默失败最难查。
       const actions = make('div', '', 'actions');
+      const download = downloadLink();
+      if (download) actions.append(download);
       actions.append(button('跳过该版本', () => command('skip')));
       modal.append(actions);
     }
@@ -75,9 +93,14 @@
     }
     modal.append(opts, make('h4', '交流与问题反馈'), wechatBlock());
     banner.replaceChildren();
-    const show = !!state.available && !!state.manifest;
+    const show = newer;
     banner.hidden = !show; banner.style.display = show ? 'flex' : 'none';
-    if (show) banner.append(make('strong', `发现新版本 v${state.manifest.version}`), button('跳过该版本', () => command('skip')));
+    if (show) {
+      banner.append(make('strong', `发现新版本 v${state.manifest.version}`));
+      const download = downloadLink();
+      if (download) banner.append(download);
+      banner.append(button('跳过该版本', () => command('skip')));
+    }
   }
   function poll() {
     clearTimeout(timer);

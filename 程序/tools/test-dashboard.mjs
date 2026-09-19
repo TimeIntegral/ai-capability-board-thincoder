@@ -9,13 +9,26 @@
 //   T43 顶部紧凑摘要条整行删除后的结构完整性（三张平台大卡片仍在；1152/1280/1440/1920 四种宽度 × 卡片并排不溢出不压扁） /
 //   T44 每日热力图完整展示（数据全在网格里 / 格子固定 20px 不拉伸 / 网格铺满卡片 / 双坐标轴不重叠不越界 / 悬停不被剪；1152/1280/1920 三种宽度） /
 //   T45 热力图长历史（约 3 年）：网格横向滚动时月份轴与网格同宽同滚、页面不横向溢出 /
+//   T53 热力图三态分得开：>0 走色阶 / 当天用量 =0 是灰格 / 无数据是空心格（深浅两套主题都验） /
+//   T54 停滞段只有一种标记：图例一条、虚线+灰底共用同一份合并后的区间表（5h/7d 不再各标一套） /
+//   T55 显式不显示 Codex 与 GLM（两家都还在采集）：这一家的内容到处一起收，只剩 DeepSeek /
+//   T56 三家都显示（默认）：卡片与各区块全在、排版照旧 /
+//   T57 显式设置两个方向都生效（关掉采集的强制显示、开着采集的固定不显示；采集照旧）/
+//   T58 payload 里没有 cards 字段（老数据 / 谁都没设置过）→ 默认三家都显示，关掉采集的平台也出占位卡 /
+//   T59 三家都不显示：只服务它们的区块整体收起、不留空壳，页面其余内容照常 /
+//   T60 显示规则（node 侧 cardSettings：只看用户设置，缺键 = 显示；关掉采集的平台照样显示；不碰采集）/
+//   T64 隐藏 GLM（另两家正常）：卡片/趋势图/热力图页签/采集健康/充值记录里的 GLM 全收干净，无空壳
 //   T32 首屏 id 清单（写死期望值，谁改首屏谁显式改它）。
 //   T46 连接入口点下后页面自己换上新数据（模拟连接窗口保存重跑采集；无任何后续用户操作）。
 //   T47 「帮助与反馈」弹窗：三个反馈按钮删除、关闭在右上角 × 、Esc 仍可关、两个开关的默认状态。
 //   T48/T49 「额度去向」两列随本机 ThinCoder 状态一起变：装了 → 无记录行给「创建」、有会话行给「⌨ 启动」（两处都是 opentc 协议）；
 //                没装 → 只给安装引导、启动列整列收起（不承诺起不来的动作）。
 //   T52 同两列，但数据里根本没有 thinCoderInstalled 字段（老数据 / 还没采集过）：按「未知」保守显示，两个入口照常给，不因取不到值就整列消失。
-//   T50/T51 「检查更新」只留跳过：检测到新版本时弹窗与横幅只有「跳过该版本」（点它发 update-skip），已跳过的版本不再提示。
+//   T61 两列「点得开吗」：点得开的行点下去真的发协议（openpath / opentc 的 URL 逐个断言）；白名单拒绝、目录已不在的行
+//                不给按钮、把怎么放行写在表下（2026-09-20 故障：白名单拒绝只写日志，页面上点下去零反馈）；老数据照旧给按钮。
+//   T50/T51/T62/T63 「检查更新」：检测到新版本时弹窗与横幅给两个动作——「去下载」（普通外链，地址取 manifest.releaseUrl，
+//                 不经 aiquotaboard:// 协议）与「跳过该版本」（点它发 update-skip）；已跳过的版本、已是最新版本都不再提示；
+//                 manifest 里拿不到 Release 地址时不给死链（跳过照旧）。
 // 删除的用例见 private/CHANGELOG.dev.md 与本批报告：T2–T17 / T28–T30 / T33–T37 全部驱动已被删除的向导。
 //
 // 机制：把 dashboard.html 复制到 data/__test-dashboard__/run-<id>/，在主页本前注入测试引导脚本
@@ -26,7 +39,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ROOT_DIR } from '../lib/common.mjs';
+import { ROOT_DIR, cardSettings, enabledPlatforms } from '../lib/common.mjs';
 
 const ROOT = ROOT_DIR;                       // 项目根（dashboard.html / dashboard-data.js 在那一层）
 const TMP = path.join(ROOT, 'data', '__test-dashboard__');
@@ -94,6 +107,18 @@ const BOOT = String.raw`
     }
     return el;
   };
+  // Protocol links (<a href="aiquotaboard://...">) do not go through an iframe: the browser hands the href
+  // straight to the OS and the page never learns the outcome. Record what this click is ABOUT to hand over,
+  // so tests can assert "what does clicking this link actually send" (capture phase, no preventDefault:
+  // the default action still happens, we only observe it).
+  document.addEventListener('click', function (e) {
+    var el = e.target;
+    while (el && el.nodeType !== 1) el = el.parentNode;
+    while (el && el.tagName !== 'A') el = el.parentNode;
+    if (!el) return;
+    var href = (el.getAttribute && el.getAttribute('href')) || '';
+    if (href.indexOf('aiquotaboard://') === 0) out.ops.push({ op: 'protocolLink', url: href });
+  }, true);
   function notFound() { var e = new Error('not found'); e.name = 'NotFoundError'; return e; }
   // ---- 假文件系统：flat spec -> node 树；记录读写（页面不该再碰任何文件，保留桩以便断言「零读写」） ----
   function mkdir(name, p) { return { name: name, kind: 'dir', dirs: {}, files: {}, path: p }; }
@@ -357,16 +382,18 @@ function tcLayoutOk(runs) {
   return runs.map(x => [`${x.size} 宽：入口在 ThinCoder 单元格内、表头与数据列不歪、页面不横向溢出`, fit(x) === true, line(x)]);
 }
 
-// ---------- 检查更新：只留跳过（T50 检测到新版本 / T51 已跳过） ----------
+// ---------- 检查更新：两个动作（T50 检测到新版本 / T51 已跳过 / T62 拿不到 Release 地址 / T63 已是最新） ----------
 // 状态就是 tools/update.mjs 写进 update-data.js 的那份（window.BOARD_UPDATE）。
 // 版本号写成常量（不写 currentVersion: 'x.y.z' 这种字面量）：发布闸门会把这类字面量当成「代码里的版本常量」要求与 VERSION 一致（release/publish.mjs）。
 const FIXTURE_REPO = 'https://github.com/example/board';
 const FIXTURE_CURRENT = '1.0.0';
 const FIXTURE_NEWER = '1.3.1';
+// latest.json 的 releaseUrl（构建器写的就是这个形状）：「去下载」必须用它，页面里不硬编码任何地址
+const FIXTURE_RELEASE_URL = `${FIXTURE_REPO}/releases/tag/v${FIXTURE_NEWER}`;
 const updateState = extra => ({
   currentVersion: FIXTURE_CURRENT, channels: {}, automatic: false, notifications: true, updatedAt: Date.now(),
   manifest: { schema: 1, version: FIXTURE_NEWER, size: 4096, sha256: 'a'.repeat(64), urls: [],
-    releaseUrl: `${FIXTURE_REPO}/releases/tag/v${FIXTURE_NEWER}`, notes: '更新说明：本版修了几个问题。' },
+    releaseUrl: FIXTURE_RELEASE_URL, notes: '更新说明：本版修了几个问题。' },
   ...extra,
 });
 const UPDATE_DRIVER = `
@@ -376,13 +403,32 @@ const UPDATE_DRIVER = `
       var m = document.querySelector('#supportOverlay .modal');
       var labels = [].map.call(m.querySelectorAll('button, a'), function (b) { return (b.textContent || '').trim(); });
       var banner = document.getElementById('updateBanner');
+      // 「去下载」必须是 <a>（普通外链，不是发协议的按钮）：连 tagName 一起读回来才能断言「没走协议那条路」
+      function dlOf(host) {
+        var a = host ? [].filter.call(host.querySelectorAll('a'), function (x) { return (x.textContent || '').trim() === '去下载'; })[0] : null;
+        return a ? { tag: a.tagName, href: a.getAttribute('href'), target: a.getAttribute('target'), rel: a.getAttribute('rel') } : null;
+      }
       t.snapshot({
         labels: labels,
+        dl: dlOf(m), bannerDl: dlOf(banner),
         bannerShown: !!banner && banner.offsetHeight > 0,
+        // 横幅「不出现」要分得清是藏起来了还是根本没挂上：元素在 + 高度 0 + 一个子节点都没有
+        bannerEmpty: !!banner && banner.offsetHeight === 0 && banner.childElementCount === 0,
         bannerLabels: banner ? [].map.call(banner.querySelectorAll('button, a'), function (b) { return (b.textContent || '').trim(); }) : [],
         status: (document.getElementById('updateMessage') || {}).textContent || '',
       });
       var n0 = t.ops('iframe').length;
+      // 真的点一下「去下载」：证明点下去页面自己什么也不发（协议 / iframe 计数都不变）。
+      // 只拦下浏览器自己的跳转（无头下会新开一个页面、把这次回读带走），不拦页面行为。
+      var dl = [].filter.call(m.querySelectorAll('a'), function (x) { return (x.textContent || '').trim() === '去下载'; })[0];
+      if (dl) {
+        var stop = function (e) { e.preventDefault(); };
+        dl.addEventListener('click', stop);
+        var links0 = t.ops('protocolLink').length;
+        dl.click(); await t.wait(50);
+        t.snapshot({ dlClick: { iframes: t.ops('iframe').length - n0, protocolLinks: t.ops('protocolLink').length - links0 } });
+        dl.removeEventListener('click', stop);
+      }
       var skip = [].filter.call(m.querySelectorAll('button'), function (b) { return (b.textContent || '').trim() === '跳过该版本'; })[0];
       if (skip) { skip.click(); await t.wait(50); }
       t.snapshot({ urls: t.ops('iframe').map(function (o) { return o.url; }).slice(n0) });
@@ -463,6 +509,244 @@ const HEAT_DRIVER = `
       });
     `;
 
+// ---------- 「当天用量为 0」夹具与回读（T53） ----------
+// 三态同屏：>0（色阶）/ =0（有采集、就是没用）/ 无数据（整天没有采集）
+// 与 heatDaily 分开写：T44 / T45 的期望值建立在那份夹具上，不动它。
+function heatZeroDaily(days) {
+  const daily = {};
+  const today = Date.now() + 8 * 3600e3;
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today); d.setUTCDate(d.getUTCDate() - i);
+    const k = d.toISOString().slice(0, 10);
+    if (i > 0 && i % 7 === 0) continue;                              // 关机/离线：整天没有采集
+    const zero = i > 0 && i % 5 === 0;                               // 采到了，但当天用量就是 0
+    daily[k] = {
+      codex: zero ? { n: 10, max5h: 0, avg5h: 0, max7d: 0 } : { n: 10, max5h: ((i * 7) % 90) + 8, avg5h: 20, max7d: 40 },
+      deepseek: { n: 10, spend: zero ? 0 : (i % 6) * 2.5, first: 0, last: 0 },
+      glm: { n: 10, spend: 0, first: 0, last: 0 },
+    };
+  }
+  return daily;
+}
+const HEAT_ZERO = { ...LIVE_DATA, daily: heatZeroDaily(30) };
+
+// 三个状态的格子各取一个回读：底色 / 描边 / 提示文字（深浅两套主题各跑一遍）
+const HEAT_ZERO_DRIVER = `
+      await t.untilSel('#heat .hcell[data-k]');
+      function rgb(s) { return (String(s).match(/[0-9.]+/g) || []).map(Number); }
+      function state() {
+        var cells = [].slice.call(document.querySelectorAll('#heat .hcell')).filter(function (c) { return c.dataset.k; });
+        var mine = function (c) { return !c.classList.contains('today'); };
+        function val(c) { return parseFloat(String(c.dataset.v).replace(/[^0-9.]/g, '')); }
+        function hasV(c) { return !c.classList.contains('empty'); }
+        function pick(f) {
+          var c = cells.filter(f)[0];
+          if (!c) return null;
+          var cs = getComputedStyle(c);
+          return { k: c.dataset.k, v: c.dataset.v, bg: cs.backgroundColor, rgb: rgb(cs.backgroundColor), shadow: cs.boxShadow, style: c.getAttribute('style') };
+        }
+        var zeroCells = cells.filter(function (c) { return hasV(c) && val(c) === 0 && mine(c); });
+        var someCells = cells.filter(function (c) { return hasV(c) && val(c) > 0 && mine(c); });
+        var foot = document.getElementById('heatFoot'), sw = document.querySelector('#heatFoot i.zero');
+        return {
+          theme: document.documentElement.dataset.theme,
+          zero: pick(function (c) { return hasV(c) && val(c) === 0 && mine(c); }),
+          some: pick(function (c) { return hasV(c) && val(c) > 0 && mine(c); }),
+          none: pick(function (c) { return c.classList.contains('empty') && c.dataset.v.indexOf('采集') >= 0 && mine(c); }),
+          counts: { zero: zeroCells.length, some: someCells.length },
+          someColors: someCells.map(function (c) { return getComputedStyle(c).backgroundColor; }),
+          footZero: sw ? getComputedStyle(sw).backgroundColor : null,
+          footScale: [].map.call(foot.querySelectorAll('.scale i'), function (i) { return getComputedStyle(i).backgroundColor; }),
+        };
+      }
+      async function setTheme(target) {
+        for (var i = 0; i < 4 && document.documentElement.dataset.theme !== target; i++) { t.click('#themeBtn'); await t.wait(50); }
+        return document.documentElement.dataset.theme;
+      }
+      await setTheme('dark');
+      var dark = state();
+      await setTheme('light');
+      var light = state();
+      t.snapshot({
+        dark: dark, light: light,
+        footText: (document.getElementById('heatFoot').textContent || '').trim(),
+      });
+    `;
+
+// ---------- 停滞段夹具与回读（T54） ----------
+// 三段连续采样（5min 一个点）+ 两段空档（远超 gapMs = 15min）= 2 个停滞段；
+// 5h 与 7d 都由这条时间轴生成，所以按系列各存一份区间表的做法会数出 4 段（重复计一遍）。
+const GAP_SEGS = [[13, 0], [7, 180], [5, 270]];
+function gapTimestamps(segs) {
+  const t0 = Date.now() - 7 * 3600e3;
+  const out = [];
+  for (const [n, startMin] of segs) for (let i = 0; i < n; i++) out.push(t0 + (startMin + i * 5) * 60000);
+  return out;
+}
+const STALE_DATA = {
+  ...LIVE_DATA,
+  history: {
+    codex: { h24: gapTimestamps(GAP_SEGS).map((ts, i) => [ts, 30 + ((i * 3) % 20), 40 + (i % 5)]), d7: [], d30: [], all: [] },
+    deepseek: { h24: gapTimestamps(GAP_SEGS).map((ts, i) => [ts, 88 - i * 0.4]), d7: [], d30: [], all: [] },
+    glm: { h24: [], d7: [], d30: [], all: [] },
+  },
+};
+
+// 回读：图例画法 / 页面自己的停滞区间 vs 由各系列采样点重算的「空档并集」/ 灰底像素
+const STALE_MERGE_DRIVER = `
+      // charts 是页面的顶层 const（挂在脚本作用域，不在 window 上）
+      await t.until(function () { return typeof charts !== 'undefined' && charts.get('wrap-codex'); }, 6000, 'Codex 图表');
+      var st = charts.get('wrap-codex');
+      var dpr = window.devicePixelRatio || 1;
+      var legend = document.getElementById('wrap-codex').closest('.card').querySelector('.legend');
+      var items = [].map.call(legend.children, function (s) { return (s.textContent || '').trim(); });
+      var sw = legend.querySelector('i.stale');
+      var swCs = sw ? getComputedStyle(sw) : null;
+      var swAfter = sw ? getComputedStyle(sw, '::after') : null;
+      var gapMs = st.spec.gapMs;
+      function gapsOf(pts) { var g = []; for (var i = 1; i < pts.length; i++) if (pts[i].ts - pts[i - 1].ts > gapMs) g.push([pts[i - 1].ts, pts[i].ts]); return g; }
+      var raw = st.series.reduce(function (a, s) { return a.concat(gapsOf(s.points)); }, []).sort(function (a, b) { return a[0] - b[0]; });
+      var merged = [];
+      raw.forEach(function (g) { var last = merged[merged.length - 1]; if (last && g[0] <= last[1]) { if (g[1] > last[1]) last[1] = g[1]; } else merged.push([g[0], g[1]]); });
+      var ranges = (st.staleRanges || []).map(function (r) { return [r[0], r[1]]; });
+      // 灰底像素：画布是透明的，取到的 alpha 直接反映填充强度（一个空档只画一遍）
+      function px(ch, x, y) { var d = ch.ctx.getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data; return [d[0], d[1], d[2], d[3]]; }
+      var cleanX = (function () { var p = st.series[0].points; for (var i = 1; i < p.length; i++) if (p[i].ts - p[i - 1].ts <= gapMs) return (st.X(p[i - 1].ts) + st.X(p[i].ts)) / 2; return st.P.l + 5; })();
+      var ds = charts.get('wrap-ds');
+      t.snapshot({
+        legendItems: items,
+        staleLegend: items.filter(function (x) { return x.indexOf('停滞段') >= 0; }).length,
+        oldWords: ['5h 灰度', '7 天灰度', '灰底'].filter(function (w) { return legend.textContent.indexOf(w) >= 0; }),
+        swatch: swCs ? { w: Math.round(sw.getBoundingClientRect().width), h: Math.round(sw.getBoundingClientRect().height),
+          bg: swCs.backgroundColor, bgAlpha: (rgb(swCs.backgroundColor)[3] != null ? rgb(swCs.backgroundColor)[3] : 1),
+          dash: swAfter.borderTopStyle, dashColor: swAfter.borderTopColor } : null,
+        ranges: ranges, rawGaps: raw.length,
+        perSeriesGaps: st.series.map(function (s) { return gapsOf(s.points).length; }),
+        matchesUnion: JSON.stringify(ranges) === JSON.stringify(merged),
+        bandPx: ranges.length ? px(st, (st.X(ranges[0][0]) + st.X(ranges[0][1])) / 2, st.P.t + 3) : null,
+        cleanPx: px(st, cleanX, st.P.t + 3),
+        dsBandPx: ds && ds.staleRanges && ds.staleRanges.length ? px(ds, (ds.X(ds.staleRanges[0][0]) + ds.X(ds.staleRanges[0][1])) / 2, ds.P.t + 3) : null,
+        dsSeries: ds ? ds.series.length : 0,
+        vars: ['--stale', '--stale-a', '--stale-b'].map(function (v) { return v + '=' + getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }),
+      });
+      function rgb(s) { return (String(s).match(/[0-9.]+/g) || []).map(Number); }
+    `;
+
+// ---------- 平台显示（T55–T59 / T64）的夹具与回读 ----------
+// 「看不看这一家」由采集端按 config.dashboard.cards 算好的 cards 决定（程序/lib/common.mjs 的 cardSettings：
+// 缺键 = 显示，只有显式 false 才不显示 —— 没有任何自动判断）。页面读 cards[name].show，并把这一家的内容到处一起收。
+// 夹具都带上「本来有内容」的数据（趋势 / 热力 / 归因 / 健康 / 充值记录）：不然「收干净了吗」验不出来。
+const cardsOf = show => Object.fromEntries(['codex', 'deepseek', 'glm'].map(n => [n, { show: !!show[n] }]));
+
+const CARDS_ATTR = {
+  generatedAtMs: 1, scannedFiles: 3, total7: 600, total30: 600, totalAll: 600,
+  projects: [{ project: '示例项目', cwd: '', tokens7: 300, tokens30: 300, tokensAll: 300, turns7: 5, turns30: 5, turnsAll: 5, thinCoderSessions: 0 }],
+  models: [{ model: 'gpt-5-codex', turns: 12, tokens: 1200000, firstMs: Date.now() - 3 * 86400000, lastMs: Date.now(), projectCount: 1, topProjects: [{ project: '示例项目', turns: 12 }] }],
+  usageStyle: { turns: 12, approval: { never: 12 }, sandbox: { 'workspace-write': 12 }, effort: { high: 12 }, avgTokensPerTurn: 100000 },
+  thinCoder: {
+    projects: [{ cwd: '', project: '示例项目', sessions: 2, sessions7: 2, sessions30: 2, turns: 6, turns7: 6, turns30: 6, lastMs: Date.now() }],
+    scannedFiles: 0, sessionDir: '', totalSessions: 2, total7: 2, total30: 2, totalAll: 2,
+  },
+  coverage: { fromMs: Date.now() - 86400000, toMs: Date.now() },
+};
+const CARDS_RICH = {
+  ...LIVE_DATA,
+  attribution: CARDS_ATTR,
+  health24h: { platforms: { codex: { runs: 5, ok: 5, ms: 120 }, deepseek: { runs: 5, ok: 4, ms: 200 }, glm: { runs: 5, ok: 5, ms: 260 } } },
+  health: { lastErrors: { codex: null, deepseek: '示例失败', glm: null } },
+  glm: { ok: true, balance: 88.8, rechargeAmount: 100, totalSpendAmount: 11.2, packs: [{ amount: 10, paidAt: '2026-09-01 10:00', expiryTime: '2026-10-05 00:00:00', daysLeft: 15 }] },
+  daily: heatDaily(25),
+  history: {
+    codex: { h24: [[1767000000000, 10, 20], [1767000600000, 12, 22], [1767001200000, 14, 24]] },
+    deepseek: { h24: [[1767000000000, 55.5], [1767000600000, 54], [1767001200000, 52.5]] },
+    glm: { h24: [[1767000000000, 88.8], [1767000600000, 87], [1767001200000, 86]] },
+  },
+};
+// 显式不显示 Codex 与 GLM（两家都还在采集 —— 这正是「隐藏 ≠ 停采」的样子）：只留 DeepSeek
+const DS_ONLY = { ...CARDS_RICH, cards: cardsOf({ codex: false, deepseek: true, glm: false }) };
+// 显式设置两个方向：codex 关掉了采集但要求显示（占位卡 = 启用入口）、glm 开着采集但要求不显示
+const CARDS_OVERRIDE = {
+  ...CARDS_RICH,
+  platforms: { codex: false, deepseek: true, glm: true },
+  cards: cardsOf({ codex: true, deepseek: true, glm: false }),
+  codex: { ok: false, disabled: true, error: '平台已在 config.json 的 platforms 段关闭（codex）' },
+};
+// 显式不显示 GLM（另两家正常，而 GLM 仍在采集）
+const GLM_HIDDEN = { ...CARDS_RICH, cards: cardsOf({ codex: true, deepseek: true, glm: false }) };
+// 老数据（本次改动之前采集出来的 dashboard-data.js）：没有 cards 字段 = 谁都没设置过 → 三家都显示；
+// 这两家还是「关掉采集」的状态：按新规则照样出卡（那张卡就是启用入口）
+const LEGACY_NO_CARDS = {
+  ...CARDS_RICH,
+  platforms: { codex: false, deepseek: true, glm: false },
+  codex: { ok: false, disabled: true, error: '平台已在 config.json 的 platforms 段关闭（codex）' },
+  glm: { ok: false, disabled: true, error: '平台已在 config.json 的 platforms 段关闭（glm）' },
+};
+// 三家都不显示
+const NONE_VISIBLE = { ...CARDS_RICH, cards: cardsOf({}) };
+
+// 回读：卡片本身（张数 / 标题 / 宽与位置 / 按钮）+ 每一块「关于某一家」的区域还在不在 + 页面其余内容
+const CARDS_DRIVER = `
+      await t.untilSel('#cards');
+      function boxOf(id, cls) { var el = document.getElementById(id); return el ? el.closest(cls) : null; }
+      // 「这一块还看得见吗」：整块量高（元素还在，只是父容器收起时高度也是 0）
+      function vis(id, cls) { var b = boxOf(id, cls); return !!b && b.getBoundingClientRect().height > 0; }
+      function textOf(sel) { var el = document.querySelector(sel); return el ? (el.textContent || '').trim() : ''; }
+      function snapCards() {
+        var host = document.getElementById('cards');
+        var grp = host.previousElementSibling;
+        var rect = host.getBoundingClientRect();
+        var list = [].map.call(host.querySelectorAll(':scope > .card'), function (c) {
+          var r = c.getBoundingClientRect();
+          var btn = c.querySelector('[data-setup-open]');
+          return { title: ((c.querySelector('h2') || {}).textContent || '').trim(), w: Math.round(r.width), left: Math.round(r.left), top: Math.round(r.top),
+                   btn: btn ? (btn.textContent || '').trim() : '' };
+        });
+        var firstBalance = boxOf('wrap-ds', '.card');
+        return {
+          theme: document.documentElement.dataset.theme || '', count: list.length, cards: list,
+          few: host.classList.contains('few'), boxW: Math.round(rect.width), boxLeft: Math.round(rect.left),
+          gridShown: getComputedStyle(host).display !== 'none',
+          groupShown: !!(grp && grp.classList.contains('group')) && getComputedStyle(grp).display !== 'none',
+          ovf: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          platforms: JSON.parse(JSON.stringify(D.platforms || {})),
+          views: {
+            cards: vis('cards', '.grid'),
+            chartSec: vis('chartHint', '.sec'), codexChart: vis('wrap-codex', '.card'), dsChart: vis('wrap-ds', '.card'), glmChart: vis('wrap-glm', '.card'),
+            chartGrid: !!firstBalance && firstBalance.parentElement.getBoundingClientRect().height > 0,
+            heatSec: vis('heatNote', '.sec'), heatCard: vis('heatSeg', '.card'),
+            attrSec: vis('attrNote', '.sec'), attrCard: vis('attrBars', '.card'), healthCard: vis('healthList', '.card'),
+            modelCard: vis('modelBars', '.card'), tcCard: vis('tcBars', '.card'),
+            packsPanel: vis('packs-table', '.panel'), alertsPanel: vis('alerts-table', '.panel'),
+          },
+          heatTabs: [].slice.call(document.querySelectorAll('#heatSeg button')).map(function (b) {
+            return { k: b.dataset.heat, on: getComputedStyle(b).display !== 'none', active: b.classList.contains('on') };
+          }),
+          heatMetric: [].filter.call(document.querySelectorAll('#heatSeg button'), function (b) { return b.classList.contains('on'); }).map(function (b) { return b.dataset.heat; }).join(','),
+          healthRows: [].slice.call(document.querySelectorAll('#healthList .health-row')).map(function (row) { return (row.textContent || '').trim(); }),
+          healthHint: textOf('#healthHint'),
+          sections: [].slice.call(document.querySelectorAll('.sec')).map(function (s) { return { t: (s.textContent || '').trim(), on: s.getBoundingClientRect().height > 0 }; }),
+          groups: [].slice.call(document.querySelectorAll('.group')).map(function (g) { return { t: (g.textContent || '').trim(), on: g.getBoundingClientRect().height > 0 }; }),
+        };
+      }
+      async function setTheme(target) {
+        for (var i = 0; i < 4 && document.documentElement.dataset.theme !== target; i++) { t.click('#themeBtn'); await t.wait(50); }
+        return document.documentElement.dataset.theme;
+      }
+      await setTheme('dark'); var dark = snapCards();
+      await setTheme('light'); var light = snapCards();
+      t.snapshot({ dark: dark, light: light });
+    `;
+
+// 卡片用例的公共检查（各宽度 × 两主题）：两套主题真的各拍了一次 / 不横向溢出 / 无 JS 错误与重复 id
+function cardRunsOk(runs, r, s0) {
+  return [
+    ['深浅两套主题真的各拍了一次（不是同一张快照冒充）', s0.dark.theme === 'dark' && s0.light.theme === 'light', `${s0.dark.theme} / ${s0.light.theme}`],
+    ...runs.map(x => [`${x.size} 宽：深色主题下不横向溢出`, !!x.snap && x.snap.dark.ovf === 0, x.snap ? String(x.snap.dark.ovf) : '无结果']),
+    ...runs.map(x => [`${x.size} 宽：浅色主题下不横向溢出`, !!x.snap && x.snap.light.ovf === 0, x.snap ? String(x.snap.light.ovf) : '无结果']),
+    ['各宽度都无 JS 错误 / 无重复 id', runs.every(x => x.errors.length === 0 && x.dupIds.length === 0) && r.res.errors.length === 0, JSON.stringify(runs.map(x => x.errors))],
+  ];
+}
+
 function pageCfg(c) {
   const cfg = { ...(c.page || {}) };
   delete cfg.dataJs;
@@ -470,6 +754,76 @@ function pageCfg(c) {
   if (dj && !(cfg.files || []).some(f => f[0] === 'dashboard-data.js')) cfg.files = [...(cfg.files || []), ['dashboard-data.js', dj]];
   return cfg;
 }
+
+// ---------- T61：「额度去向 / ThinCoder 项目」两列的「点得开吗」 ----------
+// 2026-09-20 的真实故障：日常版的 config.json 里没有 projectsRoots，白名单默认只放行看板自身目录，
+// 于是每一行的「📁 打开 / ⌨ 启动」点下去都被脚本拒绝——拒绝只写 data/protocol.log，页面上零反馈，
+// 用户看到的就是「点了没反应」。修法：判据只留一处实现（程序/lib/common.mjs 的 openState），
+// 采集端把每行的结果算进 act 字段（build-dashboard-data.mjs），页面照它决定给不给按钮。
+// act 有值 = 采集端算过；没有这个字段 = 老数据（本次改动之前采集的）→ 页面照旧给按钮，不因取不到值就把入口变没。
+const ATTR_OK = ['D:', 'proj', 'openable'].join('\\');
+const ATTR_BLOCKED = ['D:', 'elsewhere', 'locked'].join('\\');
+const ATTR_GONE = ['D:', 'proj', 'gone'].join('\\');
+const ATTR_OLD = ['D:', 'proj', 'old-data'].join('\\');
+const ATTR_OPEN_URL = 'aiquotaboard://openpath?path=' + encodeURIComponent(ATTR_OK);
+const ATTR_TC_URL = 'aiquotaboard://opentc?path=' + encodeURIComponent(ATTR_OK);
+const attrRow = (project, cwd, act) => ({
+  project, cwd, tokens7: 100, tokens30: 100, tokensAll: 100, turns7: 2, turns30: 2, turnsAll: 2,
+  thinCoderSessions: 2, thinCoderLastMs: 1700000000000, ...(act ? { act } : {}),
+});
+const attrData = () => ({
+  ...LIVE_DATA,
+  thinCoderInstalled: true,
+  attribution: {
+    generatedAtMs: 1, scannedFiles: 4, total7: 400, total30: 400, totalAll: 400,
+    projects: [
+      attrRow('点得开的项目', ATTR_OK, 'ok'),
+      attrRow('被白名单挡住的项', ATTR_BLOCKED, 'denied'),
+      attrRow('目录已不在的项目', ATTR_GONE, 'missing'),
+      attrRow('老数据项目', ATTR_OLD, ''),
+    ],
+    models: [], usageStyle: null,
+    thinCoder: {
+      projects: [
+        { cwd: ATTR_OK, project: 'TC 点得开的项目', sessions: 3, sessions7: 3, sessions30: 3, turns: 9, turns7: 9, turns30: 9, lastMs: Date.now(), act: 'ok' },
+        { cwd: ATTR_BLOCKED, project: 'TC 被挡住的项', sessions: 2, sessions7: 2, sessions30: 2, turns: 4, turns7: 4, turns30: 4, lastMs: Date.now(), act: 'denied' },
+      ],
+      scannedFiles: 0, sessionDir: ['C:', 'Users', 'example', '.thincoder', 'sessions'].join('\\'),
+      totalSessions: 5, total7: 5, total30: 5, totalAll: 5,
+    },
+    coverage: { fromMs: Date.now() - 3 * 86400000, toMs: Date.now() },
+  },
+});
+const ATTR_ACT_DRIVER = `
+      await t.untilSel('#attrBars .arow:not(.head)');
+      function rowOf(box, title) {
+        return [].slice.call(document.querySelectorAll(box + ' .arow:not(.head)')).filter(function (r) { return (r.querySelector('.name').textContent || '').trim() === title; })[0];
+      }
+      function actCells(box, title) {
+        var row = rowOf(box, title); if (!row) return null;
+        var acts = row.querySelectorAll('.acts');
+        function cell(c) {
+          var a = c.querySelector('a'), na = c.querySelector('.na');
+          return { text: (c.textContent || '').trim(), isLink: !!a, href: a ? a.getAttribute('href') : '', hint: na ? (na.getAttribute('title') || '') : '' };
+        }
+        return { folder: cell(acts[0]), launch: cell(acts[1]) };
+      }
+      var cells = {
+        ok: actCells('#attrBars', '点得开的项目'), blocked: actCells('#attrBars', '被白名单挡住的项'),
+        gone: actCells('#attrBars', '目录已不在的项目'), old: actCells('#attrBars', '老数据项目'),
+        tcOk: actCells('#tcBars', 'TC 点得开的项目'), tcBlocked: actCells('#tcBars', 'TC 被挡住的项'),
+      };
+      // 真的点两下（📁 打开 / ⌨ 启动）：读回这两步交给系统的协议 URL
+      var links = rowOf('#attrBars', '点得开的项目').querySelectorAll('.acts a');
+      links[0].click(); links[1].click();
+      await t.wait(30);
+      t.snapshot({
+        cells: cells, clicks: t.ops('protocolLink'),
+        attrLinks: t.count('#attrBars .arow:not(.head) a[href^="aiquotaboard://"]'),
+        attrHint: (document.querySelector('#attrHint').textContent || ''),
+        tcHint: (document.querySelector('#tcHint').textContent || ''),
+      });
+    `;
 
 const CASES = [
   {
@@ -909,35 +1263,78 @@ const CASES = [
     },
   },
   {
-    id: 'T50', desc: '检查更新（发现新版本）：弹窗与横幅都只剩「跳过该版本」，点它发 update 协议',
+    id: 'T50', desc: '检查更新（发现新版本）：弹窗与横幅都给「去下载」外链（地址取 manifest.releaseUrl）与「跳过该版本」，跳过发 update 协议',
     assets: true,
     page: { sdp: 'none', dataJs: liveJs(LIVE_DATA), boardUpdate: updateState({ available: true, phase: 'available', message: '发现新版本 v1.3.1' }), driver: UPDATE_DRIVER },
     check: r => {
       const s = r.res.snap;
       return [
-        ['弹窗里的动作恰为 关闭 × / 检查更新 / 跳过该版本 / 复制', s.labels.join('|') === '×|检查更新|跳过该版本|复制', s.labels.join('|')],
-        ['旧的更新动作（立即更新 / 稍后提醒 / 查看更新说明）都不在了', !/立即更新|稍后提醒|查看更新说明/.test(s.labels.join('|')), s.labels.join('|')],
-        ['横幅同样只有一个动作「跳过该版本」', s.bannerShown === true && s.bannerLabels.join('|') === '跳过该版本', JSON.stringify([s.bannerShown, s.bannerLabels])],
-        ['点它发的是更新协议（协议白名单里的 skip = 跳过该版本）', JSON.stringify(s.urls) === '["aiquotaboard://update-skip"]', JSON.stringify(s.urls)],
+         ['弹窗里的动作恰为 关闭 × / 检查更新 / 去下载 / 跳过该版本 / 复制', s.labels.join('|') === '×|检查更新|去下载|跳过该版本|复制', s.labels.join('|')],
+         ['旧的更新动作（立即更新 / 稍后提醒 / 查看更新说明）都不在了', !/立即更新|稍后提醒|查看更新说明/.test(s.labels.join('|')), s.labels.join('|')],
+         ['「去下载」指向 manifest 里的 Release 地址（地址来自 latest.json，页面不硬编码 URL）', !!s.dl && s.dl.href === FIXTURE_RELEASE_URL, JSON.stringify(s.dl)],
+         ['「去下载」是新标签打开的普通外链（<a target=_blank rel=noopener…>，不是发协议的按钮）', !!s.dl && s.dl.tag === 'A' && s.dl.target === '_blank' && /noopener/.test(s.dl.rel || ''), JSON.stringify(s.dl)],
+         ['横幅给一样的两个动作（去下载 / 跳过该版本），去下载同样指向该 Release 地址', s.bannerShown === true && s.bannerLabels.join('|') === '去下载|跳过该版本' && !!s.bannerDl && s.bannerDl.href === FIXTURE_RELEASE_URL && s.bannerDl.target === '_blank', JSON.stringify([s.bannerShown, s.bannerLabels, s.bannerDl])],
+         ['点「跳过该版本」发的是更新协议（协议白名单里的 skip = 跳过该版本），且只这一条协议请求', JSON.stringify(s.urls) === '["aiquotaboard://update-skip"]', JSON.stringify(s.urls)],
+         ['点「去下载」页面自己什么也不发（协议与 iframe 计数都不变，跳转交给浏览器）', !!s.dlClick && s.dlClick.iframes === 0 && s.dlClick.protocolLinks === 0, JSON.stringify(s.dlClick)],
         ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
       ];
     },
   },
   {
-    id: 'T51', desc: '检查更新（该版本已跳过）：横幅不再出现，弹窗说明「已跳过」且没有可点的跳过动作',
+    id: 'T51', desc: '检查更新（该版本已跳过）：横幅不再出现，弹窗说明「已跳过」且没有任何更新动作（包括「去下载」）',
     assets: true,
     page: { sdp: 'none', dataJs: liveJs(LIVE_DATA), boardUpdate: updateState({ available: false, phase: 'skipped', skippedVersion: FIXTURE_NEWER, message: `已跳过 v${FIXTURE_NEWER}；发布更新的版本时会再提示` }), driver: UPDATE_DRIVER },
     check: r => {
       const s = r.res.snap;
       return [
-        ['跳过的版本不再弹横幅', s.bannerShown === false && s.bannerLabels.length === 0, JSON.stringify([s.bannerShown, s.bannerLabels])],
-        ['弹窗里只剩「检查更新」，没有「跳过该版本」', s.labels.join('|') === '×|检查更新|复制', s.labels.join('|')],
+         ['跳过的版本不再弹横幅（元素在、内容为空、不可见）', s.bannerShown === false && s.bannerEmpty === true && s.bannerLabels.length === 0, JSON.stringify([s.bannerShown, s.bannerEmpty, s.bannerLabels])],
+         ['弹窗里只剩「检查更新」，没有「跳过该版本」，也没有「去下载」', s.labels.join('|') === '×|检查更新|复制' && s.dl === null && s.bannerDl === null, JSON.stringify([s.labels, s.dl, s.bannerDl])],
         ['状态行说明是「已跳过 v1.3.1」而不是「已是最新版本」', /已跳过 v1\.3\.1/.test(s.status), s.status],
-        ['没有任何更新动作可点（点不到就不会误发协议）', s.urls.length === 0, JSON.stringify(s.urls)],
-        ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
-      ];
-    },
-  },
+         ['没有任何更新动作可点（点不到就不会误发协议）', s.urls.length === 0, JSON.stringify(s.urls)],
+         ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+       ];
+     },
+   },
+   {
+     id: 'T62', desc: '检查更新（manifest 里拿不到 Release 地址）：不给「去下载」死链，「跳过该版本」照旧',
+     assets: true,
+     // 真的 latest.json 由构建器写 releaseUrl，而且 程序/lib/updates.mjs 的 validateManifest 会把它校一遍；
+     // 这里构造的是「地址确实拿不到」的那一种状态（老版 update-data.js / 手改了文件 / 将来换了字段）：
+     // 按钮上写的事必须真的会发生——不给地址就不给按钮。
+     page: {
+       sdp: 'none', dataJs: liveJs(LIVE_DATA),
+       boardUpdate: updateState({ available: true, phase: 'available', manifest: { ...updateState().manifest, releaseUrl: undefined } }),
+       driver: UPDATE_DRIVER,
+     },
+     check: r => {
+       const s = r.res.snap;
+       return [
+         ['拿不到地址就不给「去下载」（点了不会发生任何事的按钮不出现）', s.dl === null && s.bannerDl === null, JSON.stringify([s.dl, s.bannerDl])],
+         ['弹窗里只剩「跳过该版本」这一条更新动作', s.labels.join('|') === '×|检查更新|跳过该版本|复制', s.labels.join('|')],
+         ['「跳过该版本」不受影响，照旧发协议', JSON.stringify(s.urls) === '["aiquotaboard://update-skip"]', JSON.stringify(s.urls)],
+         ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+       ];
+     },
+   },
+   {
+     id: 'T63', desc: '检查更新（已是最新版本）：没有新版本就没有「去下载」，横幅也不出现',
+     assets: true,
+     // update.mjs 在「已是最新版本」时写的就是这个状态（available=false；缓存里的 manifest 可能还在，版本与当前相同）
+     page: {
+       sdp: 'none', dataJs: liveJs(LIVE_DATA),
+       boardUpdate: updateState({ available: false, phase: 'current', message: `已是最新版本 v${FIXTURE_CURRENT}`, manifest: { ...updateState().manifest, version: FIXTURE_CURRENT } }),
+       driver: UPDATE_DRIVER,
+     },
+     check: r => {
+       const s = r.res.snap;
+       return [
+         ['没有新版本 → 横幅不出现（元素在、内容为空）、「去下载」一个都不出现（没东西可下）', s.bannerShown === false && s.bannerEmpty === true && s.dl === null && s.bannerDl === null, JSON.stringify([s.bannerShown, s.bannerEmpty, s.dl, s.bannerDl])],
+         ['弹窗只剩「检查更新」', s.labels.join('|') === '×|检查更新|复制', s.labels.join('|')],
+         ['状态行是「已是最新版本」', /已是最新版本/.test(s.status), s.status],
+         ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+       ];
+     },
+   },
   {
     id: 'T52', desc: '额度去向（数据里没有 thinCoderInstalled 字段——老数据 / 还没采集过）：按「未知」显示，两个 ThinCoder 入口都照常给',
     windowSize: '1440,900',
@@ -952,6 +1349,195 @@ const CASES = [
         ['探测值缺失时也不弹「安装 ThinCoder」（那是明确没装才说的话）', s0.noTc.text === '创建' && s0.installLinks === 0, `text=${s0.noTc.text} install=${s0.installLinks}`],
         ['两处 opentc 入口照常（有会话行「启动」+ 无记录行「创建」）', s0.opentcLinks === 2, String(s0.opentcLinks)],
         ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+      ];
+    },
+  },
+  {
+    id: 'T61', desc: '点得开吗：点得开的行两下点下去真的发协议（URL 逐个断言）；白名单拒绝 / 目录已不在的行不给按钮、说清怎么放行；老数据照旧给按钮',
+    windowSize: '1440,900',
+    page: { sdp: 'none', dataJs: liveJs(attrData()), driver: ATTR_ACT_DRIVER },
+    check: r => {
+      const s = r.res?.snap;
+      if (!s) return [['结果节点回读', false, '无 snap（页面可能没渲染出额度去向表）']];
+      const c = s.cells;
+      const urls = (s.clicks || []).map(x => x.url);
+      return [
+        ['点得开的行：两列都是按钮（📁 打开 / ⌨ 启动）', c.ok.folder.isLink === true && c.ok.launch.isLink === true, JSON.stringify(c.ok)],
+        ['点「📁 打开」发出的恰是 openpath 协议、路径就是这一行的目录', urls[0] === ATTR_OPEN_URL, urls[0]],
+        ['点「⌨ 启动」发出的恰是 opentc 协议、路径就是这一行的目录', urls[1] === ATTR_TC_URL, urls[1]],
+        ['两下点击一共只发两个动作（没多也没少）', urls.length === 2, JSON.stringify(urls)],
+        ['被白名单挡住的项：两列都不给按钮（不再摆一个点不动的按钮）', c.blocked.folder.isLink === false && c.blocked.launch.isLink === false && c.blocked.folder.text === '—', JSON.stringify(c.blocked)],
+        ['被挡住的项：两列的提示都写清怎么放行（projectsRoots）', /projectsRoots/.test(c.blocked.folder.hint) && /projectsRoots/.test(c.blocked.launch.hint), `${c.blocked.folder.hint} | ${c.blocked.launch.hint}`],
+        ['目录已不在的项目：两列不给按钮，提示说的是目录没了（不是白名单的事）', c.gone.folder.isLink === false && c.gone.launch.isLink === false && /已经不在/.test(c.gone.folder.hint) && !/projectsRoots/.test(c.gone.folder.hint), JSON.stringify(c.gone)],
+        ['老数据（没有 act 字段）：照旧给按钮，不因取不到值就把入口变没', c.old.folder.isLink === true && c.old.launch.isLink === true && c.old.folder.href === 'aiquotaboard://openpath?path=' + encodeURIComponent(ATTR_OLD), JSON.stringify(c.old)],
+        ['整表只剩能点开的两行有 action 按钮（2 行 × 2 列）', s.attrLinks === 4, String(s.attrLinks)],
+        ['表下说清有几个点不开 + 怎么放行', /有 1 个项目的目录不在允许范围内/.test(s.attrHint) && /projectsRoots/.test(s.attrHint), s.attrHint],
+        ['ThinCoder 项目表同一套：点得开的给按钮、被挡的不给，提示同一句', c.tcOk.folder.isLink === true && c.tcOk.launch.isLink === true && c.tcBlocked.folder.isLink === false && c.tcBlocked.launch.isLink === false && /有 1 个项目的目录不在允许范围内/.test(s.tcHint), JSON.stringify([c.tcOk, c.tcBlocked, s.tcHint])],
+        ['无 JS 错误 / 无重复 id', r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
+      ];
+    },
+  },
+  {
+    id: 'T53', desc: '热力图三态分得开：用量 >0 走色阶 / 当天用量 =0 是灰格 / 无数据是空心格（深浅两套主题都验）',
+    windowSize: '1280,900',
+    page: { sdp: 'none', dataJs: liveJs(HEAT_ZERO), driver: HEAT_ZERO_DRIVER },
+    check: r => {
+      const s = r.res.snap;
+      const both = [['深色', s.dark], ['浅色', s.light]];
+      const third = c => Math.max(...c.rgb.slice(0, 3)) - Math.min(...c.rgb.slice(0, 3));
+      const solid = c => c && (c.rgb.length < 4 || c.rgb[3] === 1);
+      const tinted = c => c && c.rgb.length === 4 && c.rgb[3] > 0 && c.rgb[3] < 1 && c.rgb[2] - c.rgb[0] >= 40;   // 色阶 = 半透明的系列色（Codex 是蓝的）
+      const hollow = c => c && c.bg === 'rgba(0, 0, 0, 0)' && c.shadow !== 'none';
+      const desc = c => c ? `${c.k} ${c.v} ${c.bg}` : '(没有这种格子)';
+      return [
+        ['夹具落在同一张屏里：>0 与 =0 两种格子都画出来了（不是只画了其中一种）', s.dark.counts.some > 0 && s.dark.counts.zero > 0, JSON.stringify(s.dark.counts)],
+        ...both.map(([n, x]) => [`${n}主题：当天用量为 0 是实心灰格——既不是色阶色的浅档，也不是空心的无数据格`, solid(x.zero) && x.zero.shadow === 'none' && third(x.zero) <= 26 && x.zero.rgb[2] - x.zero.rgb[0] <= 30, `${desc(x.zero)} · 灰度 ${third(x.zero)}`]),
+        ...both.map(([n, x]) => [`${n}主题：用量 >0 仍是色阶色（半透明系列色），与灰格不同族`, tinted(x.some), desc(x.some)]),
+        ...both.map(([n, x]) => [`${n}主题：无数据仍是空心格（透明 + 描边），与灰格一眼分得开`, hollow(x.none), desc(x.none)]),
+        ...both.map(([n, x]) => [`${n}主题：0 用量格的提示是数值 0，不是「无采集（关机/离线）」`, x.zero.v === '0%' && !/采集/.test(x.zero.v), `${x.zero.k} → ${x.zero.v}`]),
+        ['图例里的灰格样本与格子同色（两套主题各自对一次，且不是同一个色）', s.dark.footZero === s.dark.zero.bg && s.light.footZero === s.light.zero.bg && s.dark.footZero !== s.light.footZero, `${s.dark.footZero} / ${s.light.footZero}`],
+        ['色阶样本只列真实出现的档位（0 不在色阶里，不拿“最浅一档”冒充 0）', s.dark.footScale.length > 0 && s.dark.footScale.every(c => s.dark.someColors.includes(c)) && s.dark.footScale.indexOf(s.dark.footZero) < 0, `色阶 ${s.dark.footScale.join(' , ')}`],
+        ['灰格的说法只在图例里出现一次（不另加解释性文字）', s.footText.split('灰格').length - 1 === 1, s.footText],
+        ['无 JS 错误 / 无重复 id', r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
+      ];
+    },
+  },
+  {
+    id: 'T54', desc: '停滞段只有一种：图例一条、虚线与灰底共用同一份合并后的区间表（5h/7d 不再各标一套）',
+    windowSize: '1280,900',
+    page: { sdp: 'none', dataJs: liveJs(STALE_DATA), driver: STALE_MERGE_DRIVER },
+    check: r => {
+      const s = r.res.snap;
+      const gaps = s.perSeriesGaps.reduce((a, b) => a + b, 0);
+      return [
+        ['图例只剩一条停滞段（不再 5h 一套 / 7 天一套 / 灰底再一条）', s.staleLegend === 1 && s.oldWords.length === 0, `停滞段条目 ${s.staleLegend} · 残留旧说法 ${JSON.stringify(s.oldWords)}`],
+        ['这一条画的就是停滞段本身：灰底 + 虚线同时出现', s.swatch && s.swatch.bgAlpha > 0 && s.swatch.dash === 'dashed' && s.swatch.w >= 18 && s.swatch.h >= 8, JSON.stringify(s.swatch)],
+        ['停滞段只有一种：页面给的区间表 = 各系列空档的并集（合并去重，不按系列重复计）', s.matchesUnion === true && s.ranges.length === 2 && s.rawGaps === gaps && s.rawGaps > s.ranges.length, `页面 ${s.ranges.length} 段 / 原始空档 ${s.rawGaps}（每系列 ${JSON.stringify(s.perSeriesGaps)}）`],
+        ['灰底确实铺在停滞段上：段内有不透明的一层底色，段外什么都没有', s.bandPx && s.bandPx[3] >= 20 && s.bandPx[3] <= 60 && s.cleanPx[3] === 0, `段内 ${JSON.stringify(s.bandPx)} / 段外 ${JSON.stringify(s.cleanPx)}`],
+        ['停滞段只有一个灰度：按系列分的那两个（--stale-a / --stale-b）已经不存在', /^--stale=#/.test(s.vars[0]) && s.vars[1] === '--stale-a=' && s.vars[2] === '--stale-b=', s.vars.join(' ')],
+        ['单系列的图（DeepSeek）用同一份停滞段强度：不受系列条数影响', s.dsSeries === 1 && s.bandPx && s.dsBandPx && s.dsBandPx[3] === s.bandPx[3], `Codex ${JSON.stringify(s.bandPx)} / DeepSeek ${JSON.stringify(s.dsBandPx)}`],
+        ['无 JS 错误 / 无重复 id', r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
+      ];
+    },
+  },
+  {
+    id: 'T55', desc: '显式不显示 Codex 与 GLM（两家都还在采集）：这一家的内容到处一起收，只剩 DeepSeek',
+    // 宽度是硬约束：卡片少了不能把一张卡拉满整行；深浅两套主题都不破版
+    windowSizes: ['1152,900', '1280,900', '1920,900'],
+    page: { sdp: 'none', dataJs: liveJs(DS_ONLY), driver: CARDS_DRIVER },
+    check: r => {
+      const runs = r.res.__W__ || [];
+      const s0 = runs.length ? runs[0].snap : r.res.snap;
+      const d = s0.dark, v = d.views;
+      const titles = list => list.map(c => c.title).join(' | ');
+      const tabsOn = d.heatTabs.filter(t => t.on);
+      // 不足三张时保持三栏节奏：卡宽约 1/3 行宽（不被拉满）、左边与网格左缘对齐
+      const oneThird = x => x.snap && Math.abs(x.snap.dark.cards[0].w / x.snap.dark.boxW - 1 / 3) < 0.06
+        && x.snap.dark.cards[0].left === x.snap.dark.boxLeft;
+      const line = x => x.snap ? `${x.size} 卡 ${x.snap.dark.count} 张 · 卡宽 ${x.snap.dark.cards.map(c => c.w).join('/')} · 行宽 ${x.snap.dark.boxW} · 横向溢出 ${x.snap.dark.ovf}` : `${x.size} 无结果`;
+      return [
+        ['只剩 DeepSeek 一张卡：Codex 与 GLM 的卡片都不在', d.count === 1 && /DeepSeek/.test(d.cards[0].title) && !/Codex|GLM/.test(titles(d.cards)), titles(d.cards)],
+        ['隐藏 ≠ 停采：两家的采集开关仍是 true（数据照采、提醒照发，只是不显示）', d.platforms.codex === true && d.platforms.glm === true, JSON.stringify(d.platforms)],
+        ['用量趋势：Codex 与 GLM 的图收起，DeepSeek 的图照画（标题还在，不是孤立标题）', v.codexChart === false && v.glmChart === false && v.dsChart === true && v.chartSec === true, JSON.stringify(v)],
+        ['每日热力图：只剩 DeepSeek 一个页签，选中也切到了它', d.heatMetric === 'deepseek' && tabsOn.length === 1 && tabsOn[0].k === 'deepseek', `选中 ${d.heatMetric} · 页签 ${JSON.stringify(d.heatTabs)}`],
+        ['额度去向（Codex 会话归因）整块收起（同一行还有采集健康，区块标题留着）', v.attrCard === false && v.attrSec === true && v.healthCard === true, JSON.stringify({ attrCard: v.attrCard, attrSec: v.attrSec, healthCard: v.healthCard })],
+        ['采集健康里没有 Codex / GLM 的行，错误文案也不提它们', d.healthRows.length === 1 && /DeepSeek/.test(d.healthRows[0]) && !/codex|glm/i.test(d.healthHint), JSON.stringify({ rows: d.healthRows, hint: d.healthHint })],
+        ['「历史与记录」里的 GLM 充值记录整块收起（最近提醒照旧）', v.packsPanel === false && v.alertsPanel === true, JSON.stringify({ packs: v.packsPanel, alerts: v.alertsPanel })],
+        ['页面还有别的有用内容（模型画像 / ThinCoder 项目都在）', v.modelCard === true && v.tcCard === true, JSON.stringify({ model: v.modelCard, tc: v.tcCard })],
+        ['不足三张时保持三栏节奏：卡宽约 1/3 行宽、左边对齐（不把一张卡拉满整行）', runs.every(oneThird), runs.map(line).join(' · ')],
+        ...cardRunsOk(runs, r, s0),
+      ];
+    },
+  },
+  {
+    id: 'T56', desc: '默认（三家都显示）：三张卡片都在、并排一行，各区块照旧',
+    windowSizes: ['1152,900', '1280,900', '1920,900'],
+    page: { sdp: 'none', dataJs: liveJs({ ...CARDS_RICH, cards: cardsOf({ codex: true, deepseek: true, glm: true }) }), driver: CARDS_DRIVER },
+    check: r => {
+      const runs = r.res.__W__ || [];
+      const s0 = runs.length ? runs[0].snap : r.res.snap;
+      const d = s0.dark, v = d.views;
+      const oneRow = g => new Set(g.map(x => x.top)).size === 1;
+      return [
+        ['三张卡片都在且顺序不变（Codex / DeepSeek / GLM）', d.count === 3 && /Codex/.test(d.cards[0].title) && /DeepSeek/.test(d.cards[1].title) && /GLM/.test(d.cards[2].title), JSON.stringify(d.cards.map(c => c.title))],
+        ['三张并排一行、每张都够宽（没被压扁）', runs.every(x => x.snap && oneRow(x.snap.dark.cards) && x.snap.dark.cards.every(c => c.w >= 300)), runs.map(x => x.snap ? `${x.size} ${x.snap.dark.cards.map(c => c.w).join('/')}` : `${x.size} 无结果`).join(' · ')],
+        ['走的还是默认网格（没有触发「不足三张」那条规则）', runs.every(x => x.snap && x.snap.dark.few === false), JSON.stringify(runs.map(x => x.snap && x.snap.dark.few))],
+        ['各区块全在（三张趋势图 / 三个热力图页签 / 额度去向 / 采集健康三行 / GLM 充值记录）', v.codexChart && v.dsChart && v.glmChart && d.heatTabs.filter(t => t.on).length === 3 && v.attrCard && v.healthCard && d.healthRows.length === 3 && v.packsPanel, JSON.stringify({ v, tabs: d.heatTabs, rows: d.healthRows })],
+        ...cardRunsOk(runs, r, s0),
+      ];
+    },
+  },
+  {
+    id: 'T57', desc: '显式设置两个方向都生效：关掉采集的 Codex 强制显示、开着采集的 GLM 固定不显示（采集照旧）',
+    windowSize: '1280,900',
+    page: { sdp: 'none', dataJs: liveJs(CARDS_OVERRIDE), driver: CARDS_DRIVER },
+    check: r => {
+      const s = r.res.snap.dark, v = s.views;
+      const titles = s.cards.map(c => c.title).join(' | ');
+      return [
+        ['强制显示的 Codex 卡片在（没启用采集的平台给占位卡 + 「启用平台」）', s.count === 2 && /Codex/.test(s.cards[0].title) && s.cards[0].btn === '启用平台', JSON.stringify(s.cards.map(c => c.title + '|' + c.btn))],
+        ['固定不显示的 GLM 卡片不在（哪怕它开着采集）', !/GLM/.test(titles), titles],
+        ['隐藏 ≠ 停采：GLM 在数据里仍然是开着采集的', s.platforms.glm === true, JSON.stringify(s.platforms)],
+        ['GLM 的其它内容也一起收（趋势图 / 热力图页签 / 充值记录）', v.glmChart === false && s.heatTabs.filter(t => t.on && t.k === 'glm').length === 0 && v.packsPanel === false && v.dsChart === true, JSON.stringify({ glmChart: v.glmChart, tabs: s.heatTabs, packs: v.packsPanel })],
+        ['Codex 那边的内容照旧在（显式要显示：趋势图与额度去向都回来）', v.codexChart === true && v.attrCard === true, JSON.stringify({ codexChart: v.codexChart, attrCard: v.attrCard })],
+        ['不横向溢出、无 JS 错误 / 无重复 id', s.ovf === 0 && r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
+      ];
+    },
+  },
+  {
+    id: 'T58', desc: '默认（payload 里没有 cards 字段 = 谁都没设置过）：三家都显示，关掉采集的平台也出占位卡',
+    windowSize: '1280,900',
+    page: { sdp: 'none', dataJs: liveJs(LEGACY_NO_CARDS), driver: CARDS_DRIVER },
+    check: r => {
+      const s = r.res.snap.dark, v = s.views;
+      const titles = s.cards.map(c => c.title).join(' | ');
+      const btns = s.cards.map(c => c.btn).filter(Boolean).join(' | ');
+      return [
+        ['三家都出卡，包括关掉采集的 Codex 与 GLM（那张卡就是启用入口）', s.count === 3 && /Codex/.test(titles) && /DeepSeek/.test(titles) && /GLM/.test(titles), `${s.count} 张：${titles}`],
+        ['关掉的两家是「未启用」占位卡 + 「启用平台」按钮（不当成故障）', s.cards[0].btn === '启用平台' && s.cards[2].btn === '启用平台', btns],
+        ['各区块照旧（三张趋势图 / 三个页签 / 额度去向 / 采集健康三行）', v.codexChart === true && v.dsChart === true && v.glmChart === true && s.heatTabs.filter(t => t.on).length === 3 && v.attrCard === true && s.healthRows.length === 3, JSON.stringify({ v, rows: s.healthRows })],
+        ['不横向溢出、无 JS 错误 / 无重复 id', s.ovf === 0 && r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
+      ];
+    },
+  },
+  {
+    id: 'T59', desc: '三家都不显示：只服务它们的区块整体收起、不留空壳，页面其余内容照常',
+    windowSize: '1280,900',
+    page: { sdp: 'none', dataJs: liveJs(NONE_VISIBLE), driver: CARDS_DRIVER },
+    check: r => {
+      const s = r.res.snap.dark, v = s.views;
+      const onSec = s.sections.filter(x => x.on).map(x => x.t.split(' ')[0]);
+      const onGroups = s.groups.filter(x => x.on).map(x => x.t);
+      return [
+        ['一张卡都不画、卡片区与「实时状态」标题一起收', s.count === 0 && s.gridShown === false && s.groupShown === false, `卡 ${s.count} · 网格 ${s.gridShown} · 标题 ${s.groupShown}`],
+        ['用量趋势整块收起（连标题与那一行网格一起，不留空壳）', v.chartSec === false && v.chartGrid === false && v.codexChart === false && v.dsChart === false && v.glmChart === false, JSON.stringify(v)],
+        ['每日热力图整块收起（页签与卡片一起）', v.heatSec === false && v.heatCard === false && s.heatTabs.every(t => !t.on), JSON.stringify({ sec: v.heatSec, card: v.heatCard, tabs: s.heatTabs })],
+        ['额度去向与采集健康整块收起（标题也一起收，不留空网格）', v.attrSec === false && v.attrCard === false && v.healthCard === false, JSON.stringify({ sec: v.attrSec, attr: v.attrCard, health: v.healthCard })],
+        ['GLM 充值记录收起', v.packsPanel === false, String(v.packsPanel)],
+        ['页面剩下的都是不服务某一家的内容：模型画像 / ThinCoder 项目 / 最近提醒都在', v.modelCard === true && v.tcCard === true && v.alertsPanel === true, JSON.stringify({ model: v.modelCard, tc: v.tcCard, alerts: v.alertsPanel })],
+        ['可见的区块标题只剩「AI …」与「ThinCoder …」（没有空壳标题）', onSec.length === 2 && onSec[0].includes('AI') && onSec[1].includes('ThinCoder'), JSON.stringify(onSec)],
+        ['可见的分组标题只剩「历史与记录」（充值凭证与提醒流水的入口还在）', onGroups.length === 1 && onGroups[0].includes('历史与记录'), JSON.stringify(onGroups)],
+        ['不横向溢出、无 JS 错误 / 无重复 id', s.ovf === 0 && r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
+      ];
+    },
+  },
+  {
+    id: 'T64', desc: '隐藏 GLM（另两家正常）：GLM 的卡片 / 趋势图 / 热力图页签 / 采集健康 / 充值记录全不见，且无空壳',
+    windowSize: '1280,900',
+    page: { sdp: 'none', dataJs: liveJs(GLM_HIDDEN), driver: CARDS_DRIVER },
+    check: r => {
+      const s = r.res.snap.dark, v = s.views;
+      const titles = s.cards.map(c => c.title).join(' | ');
+      const tabsOn = s.heatTabs.filter(t => t.on).map(t => t.k);
+      return [
+        ['Codex 与 DeepSeek 两张卡照常，GLM 卡不在', s.count === 2 && /Codex/.test(titles) && /DeepSeek/.test(titles) && !/GLM/.test(titles), titles],
+        ['隐藏 ≠ 停采：GLM 在数据里仍开着采集（platforms.glm = true）', s.platforms.glm === true, JSON.stringify(s.platforms)],
+        ['用量趋势里没有 GLM 的图，另两张照画、标题与网格不空', v.glmChart === false && v.chartGrid === true && v.codexChart === true && v.dsChart === true && v.chartSec === true, JSON.stringify(v)],
+        ['每日热力图只剩两个页签（Codex / DeepSeek），选中的不是被收掉的那个', JSON.stringify(tabsOn) === JSON.stringify(['codex', 'deepseek']) && tabsOn.includes(s.heatMetric), `可见 ${JSON.stringify(tabsOn)} · 选中 ${s.heatMetric}`],
+        ['采集健康里没有 GLM 的行（另两家照常）', s.healthRows.length === 2 && !s.healthRows.some(x => /GLM/.test(x)), JSON.stringify(s.healthRows)],
+        ['额度去向（Codex 归因）还在 —— 收 GLM 不该动别家', v.attrCard === true, String(v.attrCard)],
+        ['GLM 充值记录整块收起', v.packsPanel === false, String(v.packsPanel)],
+        ['整页不横向溢出、无 JS 错误 / 无重复 id', s.ovf === 0 && r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
       ];
     },
   },
@@ -995,6 +1581,34 @@ function runT32(browser) {
   check('T32', '加载期无 JS 错误', b.res.errors.length === 0, JSON.stringify(b.res.errors.slice(0, 3)));
 }
 
+// ---------- T60：显示规则（node 侧 cardSettings，页面读的就是它算出来的结果） ----------
+// 为什么放在这里验：规则读的是配置（config.dashboard.cards，模板 + 用户值合并后的），而页面只认算好的 cards——
+// 所以「哪几家显示」在 node 侧对一次，页面那边（T55–T59 / T64）只验它照着画。
+// 2026-09-20 按用户要求收敛：**不再有任何自动判断**（关掉采集不算、用过没用过也不算），只看用户自己没没写 false。
+function runCardsRule() {
+  const show = cfg => Object.fromEntries(Object.entries(cardSettings(cfg)).map(([k, v]) => [k, v.show]));
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const all = { codex: true, deepseek: true, glm: true };
+
+  check('T60', '什么都没设置（没这一段 / 空对象 / 模板里只有 $comment）→ 三家都显示',
+    eq(show({}), all) && eq(show({ dashboard: {} }), all) && eq(show({ dashboard: { cards: { $comment: '说明' } } }), all),
+    JSON.stringify([show({}), show({ dashboard: { cards: { $comment: '说明' } } })]));
+  check('T60', '显式 false = 不显示，只影响那一家',
+    eq(show({ dashboard: { cards: { glm: false } } }), { codex: true, deepseek: true, glm: false }),
+    JSON.stringify(show({ dashboard: { cards: { glm: false } } })));
+  check('T60', '显式 true = 显示（老版本写下的 true 照样算数）',
+    eq(show({ dashboard: { cards: { codex: true, deepseek: false } } }), { codex: true, deepseek: false, glm: true }),
+    JSON.stringify(show({ dashboard: { cards: { codex: true, deepseek: false } } })));
+  check('T60', '关掉采集的平台照样显示（「关掉就不出卡」这种自动判断已不存在）',
+    eq(show({ platforms: { codex: false, deepseek: false, glm: false } }), all),
+    JSON.stringify(show({ platforms: { codex: false, deepseek: false, glm: false } })));
+  check('T60', '值不是布尔（写成了 null / 字符串）按「没设置」处理：显示',
+    eq(show({ dashboard: { cards: { codex: null, glm: 'no' } } }), all),
+    JSON.stringify(show({ dashboard: { cards: { codex: null, glm: 'no' } } })));
+  check('T60', '显示设置不碰采集：platforms 的生效值不受 dashboard.cards 影响',
+    eq(enabledPlatforms({ platforms: { glm: false }, dashboard: { cards: { glm: true } } }), { codex: true, deepseek: true, glm: false }));
+}
+
 // ---------- 主流程 ----------
 const browser = findBrowser();
 if (!browser) { console.error('未找到 Edge/Chrome，无法运行看板桩测试'); process.exit(1); }
@@ -1015,6 +1629,10 @@ for (const c of CASES) {
 if (!ONLY) {
   console.log(`\n=== T32 首屏无影响（与期望清单对比） ===`);
   runT32(browser);
+}
+if (!ONLY || ONLY === 'T60') {
+  console.log(`\n=== T60 显示规则（node 侧，与无头浏览器无关） ===`);
+  runCardsRule();
 }
 console.log(`\n=== 结果：${pass} 通过 / ${fail} 失败 ===`);
 if (failures.length) { console.log('失败明细：'); for (const f of failures) console.log('  - ' + f); }

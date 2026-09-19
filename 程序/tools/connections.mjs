@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-import { ROOT_DIR, loadConfig } from '../lib/common.mjs';
+import { ROOT_DIR, loadConfig, cardSettings } from '../lib/common.mjs';
 
 const root = ROOT_DIR;                       // 项目根（config.json / secrets.json / data 那一层）
 const CODE = path.join(root, '程序');         // 程序代码目录：tools\ 以及各 .mjs 都在这里
@@ -28,6 +28,12 @@ export function thresholdEditorValues(cfg) {
     if (Number.isFinite(value)) out[key] = value;
   }
   return out;
+}
+// 看板显示卡片的现状值：show = 这一家在看板上显不显示（缺键 = 显示，见 lib/common.mjs 的 cardSettings）。
+// 窗口用它预填「看板显示卡片」那一勾；保存时只把「与默认不同」的那几家写进配置（同一条环境变量通路）。
+// 这里不做任何推断，也就不需要 state —— 配置本身就能算出来（读不到配置时不注入，窗口回退到默认「显示」）。
+export function cardsEditorValues(cfg) {
+  try { return cardSettings(cfg); } catch { return null; }
 }
 // 看板卡片上的「启用平台」经协议发来 aiquotaboard://connect?platform=xxx（契约见 docs/连接与发布隔离.md）。
 // 只认这三个名字；缺参数、空值、其它值一律返回 '' = 完整窗口（老行为）。
@@ -78,6 +84,20 @@ export function saveConnections(directory, input) {
       thresholdPatch[key] = value;
     }
   }
+  // cards（看板显示哪几家）同样允许只给一部分，整段缺省 = 老窗口载荷，一条不写（向后兼容）。
+  // 值：false = 不显示；true = 显示；null = 回到默认（把显式值删掉——默认就是显示）。
+  // 白名单 + 类型校验，拒绝发生在任何写入之前；与 thresholds 同一条纪律。
+  const cards = input?.cards;
+  const cardPatch = {}, cardClear = [];
+  if (cards != null) {
+    if (typeof cards !== 'object' || Array.isArray(cards)) throw new Error('看板显示设置无法读取，请重新打开窗口。');
+    for (const [key, raw] of Object.entries(cards)) {
+      if (!names.includes(key)) throw new Error('不支持的看板显示设置。');
+      if (raw === null) { cardClear.push(key); continue; }
+      if (typeof raw !== 'boolean') throw new Error('看板显示设置无法读取，请重新打开窗口。');
+      cardPatch[key] = raw;
+    }
+  }
   const configFile = path.join(directory, 'config.json');
   const secretsFile = path.join(directory, 'secrets.json');
   // Validate both existing files before any write; blank inputs preserve existing credentials.
@@ -90,6 +110,16 @@ export function saveConnections(directory, input) {
   // 阈值只合并送来的键：窗口没露的（紧急阈值 / 预测 / 异常）与其余字段原样保留。
   // 一个键都没送 = 不新建 thresholds 段，也不把已有值改写成空。
   if (Object.keys(thresholdPatch).length) next.thresholds = { ...config.thresholds, ...thresholdPatch };
+  // 卡片显示只动送来的那几家；dashboard 段其它字段（刷新秒数 / 主题 …）原样保留。
+  // 三家都回到默认（显示）时把 cards 整段删掉——配置里应该是「没有设置」，不是「设置了空」。
+  if (Object.keys(cardPatch).length || cardClear.length) {
+    const merged = { ...(config.dashboard?.cards ?? {}), ...cardPatch };
+    for (const key of cardClear) delete merged[key];
+    const dashboard = { ...(config.dashboard ?? {}) };
+    if (Object.keys(merged).length) dashboard.cards = merged;
+    else delete dashboard.cards;
+    next.dashboard = dashboard;
+  }
   try { atomic(configFile, next); }
   catch (error) {
     if (changed) {
@@ -126,9 +156,16 @@ async function main() {
     // 探测失败也要把窗口开出来（它是本机唯一的配置入口）：状态读不到只影响预填，窗口侧对缺失状态本就容错。
     try { run('tools/setup-check.mjs'); } catch {}
     const env = { ...process.env }; delete env.PSModulePath;
-    // 窗口的阈值预填值：读不到配置就不注入，窗口回退到内置默认值（少一次崩溃面）
-    try { env.BOARD_THRESHOLDS = JSON.stringify(thresholdEditorValues(loadConfig())); }
-    catch { delete env.BOARD_THRESHOLDS; }
+    // 窗口要预填的现状值（阈值 + 卡片显示）：读不到就不注入，窗口自己回退（少一次崩溃面）。
+    // 两条都走环境变量：不进命令行、不进 URL、不落盘。
+    let cfg = null;
+    try { cfg = loadConfig(); } catch { cfg = null; }
+    if (cfg) {
+      try { env.BOARD_THRESHOLDS = JSON.stringify(thresholdEditorValues(cfg)); }
+      catch { delete env.BOARD_THRESHOLDS; }
+      const cards = cardsEditorValues(cfg);
+      if (cards) env.BOARD_CARDS = JSON.stringify(cards); else delete env.BOARD_CARDS;
+    } else { delete env.BOARD_THRESHOLDS; delete env.BOARD_CARDS; }
     const args = ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path.join(CODE, 'tools/connections.ps1'), '-NodeExe', process.execPath];
     if (platform) args.push('-Platform', platform);   // 只配置这一家；不带 = 三家都显示（老行为）
     execFileSync('powershell.exe', args, { env, windowsHide: true, stdio: 'ignore' });

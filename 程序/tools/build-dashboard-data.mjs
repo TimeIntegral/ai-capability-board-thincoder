@@ -2,7 +2,7 @@
 // 数据只含展示字段，绝不含密钥/token
 import fs from 'node:fs';
 import path from 'node:path';
-import { DATA_DIR, DAY_MS, ensureDataDir, fmtLocal, humanDuration, loadMute, loadConfig, loadSuppression, compactSeries, readHistoryRows, thinCoderInstalled } from '../lib/common.mjs';
+import { DATA_DIR, DAY_MS, ensureDataDir, fmtLocal, humanDuration, loadMute, loadConfig, loadSuppression, compactSeries, readHistoryRows, thinCoderInstalled, cardSettings, openState } from '../lib/common.mjs';
 
 export function buildDashboardData() {
   ensureDataDir();
@@ -45,11 +45,14 @@ export function buildDashboardData() {
     },
     health24h: state.health24h ?? null,
     platforms: state.platforms ?? null,                     // 生效的平台开关（config.platforms）
+    // 看板显示哪几家：就是 config.dashboard.cards 里用户自己的设置（缺键 = 显示，见程序/lib/common.mjs 的 cardSettings）。
+    // 改的是**显示**，不碰采集：隐藏的平台照样采集、照样提醒（两件事分开，见那里的注释）。
+    cards: cardSettings(cfg),
     models: { available: state.current?.codex?.data?.modelUsage ?? {} },   // 接口报告的模型可用性
     links: (() => { const l = {}; for (const [k, v] of Object.entries(cfg.links ?? {})) { if (!k.startsWith('$')) l[k] = v; } return l; })(),
     predict: { ...(cfg.predict ?? {}) },
     anomaly: { ...(cfg.anomaly ?? {}) },
-    attribution: safeJson(`${DATA_DIR}\\attribution.json`) ?? null, // 额度去向（每小时维护生成）
+    attribution: annotateAttribution(safeJson(`${DATA_DIR}\\attribution.json`) ?? null, cfg), // 额度去向（每小时维护生成）
     // 本机装没装 ThinCoder（每次采集重算，装完不用等一小时就能看到「创建」）——
     // 只给「额度去向」表的 ThinCoder 列用：没装显示「安装 ThinCoder」，装了显示「创建」
     thinCoderInstalled: thinCoderInstalled(),
@@ -58,6 +61,17 @@ export function buildDashboardData() {
     history: buildHistory(cache), // 趋势数据内联（file:// 下 fetch 不可用）
   };
   return `window.DASHBOARD_DATA = ${JSON.stringify(out, null, 1)};\n`;
+}
+
+// 「额度去向 / ThinCoder 项目」每行的「📁 打开 / ⌨ 启动」点下去到底行不行：用两个协议脚本的同一套判据
+// （lib/common.mjs 的 openState）在这里算好随数据发给页面，页面照它决定给不给按钮——
+// 不会出现「按钮点得动、脚本却把人拒了」而界面上零反馈（2026-09-20 那个「点了没反应」就是这么来的：
+// 白名单拒绝只写 data/protocol.log，页面什么都不知道）。
+// 老数据（本次改动之前生成的 dashboard-data.js）没有 act 字段，页面按「照旧给按钮」处理。
+function annotateAttribution(a, cfg) {
+  if (!a) return null;
+  const mark = rows => (Array.isArray(rows) ? rows.map(p => ({ ...p, act: openState(cfg, p.cwd) })) : rows);
+  return { ...a, projects: mark(a.projects), thinCoder: a.thinCoder ? { ...a.thinCoder, projects: mark(a.thinCoder.projects) } : a.thinCoder };
 }
 
 // 合并三个平台的按日聚合：{ 日期: { codex:{...}, deepseek:{...}, glm:{...} } }

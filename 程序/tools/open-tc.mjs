@@ -2,10 +2,9 @@
 // 用法：node 程序/tools/open-tc.mjs <URI 编码后的目录路径> [--dry]
 // 优先用 Windows Terminal（wt.exe）新开标签/窗口；没有 wt 时回退到 cmd start。
 // 安全：与 open-path.mjs 同样的白名单校验（存在 + 是目录 + 落在允许的根目录内）。
-import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { loadConfig, ROOT_DIR, isAllowedPath, allowedRootsText } from '../lib/common.mjs';
+import { loadConfig, ROOT_DIR, openState, allowedRootsText } from '../lib/common.mjs';
 
 const raw = process.argv[2] ?? '';
 const dry = process.argv.includes('--dry');
@@ -16,14 +15,14 @@ target = target.replace(/^file:\/\/\//, '').replace(/\//g, path.sep);
 const log = msg => console.log(`${new Date().toISOString()} ${msg}`);
 if (!target) { log('未提供路径'); process.exit(1); }
 
-let stat;
-try { stat = fs.statSync(target); } catch { log(`路径不存在：${target}`); process.exit(1); }
-if (!stat.isDirectory()) { log(`不是目录：${target}`); process.exit(1); }
-
-// 白名单与 open-path.mjs 同源（lib/common.mjs 的 isAllowedPath）：项目目录 + projectsRoots + tcRoots。
-// 这三份清单默认都是空的——发布版不能写死任何人的目录结构（旧版曾把作者的个人目录清单硬编码在这里）。
+// 白名单与 open-path.mjs 同源，判据只有一处实现（lib/common.mjs 的 openState）：
+// 项目目录 + projectsRoots + tcRoots。这三份清单默认都是空的——发布版不能写死任何人的目录结构
+// （旧版曾把作者的个人目录清单硬编码在这里）。看板页面读的是同一函数的返回值（每行的 act 字段）。
 const cfg2 = loadConfig();
-if (!isAllowedPath(cfg2, target)) {
+const state = openState(cfg2, target);
+if (state === 'missing') { log(`路径不存在：${target}`); process.exit(1); }
+if (state === 'notdir') { log(`不是目录：${target}`); process.exit(1); }
+if (state === 'denied') {
   log(`拒绝：${target} 不在允许的根目录内（${allowedRootsText(cfg2)}）`);
   log('提示：把你自己的项目总目录填进 config.json 的 projectsRoots；若要允许其他常用目录，填进 tcRoots。');
   process.exit(1);

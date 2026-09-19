@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { saveConnections, parsePlatform, thresholdEditorValues, THRESHOLD_RANGES } from './connections.mjs';
+import { saveConnections, parsePlatform, thresholdEditorValues, cardsEditorValues, THRESHOLD_RANGES } from './connections.mjs';
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'board-connections-'));
   t.after(() => {
@@ -257,4 +257,106 @@ process.stdout.write('连接测试通过');`);
   // 逐键对上模板即证明「窗口内置默认值」与「模板默认值」同源 —— 两边漂移必红。
   assert.deepEqual(got, Object.fromEntries(Object.entries(want).map(([k, v]) => [k, v + 1])));
   assert.ok(fs.statSync(path.join(dir, 'defaults.png')).size > 1000);
+});
+
+// ---- 看板显示（2026-09-20 收敛：不要自动隐藏，只看用户自己的设置）----
+// 两件事分得很清：config.platforms 管采集与提醒，dashboard.cards 只管看板上显不显示这一家；
+// 不显示 = 卡片、趋势图、热力图页签、额度去向、采集健康、GLM 充值记录里的这一家一起收（见 dashboard.html 的 applyVisibility）。
+
+test('显示规则：只看用户设置 —— 缺键 = 显示（关掉采集的平台也照样显示），只有显式 false 才不显示', () => {
+  const show = cfg => Object.fromEntries(Object.entries(cardsEditorValues(cfg)).map(([k, v]) => [k, v.show]));
+  const all = { codex: true, deepseek: true, glm: true };
+
+  assert.deepEqual(show({}), all, '什么都没设置 → 三家都显示');
+  assert.deepEqual(show({ dashboard: {} }), all);
+  assert.deepEqual(show({ dashboard: { cards: { $comment: '说明' } } }), all, '模板原样复制（只有 $comment）→ 照旧显示');
+  assert.deepEqual(show({ dashboard: { cards: { glm: false } } }), { codex: true, deepseek: true, glm: false });
+  assert.deepEqual(show({ dashboard: { cards: { codex: true, deepseek: false } } }), { codex: true, deepseek: false, glm: true }, '显式 true 也算数（老版本写下的）');
+  assert.deepEqual(show({ platforms: { codex: false, deepseek: false, glm: false } }), all, '关掉采集不再影响显示（「关掉就不出卡」的自动判断已删除）');
+  assert.deepEqual(show({ dashboard: { cards: { codex: null, glm: 'no' } } }), all, '值不是布尔 → 按「没设置」处理');
+});
+
+test('cardsEditorValues 拿不到配置也不炸：一律按默认「显示」（不再需要 state）', () => {
+  for (const cfg of [null, undefined, {}]) {
+    assert.deepEqual(Object.fromEntries(Object.entries(cardsEditorValues(cfg)).map(([k, v]) => [k, v.show])), { codex: true, deepseek: true, glm: true });
+  }
+});
+
+test('卡片显示合并进 config.json 的 dashboard.cards，只动送来的那几家', t => {
+  const dir = fixture(t);
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
+    intervals: { codexMinutes: 9 },
+    dashboard: { refreshSeconds: 30, theme: 'dark', cards: { glm: false } },
+  }));
+  saveConnections(dir, { platforms, keys: {}, cards: { codex: true } });
+  const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'config.json')));
+  assert.deepEqual(cfg.dashboard.cards, { glm: false, codex: true });   // 没送的那家原样保留
+  assert.equal(cfg.dashboard.refreshSeconds, 30);                      // dashboard 段其它字段不动
+  assert.equal(cfg.dashboard.theme, 'dark');
+  assert.equal(cfg.intervals.codexMinutes, 9);
+});
+
+test('cards 写 null = 回到默认（删掉显式值），一条不剩就把这一段删掉', t => {
+  const dir = fixture(t);
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ dashboard: { cards: { glm: false, codex: true } } }));
+  saveConnections(dir, { platforms, keys: {}, cards: { glm: null } });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'))).dashboard.cards, { codex: true });
+  saveConnections(dir, { platforms, keys: {}, cards: { codex: null } });
+  assert.equal('cards' in JSON.parse(fs.readFileSync(path.join(dir, 'config.json'))).dashboard, false);
+});
+
+test('载荷没有 cards 段（老窗口）时不动 dashboard', t => {
+  const dir = fixture(t);
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ dashboard: { cards: { glm: false } } }));
+  saveConnections(dir, { platforms, keys: {} });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'))).dashboard.cards, { glm: false });
+});
+
+test('cards 里的非法值在写入之前被拒绝', t => {
+  const dir = fixture(t);
+  const before = JSON.stringify({ platforms: { glm: true }, dashboard: { cards: { glm: false } } });
+  fs.writeFileSync(path.join(dir, 'config.json'), before);
+  fs.writeFileSync(path.join(dir, 'secrets.json'), JSON.stringify({ glm: 'fixture' }));
+  for (const input of [{ cards: { openai: true } }, { cards: { glm: 'yes' } }, { cards: { glm: 1 } }, { cards: [] }]) {
+    assert.throws(() => saveConnections(dir, { ...input, platforms, keys: { glm: 'newfixture' } }), JSON.stringify(input));
+    assert.equal(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'), before);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'secrets.json'))), { glm: 'fixture' });
+  }
+});
+
+test('窗口的「看板显示卡片」：预填注入值；取消勾选的那家写 false，勾着的写 null（回到默认显示）', { skip: process.platform !== 'win32' }, t => {
+  const dir = fixture(t);
+  const tools = path.join(dir, '程序', 'tools');
+  fs.mkdirSync(tools, { recursive: true });
+  fs.copyFileSync(path.join(import.meta.dirname, 'connections.ps1'), path.join(tools, 'connections.ps1'));
+  const dump = path.join(dir, 'payload.json');
+  // 桩：探针那一家（deepseek）被 smoke 夹具拨翻了一次（预填勾着 → 变成不勾），所以它写 false；
+  // 另两家没动（勾着）= 默认显示 → 写 null（把显式值删掉，不把「显示」钉死成一次性设置）。
+  fs.writeFileSync(path.join(tools, 'connections.mjs'), `import fs from 'node:fs';
+let text=''; for await (const part of process.stdin) text+=part;
+fs.writeFileSync(${JSON.stringify(dump)}, text);
+const p=JSON.parse(text), c=p.cards||{};
+const ok=process.argv.length===3 && process.argv[2]==='--save' && Object.keys(c).length===3
+  && c.codex===null && c.deepseek===false && c.glm===null;
+process.stdout.write(ok?'连接测试通过':'看板显示载荷不符');`);
+  // 状态桩：三家都没开采集（平台的勾由 smoke 夹具打开；与卡片显示无关，两者不再联动）
+  fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'data', 'setup-status.json'), JSON.stringify({
+    checkedAtMs: 1, platforms: { codex: false, deepseek: false, glm: false },
+    codex: { found: false }, deepseek: { found: true, source: 'secrets.json' }, glm: { found: true, source: 'secrets.json' },
+    lastCollect: { atMs: 1 },
+  }));
+  // 注入：三家都显示（默认）→ 三个控件都预填勾上；smoke 夹具会把探针那一家拨到不勾
+  const cards = { codex: { show: true }, deepseek: { show: true }, glm: { show: true } };
+  const env = { ...process.env, BOARD_CARDS: JSON.stringify(cards) };
+  delete env.PSModulePath; delete env.BOARD_THRESHOLDS;
+  execFileSync('powershell.exe', ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path.join(tools, 'connections.ps1'), '-NodeExe', process.execPath, '-PreviewPath', path.join(dir, 'cards.png'), '-SmokeTest'], { env, timeout: 25000, windowsHide: true, stdio: 'pipe' });
+  assert.ok(fs.statSync(path.join(dir, 'cards.png')).size > 1000);
+
+  // 端到端：这份载荷喂给真实的 saveConnections —— deepseek 落成「不显示」；
+  // 原有那一条（glm 固定显示）因为拿到的是 null（回到默认）被清掉。
+  const target = fixture(t);
+  fs.writeFileSync(path.join(target, 'config.json'), JSON.stringify({ dashboard: { cards: { glm: false } } }));
+  saveConnections(target, JSON.parse(fs.readFileSync(dump, 'utf8')));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(target, 'config.json'))).dashboard.cards, { deepseek: false });
 });

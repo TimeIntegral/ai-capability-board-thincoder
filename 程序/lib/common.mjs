@@ -65,6 +65,21 @@ export function enabledPlatforms(cfg) {
   return out;
 }
 
+// ---- 看板显示哪几家（config.dashboard.cards）----
+// 与上面那个「平台开关」是两件事：开关管采集与提醒，这里只管**看板上显不显示这一家**。
+// 语义（2026-09-20 按用户要求收敛为「不要自动隐藏」）：**只看用户自己的设置，不做任何推断**——
+//   ① config.dashboard.cards[p] === false → 不显示（连接窗口里那个「看板显示卡片」勾选框写这里）；
+//   ② 缺这一段、缺某个键、值不是布尔（模板里只写了 $comment）→ 显示。
+// 于是「三家都显示」就是默认：连关掉采集的平台也照样显示它那张卡 —— 那张卡正是用户连接/启用它的入口。
+// 被设为不显示的那一家，看板上所有关于它的内容一起收（卡片 / 趋势图 / 热力图页签 / 额度去向 / 采集健康 / GLM 充值记录）。
+// 隐藏 ≠ 停采：数据照采、规则照跑、提醒照发（两件事分得很清）。
+// 看板渲染与连接窗口预填共用这一份语义（页面侧读 payload 里的 cards[name].show，见 build-dashboard-data.mjs）。
+export function cardSettings(cfg) {
+  const out = {};
+  for (const name of PLATFORMS) out[name] = { show: cfg?.dashboard?.cards?.[name] !== false };
+  return out;
+}
+
 // ---- 路径白名单（看板上「打开文件夹 / 启动 ThinCoder」的越界防护）----
 // 发布版的默认值是**空的**：每个人把项目放在哪儿都不同，写死任何路径都对别人是错的，
 // 且会把自己的目录结构泄漏进公开代码。留空 = 只允许本项目自身目录。
@@ -75,6 +90,20 @@ export function isAllowedPath(cfg, target) {
   return [...roots, ...extra]
     .map(p => path.resolve(p).toLowerCase())
     .some(r => resolved === r || resolved.startsWith(r + path.sep));
+}
+
+// 看板上「📁 打开 / ⌨ 启动」点下去到底行不行：路径存在 + 是目录 + 落在允许的根目录内。
+// 判据只在这里实现一次 —— 两个协议脚本（程序/tools/open-path.mjs、open-tc.mjs）用它决定放不放行，
+// 数据构建端（build-dashboard-data.mjs）用同一个函数把每行的结果预先发给页面，
+// 页面才不会摆一个点不动的按钮（2026-09-20：白名单拒绝原先只写 data/protocol.log、界面上零反馈，
+// 用户点「打开」「启动」看起来就是「没反应」）。
+// 返回：'ok' | 'denied'（不在白名单内）| 'missing'（路径不存在）| 'notdir'（不是目录）| 'nopath'（没给路径）
+export function openState(cfg, target) {
+  if (!target) return 'nopath';
+  let stat;
+  try { stat = fs.statSync(target); } catch { return 'missing'; }
+  if (!stat.isDirectory()) return 'notdir';
+  return isAllowedPath(cfg, target) ? 'ok' : 'denied';
 }
 
 export function allowedRootsText(cfg) {

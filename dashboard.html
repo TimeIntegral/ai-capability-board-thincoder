@@ -14,15 +14,18 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
     --bg: #0f1420; --card: #1a2130; --card2: #212a3d; --line: #2c3650; --grid: #232c40;
     --text: #e8ecf4; --muted: #8b96ad; --accent: #4f8cff;
     --ok: #3ecf8e; --warn: #f5a623; --bad: #ff5c5c; --shadow: 0 2px 12px rgba(0,0,0,.35);
-    --stale-a: #9aa5b8; --stale-b: #59637a;   /* 数据停滞（关机/离线）时的曲线灰度：按系列区分 */
-    --stale-band: rgba(139,150,173,.07);
+    /* 停滞段（关机/离线那段时间没采到数）只有一个灰度：虚线、灰底共用一套，图上也只认这一种标记 */
+    --stale: #9aa5b8;
+    --stale-band: rgba(139,150,173,.135);     /* 一段只画一遍底色，取「原先叠两遍」的等效不透明度 */
+    --heat-zero: #40454d;                     /* 热力图：当天有采集但用量为 0 —— 中性灰，不属于色阶 */
   }
   html[data-theme="light"] {
     --bg: #f4f6fb; --card: #ffffff; --card2: #eef2f9; --line: #dbe2ee; --grid: #e7ecf5;
     --text: #1d2433; --muted: #6b7688; --accent: #2f6fe4;
     --ok: #16a06a; --warn: #c47f0a; --bad: #d93b3b; --shadow: 0 2px 12px rgba(20,30,60,.08);
-    --stale-a: #b6bfcd; --stale-b: #8b94a4;
-    --stale-band: rgba(120,130,150,.08);
+    --stale: #8b94a4;
+    --stale-band: rgba(120,130,150,.15);
+    --heat-zero: #ced3dc;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: "Segoe UI", "Microsoft YaHei", sans-serif; padding: 18px 22px 40px; transition: background .2s, color .2s; }
@@ -116,6 +119,7 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   .heat-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 11.5px; color: var(--muted); flex-wrap: wrap; }
   .heat-foot .scale { display: flex; align-items: center; gap: 3px; }
   .heat-foot .scale i { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+  .heat-foot i.zero { width: 14px; height: 14px; border-radius: 4px; display: inline-block; vertical-align: -2px; margin-right: 5px; background: var(--heat-zero); }
 
   /* 平台跳转按钮 */
   a.open { text-decoration: none; color: var(--muted); padding: 1px 7px; line-height: 1.4; }
@@ -239,6 +243,9 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
 
   /* ---------- 卡片 ---------- */
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  /* 平台卡片只剩一张时不把那一张拉满整行：宽 = 三栏时的单栏宽（三分之一，最低 320px），左边对齐；
+     窗口不够宽（<1060px，本来就排不下三栏）时不加这个帽子，让卡片充满。 */
+  @media (min-width: 1060px) { #cards.few > .card:only-child { max-width: max(320px, 33.4%); } }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
   .card h2 { font-size: 14.5px; font-weight: 650; margin-bottom: 3px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
   .card h2 .tag { font-size: 11px; color: var(--muted); font-weight: 400; background: var(--card2); padding: 1px 8px; border-radius: 8px; }
@@ -276,6 +283,9 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   .tip i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 7px; flex-wrap: wrap; }
   .legend i { display: inline-block; width: 11px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+  /* 「停滞段」图例样本：灰底 + 虚线，与图上同一套画法（两个同时出现才是停滞段） */
+  .legend i.stale { width: 22px; height: 12px; border-radius: 3px; background: var(--stale-band); position: relative; }
+  .legend i.stale::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 1.6px dashed var(--stale); }
   .cap { font-size: 12px; color: var(--muted); margin-bottom: 5px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
   .hint { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
 
@@ -340,9 +350,7 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
     <div class="legend">
       <span><i style="background:#4f8cff"></i>5h 剩余</span>
       <span><i style="background:#3ecf8e"></i>7 天剩余</span>
-      <span><i style="background:var(--stale-a)"></i>停滞段（5h 灰度）</span>
-      <span><i style="background:var(--stale-b)"></i>停滞段（7 天灰度）</span>
-      <span>灰底 = 该时段无采集（关机/离线）</span>
+      <span><i class="stale"></i>停滞段（无采集）</span>
     </div>
     <div class="sel-stats" id="stats-codex"></div>
     <div class="sel-hint" id="hint-codex"></div>
@@ -596,6 +604,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) catc
 /* ================= 渲染 ================= */
 function render() {
   renderHeader();
+  applyVisibility();   // 先定「显示 / 不显示」：后面各块按最终可见状态量尺寸（画布宽度、热力图列数）
   renderCards();
   renderCharts();
   renderRangeStats();
@@ -642,79 +651,139 @@ function barRemain(pct, warnAt = 20, badAt = 5) {
   return `<div class="bar"><div class="${cls}" style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>`;
 }
 
+/* 看板显示哪几家：采集端按 config.dashboard.cards 算好的 D.cards[name].show（缺键 = 显示，见 程序/lib/common.mjs 的 cardSettings）。
+   被设为「不显示」的那一家，**页面上所有关于它的内容一起收**（见下面的 applyVisibility）。
+   老数据没有 cards 字段（本次改动之前采集的 dashboard-data.js）→ 按默认处理：显示。 */
+function platHidden(name) { return D.cards?.[name]?.show === false; }
+
+/* 卡片只剩一张时不把那一张拉满整行（宽度见 CSS 的 #cards.few；两张时各占一半，本来就是自然的）。
+   一张都没有（三家都不显示）时连「实时状态」标题一起收起来：不留空网格，也不留一个孤立的标题。 */
+function applyCardLayout(count) {
+  const box = $('cards');
+  const group = box.previousElementSibling;
+  const display = count ? '' : 'none';
+  box.classList.toggle('few', count > 0 && count < 3);
+  box.style.display = display;
+  if (group?.classList.contains('group')) group.style.display = display;
+}
+
+/* 「不显示这一家」生效的地方全部收在这里（一处收口：以后新增区块也只在这里加）。
+   原则：整块收起 —— 不留空容器、孤立标题或错位的分隔线；只服务这三家的区块在三家全不显示时整体消失
+   （页面还有别的有用内容：模型画像、ThinCoder 项目、提醒记录）。
+   隐藏 ≠ 停采：采集、规则与提醒照旧（那是 config.platforms 的事）。 */
+const CHART_HOST = { codex: 'wrap-codex', deepseek: 'wrap-ds', glm: 'wrap-glm' };
+function showEl(el, on) { if (el) el.style.display = on ? '' : 'none'; }
+function cardOf(id) { return $(id)?.closest('.card') ?? null; }
+function secOf(id) { return $(id)?.closest('.sec') ?? null; }   // 区块标题行（这几个 id 就在各自的标题里）
+
+function applyVisibility() {
+  const anyShown = PLATFORMS.some(n => !platHidden(n));
+
+  // 用量趋势：每家的图各收各的；三家都不剩时连标题一起收（不留孤立标题）
+  const chartCards = PLATFORMS.map(n => cardOf(CHART_HOST[n]));
+  PLATFORMS.forEach((n, i) => showEl(chartCards[i], !platHidden(n)));
+  showEl(chartCards[1]?.parentElement ?? null, !platHidden('deepseek') || !platHidden('glm'));   // 两张余额图同一行的网格
+  showEl(secOf('chartHint'), anyShown);
+
+  // 每日热力图：页签按家收；一家都不剩时整块（标题 + 卡片）收起；当前页签被收掉就切到还剩的第一个
+  const tabs = [...document.querySelectorAll('#heatSeg button')];
+  tabs.forEach(b => showEl(b, !platHidden(b.dataset.heat)));
+  const left = tabs.filter(b => !platHidden(b.dataset.heat));
+  showEl(secOf('heatNote'), left.length > 0);
+  showEl(cardOf('heatSeg'), left.length > 0);
+  if (left.length && !left.some(b => b.dataset.heat === heatMetric)) syncHeatMetric(left[0].dataset.heat);
+
+  // 额度去向（Codex 会话归因）与采集健康：各自按家收；两块都不剩时连标题与那一行网格一起收
+  const attrOn = !platHidden('codex'), attrCard = cardOf('attrBars');
+  showEl(attrCard, attrOn);
+  showEl(cardOf('healthList'), anyShown);
+  showEl(secOf('attrNote'), attrOn || anyShown);
+  showEl(attrCard?.parentElement ?? null, attrOn || anyShown);
+
+  // 「历史与记录」里的 GLM 充值记录：整块只有 GLM 的内容
+  showEl($('packs-table')?.closest('.panel') ?? null, !platHidden('glm'));
+}
+
 function renderCards() {
   const cards = $('cards');
   const out = [];
   const sup = D.suppression ?? {};
 
-  if (D.codex?.ok) {
-    const c = D.codex, w5 = c.fiveHour.usedPercent ?? 0, ww = c.weekly.usedPercent ?? 0;
-    const r5 = Math.max(0, 100 - w5), rw = Math.max(0, 100 - ww);
-    const warnAt = 100 - (D.thresholds?.codex5hWarn ?? 80), badAt = 100 - (D.thresholds?.codex5hCritical ?? 95);
-    const idle = D.stats?.codexMax5h7d != null && D.stats.codexMax5h7d < 5;
-    out.push(`<div class="card">
-      <h2>${MARK.codex} Codex <span class="tag">${esc(c.plan ?? '')}</span>
-        ${c.limitReached ? '<span class="pill bad">已限流</span>' : ''}
-        ${c.degraded ? `<span class="pill warn">降级数据 · 快照 ${c.snapshotAgeMinutes ?? '?'} 分钟前</span>` : ''}
-        ${c.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('codex')}</h2>
-      <div class="sub">${esc(c.email ?? '（实时接口不可达，显示本地会话快照）')} · 数据 ${fmtAge(c.ageMinutes)}</div>
-      <div class="row"><span class="k">近 5 小时剩余</span><span><b>${r5}%</b> <span class="muted-note">（已用 ${w5}%）</span></span></div>
-      ${barRemain(r5, warnAt, badAt)}
-      <div class="row"><span class="k">窗口</span><span>${windowStatus(c)}</span></div>
-      <div class="row"><span class="k">近 7 天剩余</span><span><b>${rw}%</b> <span class="muted-note">（已用 ${ww}%）</span></span></div>
-      ${barRemain(rw, 100 - (D.thresholds?.codexWeekWarn ?? 80), 5)}
-      <div class="kv">
-        <span class="k">API Credits</span><span class="v">${c.credits?.hasCredits ? esc(c.credits.balance) : '0（无）'}</span>
-        <span class="k">7 天用量峰值</span><span class="v">${D.stats?.codexMax5h7d != null ? D.stats.codexMax5h7d + '%' : '—'}</span>
-      </div>
-      ${idle ? '<div class="hint">💤 最近 7 天用量很低，已触发过「订阅闲置」提醒（7 天最多一次）</div>' : ''}
-    </div>`);
-  } else if (platState(D.codex) !== 'error') out.push(idleCard('Codex', D.codex, MARK.codex, 'codex'));
-  else out.push(errCard('Codex', D.codex, '连续失败 15 分钟会弹系统提醒；恢复时也会提醒。', MARK.codex));
+  if (!platHidden('codex')) {
+    if (D.codex?.ok) {
+      const c = D.codex, w5 = c.fiveHour.usedPercent ?? 0, ww = c.weekly.usedPercent ?? 0;
+      const r5 = Math.max(0, 100 - w5), rw = Math.max(0, 100 - ww);
+      const warnAt = 100 - (D.thresholds?.codex5hWarn ?? 80), badAt = 100 - (D.thresholds?.codex5hCritical ?? 95);
+      const idle = D.stats?.codexMax5h7d != null && D.stats.codexMax5h7d < 5;
+      out.push(`<div class="card">
+        <h2>${MARK.codex} Codex <span class="tag">${esc(c.plan ?? '')}</span>
+          ${c.limitReached ? '<span class="pill bad">已限流</span>' : ''}
+          ${c.degraded ? `<span class="pill warn">降级数据 · 快照 ${c.snapshotAgeMinutes ?? '?'} 分钟前</span>` : ''}
+          ${c.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('codex')}</h2>
+        <div class="sub">${esc(c.email ?? '（实时接口不可达，显示本地会话快照）')} · 数据 ${fmtAge(c.ageMinutes)}</div>
+        <div class="row"><span class="k">近 5 小时剩余</span><span><b>${r5}%</b> <span class="muted-note">（已用 ${w5}%）</span></span></div>
+        ${barRemain(r5, warnAt, badAt)}
+        <div class="row"><span class="k">窗口</span><span>${windowStatus(c)}</span></div>
+        <div class="row"><span class="k">近 7 天剩余</span><span><b>${rw}%</b> <span class="muted-note">（已用 ${ww}%）</span></span></div>
+        ${barRemain(rw, 100 - (D.thresholds?.codexWeekWarn ?? 80), 5)}
+        <div class="kv">
+          <span class="k">API Credits</span><span class="v">${c.credits?.hasCredits ? esc(c.credits.balance) : '0（无）'}</span>
+          <span class="k">7 天用量峰值</span><span class="v">${D.stats?.codexMax5h7d != null ? D.stats.codexMax5h7d + '%' : '—'}</span>
+        </div>
+        ${idle ? '<div class="hint">💤 最近 7 天用量很低，已触发过「订阅闲置」提醒（7 天最多一次）</div>' : ''}
+      </div>`);
+    } else if (platState(D.codex) !== 'error') out.push(idleCard('Codex', D.codex, MARK.codex, 'codex'));
+    else out.push(errCard('Codex', D.codex, '连续失败 15 分钟会弹系统提醒；恢复时也会提醒。', MARK.codex));
+  }
 
-  if (D.deepseek?.ok) {
-    const d = D.deepseek;
-    const low = D.thresholds?.dsCritical ?? 2, mid = D.thresholds?.dsLow ?? 5;
-    out.push(`<div class="card">
-      <h2>${MARK.deepseek} DeepSeek ${d.isAvailable ? '' : '<span class="pill bad">账户不可用</span>'}
-        ${d.totalBalance < low ? '<span class="pill bad">余额紧急</span>' : d.totalBalance < mid ? '<span class="pill warn">余额偏低</span>' : ''}
-        ${sup.deepseek ? '<span class="pill">提醒已关闭</span>' : ''}
-        ${d.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('deepseek')}</h2>
-      <div class="sub">按量计费余额 · 数据 ${fmtAge(d.ageMinutes)}</div>
-      <div class="big">¥${fmtMoney(d.totalBalance)} <small>可用</small></div>
-      <div class="kv">
-        <span class="k">现金充值</span><span class="v">¥${fmtMoney(d.toppedUpBalance)}</span>
-        <span class="k">赠金</span><span class="v">¥${fmtMoney(d.grantedBalance)}</span>
-        <span class="k">消耗速率（近 3 天）</span><span class="v">${d.burnPerDay != null ? '¥' + d.burnPerDay.toFixed(2) + '/天' : '—'}</span>
-        <span class="k">预计可用</span><span class="v">${d.projectedDays != null ? d.projectedDays + ' 天' : '—'}</span>
-      </div>
-      ${alertControl('deepseek', sup.deepseek)}
-    </div>`);
-  } else if (platState(D.deepseek) !== 'error') out.push(idleCard('DeepSeek', D.deepseek, MARK.deepseek, 'deepseek'));
-  else out.push(errCard('DeepSeek', D.deepseek, null, MARK.deepseek));
+  if (!platHidden('deepseek')) {
+    if (D.deepseek?.ok) {
+      const d = D.deepseek;
+      const low = D.thresholds?.dsCritical ?? 2, mid = D.thresholds?.dsLow ?? 5;
+      out.push(`<div class="card">
+        <h2>${MARK.deepseek} DeepSeek ${d.isAvailable ? '' : '<span class="pill bad">账户不可用</span>'}
+          ${d.totalBalance < low ? '<span class="pill bad">余额紧急</span>' : d.totalBalance < mid ? '<span class="pill warn">余额偏低</span>' : ''}
+          ${sup.deepseek ? '<span class="pill">提醒已关闭</span>' : ''}
+          ${d.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('deepseek')}</h2>
+        <div class="sub">按量计费余额 · 数据 ${fmtAge(d.ageMinutes)}</div>
+        <div class="big">¥${fmtMoney(d.totalBalance)} <small>可用</small></div>
+        <div class="kv">
+          <span class="k">现金充值</span><span class="v">¥${fmtMoney(d.toppedUpBalance)}</span>
+          <span class="k">赠金</span><span class="v">¥${fmtMoney(d.grantedBalance)}</span>
+          <span class="k">消耗速率（近 3 天）</span><span class="v">${d.burnPerDay != null ? '¥' + d.burnPerDay.toFixed(2) + '/天' : '—'}</span>
+          <span class="k">预计可用</span><span class="v">${d.projectedDays != null ? d.projectedDays + ' 天' : '—'}</span>
+        </div>
+        ${alertControl('deepseek', sup.deepseek)}
+      </div>`);
+    } else if (platState(D.deepseek) !== 'error') out.push(idleCard('DeepSeek', D.deepseek, MARK.deepseek, 'deepseek'));
+    else out.push(errCard('DeepSeek', D.deepseek, null, MARK.deepseek));
+  }
 
-  if (D.glm?.ok) {
-    const g = D.glm, bal = Number(g.balance);
-    const low = D.thresholds?.glmCritical ?? 2, mid = D.thresholds?.glmLow ?? 5;
-    out.push(`<div class="card">
-      <h2>${MARK.glm} 智谱 GLM
-        ${g.depleted ? '<span class="pill bad">余额已耗尽</span>' : bal < low ? '<span class="pill bad">余额紧急</span>' : bal < mid ? '<span class="pill warn">余额偏低</span>' : ''}
-        ${sup.glm ? '<span class="pill">提醒已关闭</span>' : ''}
-        ${g.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('glm')}</h2>
-      <div class="sub">bigmodel.cn 开放平台 · 数据 ${fmtAge(g.ageMinutes)}</div>
-      <div class="big">¥${fmtMoney(bal)} <small>可用</small></div>
-      ${g.depleted ? '<div class="hint" style="color:var(--bad)">⛔ 余额为 0，GLM API 调用会失败——需充值后恢复</div>' : ''}
-      <div class="kv">
-        <span class="k">累计充值</span><span class="v">¥${fmtMoney(g.rechargeAmount)}</span>
-        <span class="k">累计消费</span><span class="v">¥${fmtMoney(g.totalSpendAmount)}</span>
-        <span class="k">消耗速率（近 3 天）</span><span class="v">${g.burnPerDay != null ? '¥' + g.burnPerDay.toFixed(2) + '/天' : '—'}</span>
-      </div>
-      ${alertControl('glm', sup.glm)}
-    </div>`);
-  } else if (platState(D.glm) !== 'error') out.push(idleCard('智谱 GLM', D.glm, MARK.glm, 'glm'));
-  else out.push(errCard('智谱 GLM', D.glm, null, MARK.glm));
+  if (!platHidden('glm')) {
+    if (D.glm?.ok) {
+      const g = D.glm, bal = Number(g.balance);
+      const low = D.thresholds?.glmCritical ?? 2, mid = D.thresholds?.glmLow ?? 5;
+      out.push(`<div class="card">
+        <h2>${MARK.glm} 智谱 GLM
+          ${g.depleted ? '<span class="pill bad">余额已耗尽</span>' : bal < low ? '<span class="pill bad">余额紧急</span>' : bal < mid ? '<span class="pill warn">余额偏低</span>' : ''}
+          ${sup.glm ? '<span class="pill">提醒已关闭</span>' : ''}
+          ${g.carried ? '<span class="pill">沿用上次</span>' : ''}${openLinkHtml('glm')}</h2>
+        <div class="sub">bigmodel.cn 开放平台 · 数据 ${fmtAge(g.ageMinutes)}</div>
+        <div class="big">¥${fmtMoney(bal)} <small>可用</small></div>
+        ${g.depleted ? '<div class="hint" style="color:var(--bad)">⛔ 余额为 0，GLM API 调用会失败——需充值后恢复</div>' : ''}
+        <div class="kv">
+          <span class="k">累计充值</span><span class="v">¥${fmtMoney(g.rechargeAmount)}</span>
+          <span class="k">累计消费</span><span class="v">¥${fmtMoney(g.totalSpendAmount)}</span>
+          <span class="k">消耗速率（近 3 天）</span><span class="v">${g.burnPerDay != null ? '¥' + g.burnPerDay.toFixed(2) + '/天' : '—'}</span>
+        </div>
+        ${alertControl('glm', sup.glm)}
+      </div>`);
+    } else if (platState(D.glm) !== 'error') out.push(idleCard('智谱 GLM', D.glm, MARK.glm, 'glm'));
+    else out.push(errCard('智谱 GLM', D.glm, null, MARK.glm));
+  }
 
   cards.innerHTML = out.join('');
+  applyCardLayout(out.length);
 }
 
 // 余额提醒开关：未关闭时（且余额不健康）提供「不再提醒」，已关闭时提供「恢复提醒」
@@ -753,6 +822,17 @@ function idleCard(name, x, mark = '', platform = '') {
 
 /* ================= 图表引擎（含悬停 tooltip） ================= */
 const charts = new Map();
+
+// 区间合并：重叠/相接的区间合成一段（同一段停滞不重复计；5h 与 7d 的缺口多数时候完全一样）
+function mergeRanges(list) {
+  const out = [];
+  for (const [a, b] of [...list].sort((x, y) => x[0] - y[0])) {
+    const last = out.at(-1);
+    if (last && a <= last[1]) { if (b > last[1]) last[1] = b; }
+    else out.push([a, b]);
+  }
+  return out;
+}
 
 function drawChart(hostId, spec) {
   const host = $(hostId);
@@ -866,7 +946,9 @@ function drawChart(hostId, spec) {
     }
   }
 
-  // 数据停滞段：拆成"连续段"（段内采样正常）+ 停滞区间（段与段之间）
+  // 数据停滞段：每条系列先拆成"连续段"（段内采样正常），段与段之间就是停滞区间（关机/离线）。
+  // 5h 与 7d 说的是同一件事，所以合并成一份去重的区间表：灰底与虚线共用它 ——
+  // 图上只有「既有虚线又有灰底」这一种停滞段，不再按系列各标一套。
   const gapMs = spec.gapMs ?? 10 * 60000;
   const runsOf = pts => {
     const runs = [];
@@ -877,22 +959,19 @@ function drawChart(hostId, spec) {
     }
     return runs;
   };
-  const staleRanges = [];
-  const runsPerSeries = series.map(s => {
-    const runs = runsOf(s.points);
-    for (let i = 1; i < runs.length; i++) staleRanges.push([runs[i - 1].at(-1).ts, runs[i][0].ts]);
-    return runs;
-  });
+  const runsPerSeries = series.map(s => runsOf(s.points));
+  const staleRanges = mergeRanges(runsPerSeries.flatMap(runs =>
+    runs.slice(1).map((r, i) => [runs[i].at(-1).ts, r[0].ts])));
 
-  // 停滞区间底色（先画，位于曲线之下）
+  // 停滞段底色（先画，位于曲线之下）：一段只画一遍，不按系列叠画
   ctx.fillStyle = getVar('--stale-band');
   for (const [a, b] of staleRanges) ctx.fillRect(X(a), P.t, Math.max(1, X(b) - X(a)), ph);
 
-  // 停滞连接线（每条系列各自的灰度：5h 浅、7d 深）
+  // 停滞段连接线（每条系列各自断开的位置，但共用一个灰度，与灰底合起来才是停滞段）
   series.forEach((s, si) => {
     const runs = runsPerSeries[si];
     ctx.save();
-    ctx.strokeStyle = si === 0 ? getVar('--stale-a') : getVar('--stale-b');
+    ctx.strokeStyle = getVar('--stale');
     ctx.lineWidth = 1.6;
     ctx.setLineDash([5, 3]);
     for (let i = 1; i < runs.length; i++) {
@@ -1246,6 +1325,23 @@ const ATTR_RGB = ['79,140,255', '62,207,142', '245,166,35', '255,92,92', '167,13
 // 没装 ThinCoder 的机器上，ThinCoder 列指到这里（与设计档第 4 步的 ThinCoder 安装引导同一地址）
 const TC_INSTALL_URL = 'https://thincoder.com/install.html';
 
+/* 「这一行点得开吗」由采集端算好（每行的 act = 程序/lib/common.mjs 的 openState 返回值：存在 + 是目录 + 白名单）。
+   白名单是安全设计（防止外部链接拉起任意目录的窗口），页面不擅自放宽；页面这边的活是**不摆点不动的按钮**：
+   点不开的行不给按钮，理由进 title，怎么放行写进表下的 hint。
+   act 字段缺失 = 老数据（本次改动之前采集的 dashboard-data.js）→ 按「不知道」处理，照旧给按钮。 */
+function pathBlockedText(act) {
+  if (act === 'denied') return '这个目录不在允许的范围内：把项目总目录填进 config.json 的 projectsRoots 就能放行';
+  if (act === 'missing') return '这个目录已经不在了（被移动或删除过）';
+  if (act === 'notdir') return '这个路径不是目录';
+  return '';
+}
+
+// 「有 N 个项目的目录不在允许范围内」：两处表格共用这一句（数字为 0 时不出现）
+function notAllowedHint(rows) {
+  const n = rows.filter(p => p.act === 'denied').length;
+  return n ? `有 ${n} 个项目的目录不在允许范围内（📁 打开 / ⌨ 启动 点不开）：把它们的总目录填进 config.json 的 projectsRoots 即可放行。` : '';
+}
+
 function renderAttr() {
   const a = D.attribution;
   const box = $('attrBars'), hint = $('attrHint');
@@ -1284,25 +1380,31 @@ function renderAttr() {
     const cwd = p.cwd ?? '';
     const enc = encodeURIComponent(cwd);
     const hasTc = cwd && p.thinCoderSessions > 0;
-    const folderCell = cwd
+    // 点不开的行不摆按钮（理由见 pathBlockedText）：白名单拒绝原先只写 data/protocol.log，
+    // 页面上按钮照旧、点下去毫无反应——「点了没反应」就是这么来的。
+    const blocked = cwd ? pathBlockedText(p.act) : '';
+    const folderCell = cwd && !blocked
       ? `<span class="acts"><a href="aiquotaboard://openpath?path=${esc(enc)}" title="在资源管理器中打开：${esc(cwd)}">📁 打开</a></span>`
-      : `<span class="acts"><span class="na">—</span></span>`;
+      : `<span class="acts"><span class="na"${blocked ? ` title="${esc(blocked)}"` : ''}>—</span></span>`;
     // 「启动」点下去真的会起 ThinCoder（程序/tools/open-tc.mjs 执行 thincoder.cmd），两个条件缺一不可：
     // 这个项目用过 ThinCoder ＋ 本机**现在**还装着（D.thinCoderInstalled，采集时探测，与下面 ThinCoder 列同一个值）。
     // 取不到这个字段（老数据 / 还没采集过）按「未知」处理，保持显示——不能因为值缺失就把整列按钮变没。
-    const canLaunch = hasTc && D.thinCoderInstalled !== false;
+    const canLaunch = hasTc && D.thinCoderInstalled !== false && !blocked;
     const tcCellAct = canLaunch
       ? `<span class="acts"><a class="tc" href="aiquotaboard://opentc?path=${esc(enc)}" title="在此项目目录启动 ThinCoder 工作台">⌨ 启动</a></span>`
-      : hasTc
+      : hasTc && !blocked
         ? `<span class="acts"><span class="na" title="本机没检测到 ThinCoder（thincoder.cmd 不在 PATH 上）：装好之后这里才能启动">—</span></span>`
-        : `<span class="acts"><span class="na">—</span></span>`;
+        : `<span class="acts"><span class="na"${blocked ? ` title="${esc(blocked)}"` : ''}>—</span></span>`;
     // ThinCoder 列：有会话 → 醒目徽标；无 → 装了 ThinCoder 给「创建」入口（就在该目录起一个会话，与「启动」同一条协议），
     // 没装就只能引导去装（不能写「创建」：那台机器上点了也起不来）。连目录都没记录的行两种都给不了。
+    // 「创建」与「⌨ 启动」是同一条协议（opentc），目录点不开时两者一起收起
     const tcCell = hasTc
       ? `<span class="tcc"><span class="on" title="该项目有 ${p.thinCoderSessions} 个 ThinCoder 会话">⌨ ${p.thinCoderSessions}</span></span>`
       : cwd
         ? (D.thinCoderInstalled !== false
-          ? `<span class="tcc"><a class="tc" href="aiquotaboard://opentc?path=${esc(enc)}" title="在此项目目录启动 ThinCoder 工作台">创建</a></span>`
+          ? (blocked
+            ? `<span class="tcc"><span class="off" title="${esc(blocked)}">·</span></span>`
+            : `<span class="tcc"><a class="tc" href="aiquotaboard://opentc?path=${esc(enc)}" title="在此项目目录启动 ThinCoder 工作台">创建</a></span>`)
           : `<span class="tcc"><a href="${TC_INSTALL_URL}" target="_blank" rel="noopener noreferrer" title="ThinCoder 下载与安装">安装 ThinCoder</a></span>`)
         : `<span class="tcc"><span class="off" title="该项目没有 ThinCoder 会话">·</span></span>`;
     return `<div class="arow" style="--c:${rgb};--w:${Math.max(1, (p[key] / max) * 100).toFixed(1)}%">
@@ -1315,9 +1417,11 @@ function renderAttr() {
     </div>`;
   }).join('');
   $('attrNote').textContent = `解析 ${a.scannedFiles} 个会话文件 · 合计 ${fmtTokens(total)} tokens${attrDays === 'all' && spanText ? ` · ${spanText}` : ''}`;
-  hint.textContent = attrDays === 'all'
+  const blockedHint = notAllowedHint(list);
+  hint.textContent = (attrDays === 'all'
     ? `全部历史（${spanText}，约 ${months} 个月）。点击表头可排序（项目名 / ThinCoder / 用量 / 占比）。📁 打开项目文件夹，⌨ 在该目录启动 ThinCoder 工作台。`
-    : '点击表头可排序（项目名 / ThinCoder / 用量 / 占比）。📁 打开项目文件夹，⌨ 在该目录启动 ThinCoder 工作台。';
+    : '点击表头可排序（项目名 / ThinCoder / 用量 / 占比）。📁 打开项目文件夹，⌨ 在该目录启动 ThinCoder 工作台。')
+    + (blockedHint ? ' ' + blockedHint : '');
 }
 
 /* 5h 窗口状态（实测语义，见 CHANGELOG 0.7.0）：
@@ -1564,13 +1668,15 @@ function renderTc() {
     + `<span class="acts">文件夹</span><span class="acts">启动</span></div>`;
   box.innerHTML = head + list.map(p => {
     const enc = encodeURIComponent(p.cwd);
-    const canAct = p.cwd && !p.unknown;
+    // 与「额度去向」同一套：采集端算好的 act 说这行点不开，就收起按钮（pathBlockedText 给理由）
+    const blocked = p.cwd ? pathBlockedText(p.act) : '';
+    const canAct = p.cwd && !p.unknown && !blocked;
     const folderCell = canAct
       ? `<span class="acts"><a href="aiquotaboard://openpath?path=${esc(enc)}" title="在资源管理器中打开：${esc(p.cwd)}">📁 打开</a></span>`
-      : `<span class="acts"><span class="na">—</span></span>`;
+      : `<span class="acts"><span class="na"${blocked ? ` title="${esc(blocked)}"` : ''}>—</span></span>`;
     const tcCell = canAct
       ? `<span class="acts"><a class="tc" href="aiquotaboard://opentc?path=${esc(enc)}" title="在此项目目录启动 ThinCoder 工作台">⌨ 启动</a></span>`
-      : `<span class="acts"><span class="na">—</span></span>`;
+      : `<span class="acts"><span class="na"${blocked ? ` title="${esc(blocked)}"` : ''}>—</span></span>`;
     return `<div class="arow" style="--w:${Math.max(2, ((p[tKey] ?? 0) / maxTurns) * 100).toFixed(1)}%">
       <span class="name" title="${esc(p.cwd || p.project)}">${esc(p.project)}</span>
       <span class="n">${p[sKey] ?? 0}</span>
@@ -1583,8 +1689,10 @@ function renderTc() {
 
   $('tcNote').textContent = `共 ${tc.projects.length} 个项目 · ${tc.totalAll} 个会话 · 会话目录 ${tc.sessionDir}`;
   $('tcSummary').textContent = `当前范围：${list.length} 个项目 · ${totalSessions} 个会话`;
+  const blockedHint = notAllowedHint(list);
   hint.textContent = '点击表头可按 会话 / 轮次 / 最近使用 / 项目名 排序（再点一次反向）。📁 打开文件夹，⌨ 在该目录启动 ThinCoder 工作台。'
-    + (tc.projects.some(p => p.unknown) ? '「（无路径记录）」是仅有 manifest、会话正文文件缺失的记录，无法定位项目目录。' : '');
+    + (tc.projects.some(p => p.unknown) ? '「（无路径记录）」是仅有 manifest、会话正文文件缺失的记录，无法定位项目目录。' : '')
+    + (blockedHint ? ' ' + blockedHint : '');
 }
 
 /* ================= 采集健康（近 24 小时） ================= */
@@ -1594,7 +1702,8 @@ function renderHealth() {
   const h = D.health24h?.platforms;
   if (!h) { box.innerHTML = '<div class="muted">暂无统计数据（重启采集后开始累计）</div>'; $('healthHint').textContent = ''; return; }
   const names = { codex: 'Codex', deepseek: 'DeepSeek', glm: 'GLM' };
-  const rows = PLATFORMS.map(p => {
+  // 只列还在看板上露面的平台：被设为不显示的那一家连健康行一起收（采集照跑，只是不在这里露面）
+  const rows = PLATFORMS.filter(p => !platHidden(p)).map(p => {
     const v = h[p];
     if (!v?.runs) return `<div class="health-row"><span>${MARK[p]} ${names[p]}</span><span class="sub">暂无采样</span><span class="sub">—</span></div>`;
     const rate = v.ok / v.runs * 100;
@@ -1609,7 +1718,7 @@ function renderHealth() {
   }).join('');
   box.innerHTML = rows;
   const lastErr = D.health?.lastErrors ?? {};
-  const errs = Object.entries(lastErr).filter(([, v]) => v).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`);
+  const errs = Object.entries(lastErr).filter(([k, v]) => v && !platHidden(k)).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`);
   $('healthHint').textContent = errs.length ? `最近错误 —— ${errs.join(' · ')}` : '近 24 小时无采集错误。';
 }
 
@@ -1757,9 +1866,14 @@ function renderHeat() {
         html += `<div class="hcell empty${isToday}" data-k="${k}" data-v="${why}"></div>`;
         continue;
       }
-      const lvl = v <= 0 ? 0 : Math.min(5, Math.ceil(v / vmax * 5));
-      const alpha = [0.08, 0.22, 0.4, 0.6, 0.8, 1][lvl];
-      html += `<div class="hcell${isToday}" data-k="${k}" data-v="${esc(meta.fmt(v))}" style="background:rgba(${meta.rgb.join(',')},${alpha})"></div>`;
+      if (v <= 0) {
+        // 当天有采集、但用量就是 0：中性灰（既不是色阶的"最浅一档"，也不是"无数据"的空心格）
+        html += `<div class="hcell${isToday}" data-k="${k}" data-v="${esc(meta.fmt(v))}" style="background:var(--heat-zero)"></div>`;
+      } else {
+        const lvl = Math.min(5, Math.ceil(v / vmax * 5));
+        const alpha = [0.22, 0.4, 0.6, 0.8, 1][lvl - 1];
+        html += `<div class="hcell${isToday}" data-k="${k}" data-v="${esc(meta.fmt(v))}" style="background:rgba(${meta.rgb.join(',')},${alpha})"></div>`;
+      }
       n++; sum += v;
       if (v > peak) { peak = v; peakDay = k; }
     }
@@ -1791,9 +1905,10 @@ function renderHeat() {
     ? `${meta.label}：峰值 ${meta.fmt(peak)}（${peakDay}）· 日均 ${meta.fmt(sum / n)}`
     : `${meta.label}：暂无数据`;
 
-  const steps = [0.08, 0.22, 0.4, 0.6, 0.8, 1].map(a => `<i style="background:rgba(${meta.rgb.join(',')},${a})"></i>`).join('');
+  // 色阶只列真实会出现的那几档（0 是灰格，不在色阶里）
+  const steps = [0.22, 0.4, 0.6, 0.8, 1].map(a => `<i style="background:rgba(${meta.rgb.join(',')},${a})"></i>`).join('');
   $('heatFoot').innerHTML = `<span>少</span><span class="scale">${steps}</span><span>多</span>` +
-    `<span class="muted">· 空心格 = 无数据（未开始记录 / 关机离线）· 深色边框 = 今天 · 悬停查看当天数值</span>`;
+    `<span class="muted"><i class="zero"></i>灰格 = 当天用量为 0 · 空心格 = 无数据（未开始记录 / 关机离线）· 深色边框 = 今天 · 悬停查看当天数值</span>`;
 }
 
 // 热力图悬停提示
@@ -1815,11 +1930,14 @@ function renderHeat() {
   wrap.addEventListener('mouseleave', () => tip.classList.remove('on'));
 })();
 
+function syncHeatMetric(metric) {
+  heatMetric = metric;
+  document.querySelectorAll('#heatSeg button').forEach(b => b.classList.toggle('on', b.dataset.heat === metric));
+}
 $('heatSeg').addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b) return;
-  heatMetric = b.dataset.heat;
-  document.querySelectorAll('#heatSeg button').forEach(x => x.classList.toggle('on', x === b));
+  syncHeatMetric(b.dataset.heat);
   renderHeat();
 });
 
@@ -1834,8 +1952,14 @@ function renderCharts() {
   const remain = (arr, idx) => arr.filter(p => p[idx] != null).map(p => ({ ts: p[0], v: Math.max(0, 100 - Number(p[idx])) })).filter(p => Number.isFinite(p.v));
   const bal = (arr, idx) => arr.filter(p => p[idx] != null).map(p => ({ ts: p[0], v: Number(p[idx]) })).filter(p => Number.isFinite(p.v));
   const warnRemain = 100 - (th.codex5hWarn ?? 80);
+  // 不显示的那一家不画图：它的容器整个收起了（量出来宽度为 0），跳过绘制也顺手把旧状态丢掉
+  const drawShown = (platform, hostId, spec) => {
+    if (platHidden(platform)) { charts.delete(hostId); return false; }
+    drawChart(hostId, spec);
+    return true;
+  };
 
-  drawChart('wrap-codex', {
+  if (drawShown('codex', 'wrap-codex', {
     series: [
       { name: '5h 剩余', color: '#4f8cff', points: remain(c, 1) },
       { name: '7 天剩余', color: '#3ecf8e', points: remain(c, 2) },
@@ -1848,28 +1972,31 @@ function renderCharts() {
     selectable: true, // 支持拖拽框选统计区间用量
     yFmt: (v, span) => v.toFixed(span < 2 ? 1 : 0) + '%',
     vFmt: v => v.toFixed(0) + '%',
-  });
-  $('cap-codex').textContent = `${c.length} 个采样点 · ${WIN_LABEL[win] ?? win}`;
+  })) {
+    $('cap-codex').textContent = `${c.length} 个采样点 · ${WIN_LABEL[win] ?? win}`;
+  }
 
-  drawChart('wrap-ds', {
+  if (drawShown('deepseek', 'wrap-ds', {
     series: [{ name: 'DeepSeek 余额', color: '#f5a623', fill: true, points: bal(ds, 1) }],
     gapMs: gapMsFor('balance'),
     selectable: true,
     changeMarks: changeMarksFor(ds, 1),
     yFmt: (v, span) => '¥' + v.toFixed(span < 5 ? 2 : 0), vFmt: v => '¥' + v.toFixed(2),
-  });
-  if (ds.length) $('cap-ds').textContent = `¥${fmtMoney(ds[0][1])} → ¥${fmtMoney(ds.at(-1)[1])}`;
-  renderChanges('changes-ds', ds, 1);
+  })) {
+    if (ds.length) $('cap-ds').textContent = `¥${fmtMoney(ds[0][1])} → ¥${fmtMoney(ds.at(-1)[1])}`;
+    renderChanges('changes-ds', ds, 1);
+  }
 
-  drawChart('wrap-glm', {
+  if (drawShown('glm', 'wrap-glm', {
     series: [{ name: 'GLM 余额', color: '#ff5c5c', fill: true, points: bal(glm, 1) }],
     gapMs: gapMsFor('balance'),
     selectable: true,
     changeMarks: changeMarksFor(glm, 1),
     yFmt: (v, span) => '¥' + v.toFixed(span < 5 ? 2 : 0), vFmt: v => '¥' + v.toFixed(2),
-  });
-  if (glm.length) $('cap-glm').textContent = `¥${fmtMoney(glm[0][1])} → ¥${fmtMoney(glm.at(-1)[1])}`;
-  renderChanges('changes-glm', glm, 1);
+  })) {
+    if (glm.length) $('cap-glm').textContent = `¥${fmtMoney(glm[0][1])} → ¥${fmtMoney(glm.at(-1)[1])}`;
+    renderChanges('changes-glm', glm, 1);
+  }
 }
 
 /* ================= 表格 ================= */
@@ -1925,8 +2052,8 @@ window.addEventListener('resize', () => {
   heatResizeTimer = setTimeout(renderHeat, 120);
 });
 
-// 初始化热力图指标开关
-document.querySelectorAll('#heatSeg button').forEach(b => b.classList.toggle('on', b.dataset.heat === heatMetric));
+// 初始化热力图指标开关（默认那一家；默认那一家被设为不显示时，由 applyVisibility 换成还剩的第一个）
+syncHeatMetric(heatMetric);
 // 初始化额度去向时间范围开关
 document.querySelectorAll('#attrSeg button').forEach(b => b.classList.toggle('on', b.dataset.attr === String(attrDays)));
 // 初始化 ThinCoder 范围开关
