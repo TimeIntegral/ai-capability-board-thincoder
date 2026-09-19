@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 export function compareVersions(a, b) {
   const parse = v => {
@@ -40,7 +41,9 @@ export function validateManifest(m, repos) {
 }
 
 // Follow only publisher/CDN redirects; never attach a user's account credentials.
-export async function fetchBounded(url, limit, { fetcher = fetch, timeout = 12000 } = {}) {
+// onProgress 每读一块报一次 {received, total}：页面上的下载进度就是靠它一路写进 data/update-status.json
+// （total 取 content-length，取不到就用调用方给的 limit —— 安装包的准确大小本来就在 latest.json 里）。
+export async function fetchBounded(url, limit, { fetcher = fetch, timeout = 12000, onProgress } = {}) {
   let current = url;
   const signal = AbortSignal.timeout(timeout);
   for (let hop = 0; hop < 6; hop++) {
@@ -57,15 +60,40 @@ export async function fetchBounded(url, limit, { fetcher = fetch, timeout = 1200
     }
     if (!response.ok) { await response.body?.cancel(); throw new Error(response.status === 404 ? '尚未发布更新信息' : '暂时无法连接发布渠道'); }
     if (Number(response.headers.get('content-length')) > limit) { await response.body?.cancel(); throw new Error('下载内容超过大小限制'); }
+    const total = Number(response.headers.get('content-length')) || limit;
     const chunks = []; let size = 0;
     for await (const chunk of response.body) {
       size += chunk.length;
       if (size > limit) throw new Error('下载内容超过大小限制');
       chunks.push(Buffer.from(chunk));
+      onProgress?.({ received: size, total });
     }
     return Buffer.concat(chunks);
   }
   throw new Error('下载跳转次数过多');
+}
+
+// 安装包三项一起验：长度、PE 头（MZ）、SHA256。三项都来自 latest.json（只允许本项目发布渠道的 HTTPS 地址），
+// 任何一项不符都拒绝安装 —— 校验不过的字节既不落盘也不交给安装器（不留「下了一半/装了一半」的状态）。
+export function verifyInstaller(bytes, manifest) {
+  if (bytes.length !== manifest.size || bytes[0] !== 0x4d || bytes[1] !== 0x5a ||
+      crypto.createHash('sha256').update(bytes).digest('hex') !== manifest.sha256) throw new Error('安装包校验失败，已停止安装');
+}
+
+// 更新状态只有一个写口：data/update-status.json（真源）+ update-data.js（页面用 <script> 读的注入副本）。
+// 检查更新、下载安装、安装监看（update.mjs 的 install-watch）三处都走这里 —— 页面只认这一份状态。
+export function writeUpdateState(root, state) {
+  const data = path.join(root, 'data');
+  fs.mkdirSync(data, { recursive: true });
+  atomicJson(path.join(data, 'update-status.json'), state);
+  const js = path.join(root, 'update-data.js');
+  fs.writeFileSync(`${js}.tmp`, `window.BOARD_UPDATE=${JSON.stringify(state).replace(/</g, '\\u003c')};\n`);
+  fs.renameSync(`${js}.tmp`, js);
+}
+
+// 读回上一次写下的状态（安装监看进程要在同一份状态上收尾，保留 automatic / notifications / manifest 等字段）。
+export function readUpdateState(root) {
+  try { return JSON.parse(fs.readFileSync(path.join(root, 'data', 'update-status.json'), 'utf8')); } catch { return {}; }
 }
 
 export function atomicJson(file, value) {

@@ -26,9 +26,12 @@
 //   T52 同两列，但数据里根本没有 thinCoderInstalled 字段（老数据 / 还没采集过）：按「未知」保守显示，两个入口照常给，不因取不到值就整列消失。
 //   T61 两列「点得开吗」：点得开的行点下去真的发协议（openpath / opentc 的 URL 逐个断言）；白名单拒绝、目录已不在的行
 //                不给按钮、把怎么放行写在表下（2026-09-20 故障：白名单拒绝只写日志，页面上点下去零反馈）；老数据照旧给按钮。
-//   T50/T51/T62/T63 「检查更新」：检测到新版本时弹窗与横幅给两个动作——「去下载」（普通外链，地址取 manifest.releaseUrl，
-//                 不经 aiquotaboard:// 协议）与「跳过该版本」（点它发 update-skip）；已跳过的版本、已是最新版本都不再提示；
-//                 manifest 里拿不到 Release 地址时不给死链（跳过照旧）。
+//   T50/T51/T62/T63/T65/T66/T67 「检查更新」与「立即更新」：检测到新版本时弹窗与横幅给三个动作——
+//                 「立即更新」（点它发 update-install：后台下载 → 校验 SHA256 → 自动关看板 → 装 → 装完自动重开看板）、
+//                 「去下载」（普通外链，地址取 manifest.releaseUrl，不经 aiquotaboard:// 协议）与「跳过该版本」（发 update-skip）；
+//                 下载中显示百分比与进度条（数据来自 data/update-data.js，页面只有这一条通路），安装中自己关一次页面、
+//                 关不掉就把文案改成实话；已跳过的版本横幅安静但弹窗仍给去下载与立即更新；已是最新版本则全部不提示；
+//                 manifest 里拿不到 Release 地址时不给死链（另两条照旧）。
 // 删除的用例见 private/CHANGELOG.dev.md 与本批报告：T2–T17 / T28–T30 / T33–T37 全部驱动已被删除的向导。
 //
 // 机制：把 dashboard.html 复制到 data/__test-dashboard__/run-<id>/，在主页本前注入测试引导脚本
@@ -92,16 +95,21 @@ const BOOT = String.raw`
       out.counts.iframe++;
       Object.defineProperty(el, 'src', { configurable: true, get: function () { return ''; }, set: function (v) { out.ops.push({ op: 'iframe', url: String(v) }); onProtocol(String(v)); } });
     }
-    // scriptFeed 装好的时候：看板数据脚本不真的读盘，改成按次发牌（"磁盘上的文件换了"这件事的替身）
-    if (String(tag).toLowerCase() === 'script' && scriptFeed.length) {
+    // scriptFeed 装好的时候：看板数据脚本不真的读盘，改成按次发牌（"磁盘上的文件换了"这件事的替身）。
+    // updateFeed 同理，发的是 update-data.js 里的 window.BOARD_UPDATE —— 页面每 1.5 秒轮询读的就是它，
+    // 「下载中 → 安装中 → 装好了」这种阶段变化在真实世界里就是这么到达页面的（file:// 下唯一的通路）。
+    if (String(tag).toLowerCase() === 'script' && (scriptFeed.length || updateFeed.length)) {
       var feedSrc = '';
       Object.defineProperty(el, 'src', { configurable: true,
         get: function () { return feedSrc; },
         set: function (v) {
           feedSrc = String(v);
-          if (feedSrc.indexOf('dashboard-data.js') < 0) { el.setAttribute('src', feedSrc); return; }
-          out.ops.push({ op: 'dataScript', url: feedSrc });
-          el.textContent = scriptFeed.length > 1 ? scriptFeed.shift() : scriptFeed[0];
+          var isData = feedSrc.indexOf('dashboard-data.js') >= 0, isUpdate = feedSrc.indexOf('update-data.js') >= 0;
+          if (!((isData && scriptFeed.length) || (isUpdate && updateFeed.length))) { el.setAttribute('src', feedSrc); return; }
+          var feed = isData ? scriptFeed : updateFeed;
+          out.ops.push({ op: isData ? 'dataScript' : 'updateScript', url: feedSrc });
+          var next = feed.length > 1 ? feed.shift() : feed[0];
+          el.textContent = isData ? String(next) : 'window.BOARD_UPDATE = ' + JSON.stringify(next) + ';\n';
           setTimeout(function () { if (el.onload) el.onload(); }, 0);
         } });
     }
@@ -165,6 +173,8 @@ const BOOT = String.raw`
   var payloads = (C.collectPayloads || []).slice();
   // scriptFeed：模拟 dashboard-data.js 在页面运行期间被采集重写（第一个是改动前的、最后一个是新的，永远返回最后一个）
   var scriptFeed = (C.scriptFeed || []).slice();
+  // updateFeed：模拟 data/update-data.js 被 update.mjs 一次次重写（下载进度、安装中、装好了…）
+  var updateFeed = (C.updateFeed || []).slice();
   function onProtocol(url) {
     var act = String(url).split('://')[1] || '';
     act = act.split('?')[0].replace(/\/+$/, '');
@@ -238,7 +248,7 @@ function runCase(c, asBaseline = false) {
     for (const f of fs.readdirSync(path.join(ROOT, 'assets'))) fs.copyFileSync(path.join(ROOT, 'assets', f), path.join(dir, 'assets', f));
   }
   if (dataJsOf(c)) fs.writeFileSync(path.join(dir, 'dashboard-data.js'), dataJsOf(c));
-  const url = 'file:///' + path.join(dir, 'dashboard.html').replace(/\\/g, '/');
+  const url = 'file:///' + path.join(dir, 'dashboard.html').replace(/\\/g, '/') + (c.hash || '');
   // windowSize = 单跑一个宽度；windowSizes = 同一驱动在每个宽度上各跑一次（顶栏排版要按真实窗口宽度量行高），
   // 结果按宽度归到 res.__W__，行为字段取第一个宽度（点击行为与宽度无关）。
   const sizes = c.windowSizes ?? [c.windowSize];
@@ -401,26 +411,27 @@ const UPDATE_DRIVER = `
       t.click('#supportBtn');
       await t.untilSel('#supportOverlay.on');
       var m = document.querySelector('#supportOverlay .modal');
-      var labels = [].map.call(m.querySelectorAll('button, a'), function (b) { return (b.textContent || '').trim(); });
       var banner = document.getElementById('updateBanner');
+      function label(x) { return (x.textContent || '').trim(); }
+      function modalBtn(text) { return [].filter.call(m.querySelectorAll('button'), function (b) { return label(b) === text; })[0]; }
       // 「去下载」必须是 <a>（普通外链，不是发协议的按钮）：连 tagName 一起读回来才能断言「没走协议那条路」
       function dlOf(host) {
-        var a = host ? [].filter.call(host.querySelectorAll('a'), function (x) { return (x.textContent || '').trim() === '去下载'; })[0] : null;
+        var a = host ? [].filter.call(host.querySelectorAll('a'), function (x) { return label(x) === '去下载'; })[0] : null;
         return a ? { tag: a.tagName, href: a.getAttribute('href'), target: a.getAttribute('target'), rel: a.getAttribute('rel') } : null;
       }
       t.snapshot({
-        labels: labels,
+        labels: [].map.call(m.querySelectorAll('button, a'), label),
         dl: dlOf(m), bannerDl: dlOf(banner),
         bannerShown: !!banner && banner.offsetHeight > 0,
         // 横幅「不出现」要分得清是藏起来了还是根本没挂上：元素在 + 高度 0 + 一个子节点都没有
         bannerEmpty: !!banner && banner.offsetHeight === 0 && banner.childElementCount === 0,
-        bannerLabels: banner ? [].map.call(banner.querySelectorAll('button, a'), function (b) { return (b.textContent || '').trim(); }) : [],
+        bannerLabels: banner ? [].map.call(banner.querySelectorAll('button, a'), label) : [],
         status: (document.getElementById('updateMessage') || {}).textContent || '',
       });
       var n0 = t.ops('iframe').length;
       // 真的点一下「去下载」：证明点下去页面自己什么也不发（协议 / iframe 计数都不变）。
       // 只拦下浏览器自己的跳转（无头下会新开一个页面、把这次回读带走），不拦页面行为。
-      var dl = [].filter.call(m.querySelectorAll('a'), function (x) { return (x.textContent || '').trim() === '去下载'; })[0];
+      var dl = [].filter.call(m.querySelectorAll('a'), function (x) { return label(x) === '去下载'; })[0];
       if (dl) {
         var stop = function (e) { e.preventDefault(); };
         dl.addEventListener('click', stop);
@@ -429,10 +440,66 @@ const UPDATE_DRIVER = `
         t.snapshot({ dlClick: { iframes: t.ops('iframe').length - n0, protocolLinks: t.ops('protocolLink').length - links0 } });
         dl.removeEventListener('click', stop);
       }
-      var skip = [].filter.call(m.querySelectorAll('button'), function (b) { return (b.textContent || '').trim() === '跳过该版本'; })[0];
+      // 真的点一下「立即更新」：页面发 update-install（协议白名单里的 install = 下载 → 校验 → 装着看板自动关 → 装 → 重开）
+      var install = modalBtn('立即更新');
+      t.snapshot({ hasInstall: !!install });
+      if (install) { install.click(); await t.wait(50); }
+      // 点完弹窗会重画一次（状态改「正在处理…」、按钮全部重建）：「跳过该版本」要重新找
+      var skip = modalBtn('跳过该版本');
       if (skip) { skip.click(); await t.wait(50); }
       t.snapshot({ urls: t.ops('iframe').map(function (o) { return o.url; }).slice(n0) });
     `;
+
+// ---------- 「立即更新」的执行阶段（T65 下载中 / T66 安装中 / T67 装没装成） ----------
+// 阶段与进度全靠 update-data.js 发牌（页面只有这一条通路）：更新由一个后台进程一步步写，页面轮询读。
+// 关自己这件事在桩里只记账 —— 真关会把这次回读一起带走，而且浏览器本来就可能拒绝。
+const BUSY_PRELUDE = `
+      window.close = function () { window.__closed = (window.__closed || 0) + 1; };
+      await t.untilSel('#supportBtn');
+      if (!document.getElementById('supportOverlay').classList.contains('on')) t.click('#supportBtn');
+      await t.untilSel('#supportOverlay.on');
+      var m = document.querySelector('#supportOverlay .modal');
+      var banner = document.getElementById('updateBanner');
+      function text(el) { return el ? (el.textContent || '').trim() : ''; }
+      function snap() {
+        // 进度条用类名找（弹窗和横幅各有一条，页面里不允许重复 id）
+        var bar = document.querySelector('.updateProgress');
+        return { status: text(document.getElementById('updateMessage')), bar: bar ? bar.getAttribute('aria-valuenow') : null,
+          labels: [].map.call(m.querySelectorAll('button, a'), function (b) { return text(b); }),
+          banner: text(banner), closed: window.__closed || 0, reads: t.ops('updateScript').length };
+      }
+      function installBtn() { return [].filter.call(m.querySelectorAll('button'), function (b) { return text(b) === '立即更新'; })[0]; }
+      t.snapshot({ first: snap(), hasInstall: !!installBtn() });
+`;
+// T65：点下「立即更新」→ 进度从状态文件里一路走到页面上（42% → 78%）
+const DOWNLOAD_DRIVER = BUSY_PRELUDE + `
+      installBtn().click();
+      await t.until(function () { return text(document.getElementById('updateMessage')).indexOf('%') >= 0; }, 9000, '下载进度');
+      t.snapshot({ during: snap() });
+      await t.wait(2400);
+      t.snapshot({ later: snap() });
+    `;
+// T66：状态走到「正在安装」→ 页面自己关一次（桩里记账）→ 关不掉时文案改成实话
+const INSTALL_DRIVER = BUSY_PRELUDE + `
+      installBtn().click();
+      await t.until(function () { return window.__closed > 0; }, 9000, '开始安装');
+      t.snapshot({ install: snap() });
+      await t.wait(1800);
+      t.snapshot({ end: snap() });
+    `;
+// T67：装没装成（重开的那个弹窗第一眼就看到的结果）—— 再点一次「立即更新」就是重试
+const RETRY_DRIVER = BUSY_PRELUDE + `
+      await t.wait(100);
+      installBtn().click();
+      await t.wait(80);
+      t.snapshot({ urls: t.ops('iframe').map(function (o) { return o.url; }) });
+    `;
+// 「立即更新」一路上会走过的几份状态（程序/tools/update.mjs 与它的「安装监看」写的就是这些字段）
+const AVAILABLE_STATE = updateState({ available: true, phase: 'available', message: `发现新版本 v${FIXTURE_NEWER}` });
+const downloadingState = percent => updateState({ available: true, phase: 'downloading',
+  message: `正在下载安装包… ${percent}%`, progress: { received: percent * 40, total: 4096, percent } });
+const INSTALLING_STATE = updateState({ available: true, phase: 'installing', message: '正在安装，看板会关闭后自动打开' });
+const INSTALL_FAILED_STATE = updateState({ available: true, phase: 'error', message: '更新没装成，看板还是原来的版本' });
 
 // ---------- 热力图夹具（T44 / T45） ----------
 // 日期按「今天」现算，用例不会随着时间推移失效；空洞用来验「无采集」空格子
@@ -715,7 +782,7 @@ const CARDS_DRIVER = `
             chartGrid: !!firstBalance && firstBalance.parentElement.getBoundingClientRect().height > 0,
             heatSec: vis('heatNote', '.sec'), heatCard: vis('heatSeg', '.card'),
             attrSec: vis('attrNote', '.sec'), attrCard: vis('attrBars', '.card'), healthCard: vis('healthList', '.card'),
-            modelCard: vis('modelBars', '.card'), tcCard: vis('tcBars', '.card'),
+            modelCard: vis('modelBars', '.card'), modelSec: vis('modelNote', '.sec'), tcCard: vis('tcBars', '.card'),
             packsPanel: vis('packs-table', '.panel'), alertsPanel: vis('alerts-table', '.panel'),
           },
           heatTabs: [].slice.call(document.querySelectorAll('#heatSeg button')).map(function (b) {
@@ -1263,40 +1330,41 @@ const CASES = [
     },
   },
   {
-    id: 'T50', desc: '检查更新（发现新版本）：弹窗与横幅都给「去下载」外链（地址取 manifest.releaseUrl）与「跳过该版本」，跳过发 update 协议',
+    id: 'T50', desc: '检查更新（发现新版本）：弹窗与横幅都给「立即更新 / 去下载 / 跳过该版本」，三条各自真的发得出去',
     assets: true,
     page: { sdp: 'none', dataJs: liveJs(LIVE_DATA), boardUpdate: updateState({ available: true, phase: 'available', message: '发现新版本 v1.3.1' }), driver: UPDATE_DRIVER },
     check: r => {
       const s = r.res.snap;
       return [
-         ['弹窗里的动作恰为 关闭 × / 检查更新 / 去下载 / 跳过该版本 / 复制', s.labels.join('|') === '×|检查更新|去下载|跳过该版本|复制', s.labels.join('|')],
-         ['旧的更新动作（立即更新 / 稍后提醒 / 查看更新说明）都不在了', !/立即更新|稍后提醒|查看更新说明/.test(s.labels.join('|')), s.labels.join('|')],
+         ['弹窗里的动作恰为 关闭 × / 检查更新 / 立即更新 / 去下载 / 跳过该版本 / 复制', s.labels.join('|') === '×|检查更新|立即更新|去下载|跳过该版本|复制', s.labels.join('|')],
+         ['「立即更新」在（2026-09-20 用户定：要有像成熟软件那样的「立即更新」）；「稍后提醒 / 查看更新说明」仍然不在', s.hasInstall === true && !/稍后提醒|查看更新说明/.test(s.labels.join('|')), JSON.stringify([s.hasInstall, s.labels.join('|')])],
          ['「去下载」指向 manifest 里的 Release 地址（地址来自 latest.json，页面不硬编码 URL）', !!s.dl && s.dl.href === FIXTURE_RELEASE_URL, JSON.stringify(s.dl)],
          ['「去下载」是新标签打开的普通外链（<a target=_blank rel=noopener…>，不是发协议的按钮）', !!s.dl && s.dl.tag === 'A' && s.dl.target === '_blank' && /noopener/.test(s.dl.rel || ''), JSON.stringify(s.dl)],
-         ['横幅给一样的两个动作（去下载 / 跳过该版本），去下载同样指向该 Release 地址', s.bannerShown === true && s.bannerLabels.join('|') === '去下载|跳过该版本' && !!s.bannerDl && s.bannerDl.href === FIXTURE_RELEASE_URL && s.bannerDl.target === '_blank', JSON.stringify([s.bannerShown, s.bannerLabels, s.bannerDl])],
-         ['点「跳过该版本」发的是更新协议（协议白名单里的 skip = 跳过该版本），且只这一条协议请求', JSON.stringify(s.urls) === '["aiquotaboard://update-skip"]', JSON.stringify(s.urls)],
+         ['横幅给一样的三个动作（立即更新 / 去下载 / 跳过该版本），去下载同样指向该 Release 地址', s.bannerShown === true && s.bannerLabels.join('|') === '立即更新|去下载|跳过该版本' && !!s.bannerDl && s.bannerDl.href === FIXTURE_RELEASE_URL && s.bannerDl.target === '_blank', JSON.stringify([s.bannerShown, s.bannerLabels, s.bannerDl])],
+         ['点「立即更新」发 update-install、点「跳过该版本」发 update-skip（两个动作都在协议白名单里）', JSON.stringify(s.urls) === '["aiquotaboard://update-install","aiquotaboard://update-skip"]', JSON.stringify(s.urls)],
          ['点「去下载」页面自己什么也不发（协议与 iframe 计数都不变，跳转交给浏览器）', !!s.dlClick && s.dlClick.iframes === 0 && s.dlClick.protocolLinks === 0, JSON.stringify(s.dlClick)],
         ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
       ];
     },
   },
   {
-    id: 'T51', desc: '检查更新（该版本已跳过）：横幅不再出现，弹窗说明「已跳过」且没有任何更新动作（包括「去下载」）',
+    id: 'T51', desc: '检查更新（该版本已跳过）：横幅安静了，但弹窗里仍给「立即更新」与「去下载」（弹窗是用户主动打开的地方）',
     assets: true,
     page: { sdp: 'none', dataJs: liveJs(LIVE_DATA), boardUpdate: updateState({ available: false, phase: 'skipped', skippedVersion: FIXTURE_NEWER, message: `已跳过 v${FIXTURE_NEWER}；发布更新的版本时会再提示` }), driver: UPDATE_DRIVER },
     check: r => {
       const s = r.res.snap;
       return [
          ['跳过的版本不再弹横幅（元素在、内容为空、不可见）', s.bannerShown === false && s.bannerEmpty === true && s.bannerLabels.length === 0, JSON.stringify([s.bannerShown, s.bannerEmpty, s.bannerLabels])],
-         ['弹窗里只剩「检查更新」，没有「跳过该版本」，也没有「去下载」', s.labels.join('|') === '×|检查更新|复制' && s.dl === null && s.bannerDl === null, JSON.stringify([s.labels, s.dl, s.bannerDl])],
+         ['弹窗里仍给「去下载」这条出路（跳过 ≠ 没地方可去；横幅那边保持安静）', !!s.dl && s.dl.href === FIXTURE_RELEASE_URL && s.bannerDl === null, JSON.stringify([s.dl, s.bannerDl])],
+         ['弹窗里不再给「跳过该版本」（已经跳过了，给也没意义）', s.labels.indexOf('跳过该版本') < 0, s.labels.join('|')],
         ['状态行说明是「已跳过 v1.3.1」而不是「已是最新版本」', /已跳过 v1\.3\.1/.test(s.status), s.status],
-         ['没有任何更新动作可点（点不到就不会误发协议）', s.urls.length === 0, JSON.stringify(s.urls)],
+         ['弹窗里能点的只剩「立即更新」（改主意了当场就能装），发的是那一条 update-install', JSON.stringify(s.urls) === '["aiquotaboard://update-install"]', JSON.stringify(s.urls)],
          ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
        ];
      },
    },
    {
-     id: 'T62', desc: '检查更新（manifest 里拿不到 Release 地址）：不给「去下载」死链，「跳过该版本」照旧',
+     id: 'T62', desc: '检查更新（manifest 里拿不到 Release 地址）：不给「去下载」死链，「立即更新」与「跳过该版本」照旧',
      assets: true,
      // 真的 latest.json 由构建器写 releaseUrl，而且 程序/lib/updates.mjs 的 validateManifest 会把它校一遍；
      // 这里构造的是「地址确实拿不到」的那一种状态（老版 update-data.js / 手改了文件 / 将来换了字段）：
@@ -1310,8 +1378,8 @@ const CASES = [
        const s = r.res.snap;
        return [
          ['拿不到地址就不给「去下载」（点了不会发生任何事的按钮不出现）', s.dl === null && s.bannerDl === null, JSON.stringify([s.dl, s.bannerDl])],
-         ['弹窗里只剩「跳过该版本」这一条更新动作', s.labels.join('|') === '×|检查更新|跳过该版本|复制', s.labels.join('|')],
-         ['「跳过该版本」不受影响，照旧发协议', JSON.stringify(s.urls) === '["aiquotaboard://update-skip"]', JSON.stringify(s.urls)],
+         ['弹窗里少了「去下载」，另外两条更新动作照旧', s.labels.join('|') === '×|检查更新|立即更新|跳过该版本|复制', s.labels.join('|')],
+         ['「立即更新」与「跳过该版本」都不受影响，照旧发协议', JSON.stringify(s.urls) === '["aiquotaboard://update-install","aiquotaboard://update-skip"]', JSON.stringify(s.urls)],
          ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
        ];
      },
@@ -1335,6 +1403,71 @@ const CASES = [
        ];
      },
    },
+  {
+    id: 'T65', desc: '「立即更新」下载中：百分比与进度条就取状态文件那一份，动作收起来，弹窗关掉也能从横幅看到',
+    assets: true,
+    page: {
+      sdp: 'none', dataJs: liveJs(LIVE_DATA),
+      // 状态按次发牌：21% → 42% → 78%。真实世界里这些是 update.mjs 下载时一步步写进去的
+      updateFeed: [AVAILABLE_STATE, downloadingState(21), downloadingState(42), downloadingState(78)],
+      driver: DOWNLOAD_DRIVER,
+    },
+    check: r => {
+      const s = r.res?.snap;
+      if (!s) return [['结果节点回读', false, '无 snap']];
+      return [
+        ['下载中的状态行就是状态文件里那句（含百分比），页面不自己算', s.during.status === '正在下载安装包… 42%', s.during.status],
+        ['进度条跟着百分比走（aria-valuenow = 42）', s.during.bar === '42', String(s.during.bar)],
+        ['下载中把三个更新动作一起收起来（免得半路再点一次）', s.during.labels.join('|') === '×|复制', s.during.labels.join('|')],
+        ['横幅同步显示进度，里面还有一条进度条（弹窗关掉也看得见）', /正在下载安装包… 42%/.test(s.during.banner), s.during.banner],
+        ['状态文件里的进度变了，页面跟着变（42% → 78%）', s.later.status === '正在下载安装包… 78%' && s.later.bar === '78', JSON.stringify([s.later.status, s.later.bar])],
+        ['页面一直在读 update-data.js（进度就是这么到页面上的）', s.later.reads >= 3, String(s.later.reads)],
+        ['下载中页面不会自己关掉（那是安装阶段才做的事）', s.later.closed === 0, String(s.later.closed)],
+        ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+      ];
+    },
+  },
+  {
+    id: 'T66', desc: '走到「正在安装」：页面自己关一次，关不掉时（浏览器拒绝）文案立刻改成实话',
+    assets: true,
+    page: {
+      sdp: 'none', dataJs: liveJs(LIVE_DATA),
+      updateFeed: [AVAILABLE_STATE, downloadingState(50), INSTALLING_STATE],
+      driver: INSTALL_DRIVER,
+    },
+    check: r => {
+      const s = r.res?.snap;
+      if (!s) return [['结果节点回读', false, '无 snap']];
+      return [
+        ['走到「正在安装」时页面自己关一次（window.close 只发一次）', s.install.closed === 1, String(s.install.closed)],
+        ['这时候的文案就是状态文件里那句「正在安装，看板会关闭后自动打开」', s.install.status === '正在安装，看板会关闭后自动打开', s.install.status],
+        ['横幅同步显示同一句（弹窗关掉也看得见）', s.install.banner === '正在安装，看板会关闭后自动打开', s.install.banner],
+        ['安装中不给任何更新动作（不给半路再点的机会）', s.install.labels.join('|') === '×|复制', s.install.labels.join('|')],
+        // 关不掉的实测事实（2026-09-20 Edge 探针：标签页有前进后退历史时 window.close 会被拒）：
+        // 那时页面必须把话说实话，而不是留着一句「看板会关闭」的假承诺
+        ['关不掉时文案改成实话：「完成后看板会自动打开；本页可以关掉」', s.end.status === '正在安装，完成后看板会自动打开；本页可以关掉', s.end.status],
+        ['也不反复试关（就那一次）', s.end.closed === 1, String(s.end.closed)],
+        ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+      ];
+    },
+  },
+  {
+    id: 'T67', desc: '装没装成：重开的看板（#support）第一眼把结果摆出来，动作照旧给全——「可重试」就是再点一次',
+    assets: true,
+    hash: '#support',
+    page: { sdp: 'none', dataJs: liveJs(LIVE_DATA), updateFeed: [INSTALL_FAILED_STATE], driver: RETRY_DRIVER },
+    check: r => {
+      const s = r.res?.snap;
+      if (!s) return [['结果节点回读', false, '无 snap']];
+      return [
+        ['URL 带 #support 时弹窗自己就开着（装完重开看板就是这么落的）', s.first.status === '更新没装成，看板还是原来的版本', s.first.status],
+        ['失败后三条动作还都在（立即更新 / 去下载 / 跳过该版本）', s.first.labels.join('|') === '×|检查更新|立即更新|去下载|跳过该版本|复制', s.first.labels.join('|')],
+        ['刚打开的这一页不会自己关掉（只有看着它走进安装的页面才关）', s.first.closed === 0, String(s.first.closed)],
+        ['再点「立即更新」就是重试：发的还是 update-install', JSON.stringify(s.urls) === '["aiquotaboard://update-install"]', JSON.stringify(s.urls)],
+        ['无 JS 错误', r.res.errors.length === 0, JSON.stringify(r.res.errors)],
+      ];
+    },
+  },
   {
     id: 'T52', desc: '额度去向（数据里没有 thinCoderInstalled 字段——老数据 / 还没采集过）：按「未知」显示，两个 ThinCoder 入口都照常给',
     windowSize: '1440,900',
@@ -1443,7 +1576,10 @@ const CASES = [
         ['额度去向（Codex 会话归因）整块收起（同一行还有采集健康，区块标题留着）', v.attrCard === false && v.attrSec === true && v.healthCard === true, JSON.stringify({ attrCard: v.attrCard, attrSec: v.attrSec, healthCard: v.healthCard })],
         ['采集健康里没有 Codex / GLM 的行，错误文案也不提它们', d.healthRows.length === 1 && /DeepSeek/.test(d.healthRows[0]) && !/codex|glm/i.test(d.healthHint), JSON.stringify({ rows: d.healthRows, hint: d.healthHint })],
         ['「历史与记录」里的 GLM 充值记录整块收起（最近提醒照旧）', v.packsPanel === false && v.alertsPanel === true, JSON.stringify({ packs: v.packsPanel, alerts: v.alertsPanel })],
-        ['页面还有别的有用内容（模型画像 / ThinCoder 项目都在）', v.modelCard === true && v.tcCard === true, JSON.stringify({ model: v.modelCard, tc: v.tcCard })],
+         // 模型画像整块出自 Codex 会话记录（模型清单 / 使用方式画像），Codex 被隐藏 → 整块跟着收，
+         // 连区块标题一起（不留空壳标题 + 空卡片）；ThinCoder 项目是另一回事，照旧在。
+         ['Codex 被隐藏 → 「AI 能力构成」整块收起：区块标题与卡片都不在', v.modelCard === false && v.modelSec === false, JSON.stringify({ card: v.modelCard, sec: v.modelSec })],
+         ['页面还有别的有用内容（ThinCoder 项目 / 最近提醒都在）', v.tcCard === true && v.alertsPanel === true, JSON.stringify({ tc: v.tcCard, alerts: v.alertsPanel })],
         ['不足三张时保持三栏节奏：卡宽约 1/3 行宽、左边对齐（不把一张卡拉满整行）', runs.every(oneThird), runs.map(line).join(' · ')],
         ...cardRunsOk(runs, r, s0),
       ];
@@ -1462,7 +1598,8 @@ const CASES = [
         ['三张卡片都在且顺序不变（Codex / DeepSeek / GLM）', d.count === 3 && /Codex/.test(d.cards[0].title) && /DeepSeek/.test(d.cards[1].title) && /GLM/.test(d.cards[2].title), JSON.stringify(d.cards.map(c => c.title))],
         ['三张并排一行、每张都够宽（没被压扁）', runs.every(x => x.snap && oneRow(x.snap.dark.cards) && x.snap.dark.cards.every(c => c.w >= 300)), runs.map(x => x.snap ? `${x.size} ${x.snap.dark.cards.map(c => c.w).join('/')}` : `${x.size} 无结果`).join(' · ')],
         ['走的还是默认网格（没有触发「不足三张」那条规则）', runs.every(x => x.snap && x.snap.dark.few === false), JSON.stringify(runs.map(x => x.snap && x.snap.dark.few))],
-        ['各区块全在（三张趋势图 / 三个热力图页签 / 额度去向 / 采集健康三行 / GLM 充值记录）', v.codexChart && v.dsChart && v.glmChart && d.heatTabs.filter(t => t.on).length === 3 && v.attrCard && v.healthCard && d.healthRows.length === 3 && v.packsPanel, JSON.stringify({ v, tabs: d.heatTabs, rows: d.healthRows })],
+         ['各区块全在（三张趋势图 / 三个热力图页签 / 额度去向 / 采集健康三行 / GLM 充值记录）', v.codexChart && v.dsChart && v.glmChart && d.heatTabs.filter(t => t.on).length === 3 && v.attrCard && v.healthCard && d.healthRows.length === 3 && v.packsPanel, JSON.stringify({ v, tabs: d.heatTabs, rows: d.healthRows })],
+         ['Codex 在显示 → 模型画像也在（区块标题与卡片都在）', v.modelCard === true && v.modelSec === true, JSON.stringify({ card: v.modelCard, sec: v.modelSec })],
         ...cardRunsOk(runs, r, s0),
       ];
     },
@@ -1479,7 +1616,7 @@ const CASES = [
         ['固定不显示的 GLM 卡片不在（哪怕它开着采集）', !/GLM/.test(titles), titles],
         ['隐藏 ≠ 停采：GLM 在数据里仍然是开着采集的', s.platforms.glm === true, JSON.stringify(s.platforms)],
         ['GLM 的其它内容也一起收（趋势图 / 热力图页签 / 充值记录）', v.glmChart === false && s.heatTabs.filter(t => t.on && t.k === 'glm').length === 0 && v.packsPanel === false && v.dsChart === true, JSON.stringify({ glmChart: v.glmChart, tabs: s.heatTabs, packs: v.packsPanel })],
-        ['Codex 那边的内容照旧在（显式要显示：趋势图与额度去向都回来）', v.codexChart === true && v.attrCard === true, JSON.stringify({ codexChart: v.codexChart, attrCard: v.attrCard })],
+         ['Codex 那边的内容照旧在（显式要显示：趋势图 / 额度去向 / 模型画像都回来）', v.codexChart === true && v.attrCard === true && v.modelCard === true && v.modelSec === true, JSON.stringify({ codexChart: v.codexChart, attrCard: v.attrCard, model: [v.modelCard, v.modelSec] })],
         ['不横向溢出、无 JS 错误 / 无重复 id', s.ovf === 0 && r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
       ];
     },
@@ -1514,8 +1651,9 @@ const CASES = [
         ['每日热力图整块收起（页签与卡片一起）', v.heatSec === false && v.heatCard === false && s.heatTabs.every(t => !t.on), JSON.stringify({ sec: v.heatSec, card: v.heatCard, tabs: s.heatTabs })],
         ['额度去向与采集健康整块收起（标题也一起收，不留空网格）', v.attrSec === false && v.attrCard === false && v.healthCard === false, JSON.stringify({ sec: v.attrSec, attr: v.attrCard, health: v.healthCard })],
         ['GLM 充值记录收起', v.packsPanel === false, String(v.packsPanel)],
-        ['页面剩下的都是不服务某一家的内容：模型画像 / ThinCoder 项目 / 最近提醒都在', v.modelCard === true && v.tcCard === true && v.alertsPanel === true, JSON.stringify({ model: v.modelCard, tc: v.tcCard, alerts: v.alertsPanel })],
-        ['可见的区块标题只剩「AI …」与「ThinCoder …」（没有空壳标题）', onSec.length === 2 && onSec[0].includes('AI') && onSec[1].includes('ThinCoder'), JSON.stringify(onSec)],
+         ['模型画像也一起收（它出自 Codex 会话记录）：区块标题与卡片都不在', v.modelCard === false && v.modelSec === false, JSON.stringify({ card: v.modelCard, sec: v.modelSec })],
+         ['页面剩下的都是不服务某一家的内容：ThinCoder 项目 / 最近提醒都在', v.tcCard === true && v.alertsPanel === true, JSON.stringify({ tc: v.tcCard, alerts: v.alertsPanel })],
+         ['可见的区块标题只剩「ThinCoder …」（没有空壳标题）', onSec.length === 1 && onSec[0].includes('ThinCoder'), JSON.stringify(onSec)],
         ['可见的分组标题只剩「历史与记录」（充值凭证与提醒流水的入口还在）', onGroups.length === 1 && onGroups[0].includes('历史与记录'), JSON.stringify(onGroups)],
         ['不横向溢出、无 JS 错误 / 无重复 id', s.ovf === 0 && r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
       ];
@@ -1536,7 +1674,8 @@ const CASES = [
         ['每日热力图只剩两个页签（Codex / DeepSeek），选中的不是被收掉的那个', JSON.stringify(tabsOn) === JSON.stringify(['codex', 'deepseek']) && tabsOn.includes(s.heatMetric), `可见 ${JSON.stringify(tabsOn)} · 选中 ${s.heatMetric}`],
         ['采集健康里没有 GLM 的行（另两家照常）', s.healthRows.length === 2 && !s.healthRows.some(x => /GLM/.test(x)), JSON.stringify(s.healthRows)],
         ['额度去向（Codex 归因）还在 —— 收 GLM 不该动别家', v.attrCard === true, String(v.attrCard)],
-        ['GLM 充值记录整块收起', v.packsPanel === false, String(v.packsPanel)],
+         ['GLM 充值记录整块收起', v.packsPanel === false, String(v.packsPanel)],
+         ['模型画像不受影响（Codex 还在显示）', v.modelCard === true && v.modelSec === true, JSON.stringify({ card: v.modelCard, sec: v.modelSec })],
         ['整页不横向溢出、无 JS 错误 / 无重复 id', s.ovf === 0 && r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
       ];
     },

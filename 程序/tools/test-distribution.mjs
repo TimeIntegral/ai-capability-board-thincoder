@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { compareVersions, repositories, validateManifest, fetchBounded } from '../lib/updates.mjs';
 import { ROOT_DIR } from '../lib/common.mjs';
-import { runUpdate } from './update.mjs';
+import { runUpdate, watchInstall, openCommand } from './update.mjs';
 import { prepareUpgrade, finishUpgrade } from './upgrade-lifecycle.mjs';
 
 const channels = { github: 'https://github.com/example/board', gitee: '', community: '' };
@@ -26,6 +26,39 @@ function fixture(t) {
   return root;
 }
 const response = value => new Response(typeof value === 'object' && !Buffer.isBuffer(value) ? JSON.stringify(value) : value);
+// 分批吐的响应：进度回调要按块触发，页面上的百分比就是它一路写到状态文件里的
+function chunkedFetch(buffer, parts, probe) {
+  const size = Math.ceil(buffer.length / parts);
+  return async () => {
+    let index = 0;                                   // 每次请求各自从头吐（换镜像重试时会重新数）
+    return new Response(new ReadableStream({
+      pull(controller) {
+        probe?.();
+        const from = index * size;
+        if (from >= buffer.length) { controller.close(); return; }
+        index += 1;
+        controller.enqueue(new Uint8Array(buffer.subarray(from, from + size)));
+      },
+    }), { status: 200, headers: { 'content-length': String(buffer.length) } });
+  };
+}
+// 假安装器进程：只记参数、按脚本给退出码（或报 spawn 错误）。真装一次会动用户机器，测试里一律不让它跑。
+function fakeInstaller({ code = 0, error = null } = {}) {
+  const calls = [];
+  const impl = (exe, args, options) => {
+    calls.push({ exe, args, options });
+    const listeners = {};
+    const child = { once(name, fn) { listeners[name] = fn; return child; } };
+    setImmediate(() => { if (error) listeners.error?.(error); else listeners.exit?.(code); });
+    return child;
+  };
+  impl.calls = calls;
+  return impl;
+}
+// 页面读的就是这两个文件（data/update-status.json 真源 + update-data.js 注入副本）
+const readStatus = root => JSON.parse(fs.readFileSync(path.join(root, 'data/update-status.json'), 'utf8'));
+// 监看进程的桩：不真等（sleep）、不真开浏览器（open）
+const watchStub = extra => ({ sleep: () => Promise.resolve(), open: async () => { }, ...extra });
 
 test('numeric version order and invalid input', () => {
   assert.equal(compareVersions('1.10.0', '1.9.9'), 1);
@@ -73,7 +106,7 @@ test('daily checks, manual cooldown and user settings persist', async t => {
   await runUpdate('auto-off', opts);
   await runUpdate('auto', { ...opts, now: 100000000 }); assert.equal(count, 2);
   assert.equal((await runUpdate('notify-off', opts)).notifications, false);
-  assert.equal(fs.existsSync(path.join(root, 'data/updates')), false);   // 不再下载安装包，连下载目录都不建
+  assert.equal(fs.existsSync(path.join(root, 'data/updates')), false);   // 检查更新不下载任何东西：下载目录只在用户点「立即更新」时才建
 });
 test('failed checks preserve verified update, never launch or expose request errors', async t => {
   const root = fixture(t);
@@ -82,13 +115,110 @@ test('failed checks preserve verified update, never launch or expose request err
   assert.equal(state.available, true); assert.equal(state.phase, 'error');
   assert.ok(!JSON.stringify(state).includes('PRIVATE_REQUEST_DETAIL'));
 });
-test('已删除的更新动作（下载 / 安装）一律拒绝', async t => {
+// ── 「立即更新」的四条路径（2026-09-20）────────────────────────────────────────────
+// 全部用桩（假响应 / 假安装器进程 / 假「重开看板」）：测试绝不真的装东西 ——
+// 用户机器上真装的只有用户自己点的那一次。
+const INSTALL_MSG = '正在安装，看板会关闭后自动打开';
+const UPDATES_DIR = 'data/updates';
+const setupName = `setup-${futureFixture}.exe`;
+
+test('下载成功 → 校验通过 → 交接安装：进度一路写进状态文件（页面读的就是它）', async t => {
+  const root = fixture(t);
+  const opts = { root, now: 100000, fetcher: async () => response(manifest) };
+  await runUpdate('check', opts);
+  const seen = [];
+  const launched = [];
+  const state = await runUpdate('install', { ...opts, now: 140000,
+    // 每吐一块就读一次状态文件：页面上的百分比来路就是这里（真源 + 注入副本）
+    fetcher: chunkedFetch(bytes, 4, () => seen.push(readStatus(root).progress?.percent ?? null)),
+    launch: async (exe, r, version) => launched.push({ exe, root: r, version, size: fs.statSync(exe).size }) });
+  const percents = seen.filter(n => Number.isFinite(n));
+  assert.ok(new Set(percents).size >= 2, `进度要逐块变（页面才看得到动）：${JSON.stringify(seen)}`);
+  assert.ok(Math.max(...percents) > 0, `进度要能超过 0%：${JSON.stringify(seen)}`);
+  assert.deepEqual(launched, [{ exe: path.join(root, ...UPDATES_DIR.split('/'), setupName), root, version: futureFixture, size: bytes.length }]);
+  assert.equal(fs.existsSync(path.join(root, ...UPDATES_DIR.split('/'), `${setupName}.part`)), false, '不该留下半截下载');
+  const written = readStatus(root);
+  assert.equal(written.phase, 'installing');
+  assert.equal(written.message, INSTALL_MSG);
+  assert.equal('progress' in written, false, '安装阶段不该还挂着下载进度');
+  assert.ok(fs.readFileSync(path.join(root, 'update-data.js'), 'utf8').includes(INSTALL_MSG), '注入副本要带上同一份状态');
+  assert.equal(state.phase, 'installing');
+});
+test('下载失败 → 不落盘、不交接，页面拿到「下载没成功」而不是内部错误', async t => {
+  const root = fixture(t);
+  const opts = { root, now: 100000, fetcher: async () => response(manifest) };
+  await runUpdate('check', opts);
+  let launched = 0;
+  const state = await runUpdate('install', { ...opts, now: 140000,
+    fetcher: async () => { throw new Error('PRIVATE_REQUEST_DETAIL'); }, launch: async () => { launched++; } });
+  assert.equal(state.phase, 'error');
+  assert.equal(state.message, '下载没成功，看板还是原来的版本，请稍后重试');
+  assert.ok(!JSON.stringify(state).includes('PRIVATE_REQUEST_DETAIL'), '网络错误的原文不能进状态文件');
+  assert.equal(state.available, true, '失败要给重试留路');
+  assert.equal(launched, 0, '没下下来就绝不能交给安装器');
+  assert.deepEqual(fs.readdirSync(path.join(root, ...UPDATES_DIR.split('/'))), [], '下载失败不留残件');
+});
+test('校验失败 → 拒绝安装：截断 / 没有 PE 头 / 哈希不对，一个字节都不落盘', async t => {
+  const root = fixture(t);
+  const opts = { root, now: 100000, fetcher: async () => response(manifest) };
+  await runUpdate('check', opts);
+  const tampered = Buffer.from(bytes); tampered[900] = 0x00;
+  const bad = { 截断: bytes.subarray(0, bytes.length - 8), 没有PE头: Buffer.alloc(bytes.length, 0x45), 哈希不对: tampered };
+  for (const [name, pack] of Object.entries(bad)) {
+    let launched = 0;
+    const state = await runUpdate('install', { ...opts, now: 140000, fetcher: async () => response(pack), launch: async () => { launched++; } });
+    assert.equal(state.phase, 'error', name);
+    assert.equal(state.message, '安装包校验失败，已停止安装，看板还是原来的版本', name);
+    assert.equal(launched, 0, `${name}：校验没过就不能交给安装器`);
+    assert.deepEqual(fs.readdirSync(path.join(root, ...UPDATES_DIR.split('/'))), [], `${name}：坏包不能落盘`);
+  }
+});
+test('安装成功：写「已更新到 vX」、看板重新打开、这个版本不再提示', async t => {
   const root = fixture(t);
   await runUpdate('check', { root, now: 100000, fetcher: async () => response(manifest) });
-  for (const action of ['install', 'download', 'auto-install']) {
-    await assert.rejects(() => runUpdate(action, { root, now: 140000, fetcher: async () => { throw new Error('must not fetch'); } }), /未知更新操作/);
+  const spawn = fakeInstaller({ code: 0 });
+  const opened = [];
+  fs.writeFileSync(path.join(root, 'VERSION'), futureFixture);      // 安装器已经把版本号换了
+  const result = await watchInstall(root, path.join(root, setupName), futureFixture, watchStub({ spawnImpl: spawn, open: async r => { opened.push(r); } }));
+  assert.equal(result.done, true);
+  const state = readStatus(root);
+  assert.equal(state.phase, 'installed');
+  assert.equal(state.message, `已更新到 v${futureFixture}`);
+  assert.equal(state.available, false, '装完就不该再提示这一版');
+  assert.equal(state.currentVersion, futureFixture, 'currentVersion 要从 VERSION 现读：不然页面会继续弹「立即更新」');
+  assert.equal(state.progress, undefined);
+  assert.deepEqual(opened, [root], '装完要把看板打开：用户得看到新版本');
+});
+test('安装失败（退出码 1 / 用户取消 1602 / 起不来）：给明确结果、仍可重试、看板照旧打开', async t => {
+  for (const [code, message] of [[1, '更新没装成，看板还是原来的版本'], [1602, '安装被取消了，看板还是原来的版本'], [1223, '安装被取消了，看板还是原来的版本']]) {
+    const root = fixture(t);
+    await runUpdate('check', { root, now: 100000, fetcher: async () => response(manifest) });
+    const opened = [];
+    await watchInstall(root, path.join(root, setupName), futureFixture, watchStub({ spawnImpl: fakeInstaller({ code }), open: async r => { opened.push(r); } }));
+    const state = readStatus(root);
+    assert.equal(state.phase, 'error', `退出码 ${code}`);
+    assert.equal(state.message, message, `退出码 ${code}`);
+    assert.equal(state.available, true, `退出码 ${code}：失败了要能重试`);
+    assert.deepEqual(opened, [root], `退出码 ${code}：失败也要把看板打开，用户得看见结果`);
   }
-  assert.equal(fs.existsSync(path.join(root, 'data/updates')), false);
+  const root = fixture(t);
+  await runUpdate('check', { root, now: 100000, fetcher: async () => response(manifest) });
+  await watchInstall(root, path.join(root, setupName), futureFixture, watchStub({ spawnImpl: fakeInstaller({ error: new Error('ENOENT') }) }));
+  assert.equal(readStatus(root).message, '更新没装成，看板还是原来的版本', '安装器起不来也算没装成，不能停在「安装中」');
+});
+test('交给安装器的参数：/SILENT 看得见进度（不是 /VERYSILENT）、/NORESTART、/DIR 原地覆盖', async t => {
+  const root = fixture(t);
+  await runUpdate('check', { root, now: 100000, fetcher: async () => response(manifest) });
+  const spawn = fakeInstaller({ code: 0 });
+  await watchInstall(root, path.join(root, setupName), futureFixture, watchStub({ spawnImpl: spawn }));
+  const [call] = spawn.calls;
+  assert.deepEqual(call.args, ['/SILENT', '/NORESTART', '/SP-', `/DIR=${root}`]);
+  assert.equal(call.options.windowsHide, false, '安装窗口要看得见（用户要能看到安装进度）');
+});
+test('装完重开看板：既有打开方式 + 落在「帮助与反馈」', () => {
+  const cmd = openCommand(path.join(os.tmpdir(), 'board-open'));
+  assert.ok(cmd.startsWith("Start-Process 'file:///"), cmd);
+  assert.ok(cmd.endsWith("#support'"), cmd);
 });
 test('跳过只针对被跳过的那个版本，更新的版本照常提示', async t => {
   const root = fixture(t);
@@ -106,6 +236,9 @@ test('跳过只针对被跳过的那个版本，更新的版本照常提示', as
   const NEXT_FIXTURE = '2.1.0';
   const next = { ...manifest, version: NEXT_FIXTURE, urls: [`${repos[0]}/releases/download/v${NEXT_FIXTURE}/setup.exe`], releaseUrl: `${repos[0]}/releases/tag/v${NEXT_FIXTURE}` };
   assert.equal((await runUpdate('check', { ...opts, now: 300000, fetcher: async () => response(next) })).available, true);
+  // 跳过之后又改主意（在帮助与反馈里主动点「立即更新」）：得真能装上 —— available=false 只是「不再主动提示」的意思
+  const afterSkip = await runUpdate('install', { ...opts, now: 400000, fetcher: async () => response(bytes), launch: async () => { } });
+  assert.equal(afterSkip.phase, 'installing', '跳过之后点「立即更新」要真装上，不能说「请先检查更新」');
   // 记录住在 update-preferences.json（与两个开关同一个文件），不另开状态文件
   const prefs = JSON.parse(fs.readFileSync(path.join(root, 'data/update-preferences.json'), 'utf8'));
   assert.equal(prefs.skippedVersion, '2.0.0');
@@ -123,6 +256,10 @@ test('协议白名单里的每个动作 update.mjs 都认（对不上就是「�
   assert.ok(line, '程序/运行协议.vbs 里没找到 update- 的固定动作表');
   const actions = [...line.matchAll(/"([a-z][a-z-]*)"/g)].map(m => m[1]);
   assert.ok(actions.includes('skip'), `白名单里应当有 skip：${line}`);
+  assert.ok(actions.includes('install'), `白名单里应当有 install（「立即更新」的执行端）：${line}`);
+  // Windows 脚本宿主按系统 ANSI 码页读 .vbs：混进非 ASCII 字节会吞掉换行、把脚本搞成语法错误（踩过）
+  const vbsBuf = fs.readFileSync(path.join(ROOT_DIR, '程序', '运行协议.vbs'));
+  assert.equal([...vbsBuf].filter(b => b > 0x7F).length, 0, '程序/运行协议.vbs 必须保持纯 ASCII');
   const root = fixture(t);
   const opts = { root, now: 100000, fetcher: async () => response(manifest) };
   await runUpdate('check', opts);

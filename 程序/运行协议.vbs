@@ -71,7 +71,7 @@ If Left(action, 7) = "update-" Then
   ' Fixed action allowlist; never accept a URL or executable path from the browser.
   v = Mid(action, 8)
   Select Case v
-    Case "check", "skip", "auto-on", "auto-off", "notify-on", "notify-off"
+    Case "check", "install", "skip", "auto-on", "auto-off", "notify-on", "notify-off"
       sh.CurrentDirectory = dir
       sh.Run Chr(34) & nodeExe & Chr(34) & " " & Chr(34) & dir & "\tools\update.mjs" & Chr(34) & " " & v, 0, False
     Case Else

@@ -29,8 +29,8 @@ export function thresholdEditorValues(cfg) {
   }
   return out;
 }
-// 看板显示卡片的现状值：show = 这一家在看板上显不显示（缺键 = 显示，见 lib/common.mjs 的 cardSettings）。
-// 窗口用它预填「看板显示卡片」那一勾；保存时只把「与默认不同」的那几家写进配置（同一条环境变量通路）。
+// 看板显示的现状值：show = 这一家在看板上显不显示（缺键 = 显示，见 lib/common.mjs 的 cardSettings）。
+// 窗口用它预填「看板显示这一家」那一勾；保存时只把「与默认不同」的那几家写进配置（同一条环境变量通路）。
 // 这里不做任何推断，也就不需要 state —— 配置本身就能算出来（读不到配置时不注入，窗口回退到默认「显示」）。
 export function cardsEditorValues(cfg) {
   try { return cardSettings(cfg); } catch { return null; }

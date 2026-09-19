@@ -84,7 +84,7 @@ test('读取安装清单：没有清单时返回空数组（便携解压/开发�
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   assert.deepEqual(读取安装清单(root), []);
   fs.mkdirSync(path.join(root, '程序'), { recursive: true });
-  fs.writeFileSync(path.join(root, '程序/installed-files.json'), JSON.stringify({ version: '1.3.0', files: ['VERSION', '程序/x.mjs'] }));
+  fs.writeFileSync(path.join(root, '程序/installed-files.json'), JSON.stringify({ version: '1.4.0', files: ['VERSION', '程序/x.mjs'] }));
   assert.deepEqual(读取安装清单(root), ['VERSION', '程序/x.mjs']);
   fs.writeFileSync(path.join(root, '程序/installed-files.json'), '{ 坏 JSON');
   assert.deepEqual(读取安装清单(root), []);

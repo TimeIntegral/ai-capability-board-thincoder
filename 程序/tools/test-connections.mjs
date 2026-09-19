@@ -261,7 +261,8 @@ process.stdout.write('连接测试通过');`);
 
 // ---- 看板显示（2026-09-20 收敛：不要自动隐藏，只看用户自己的设置）----
 // 两件事分得很清：config.platforms 管采集与提醒，dashboard.cards 只管看板上显不显示这一家；
-// 不显示 = 卡片、趋势图、热力图页签、额度去向、采集健康、GLM 充值记录里的这一家一起收（见 dashboard.html 的 applyVisibility）。
+// 不显示 = 卡片、趋势图、热力图页签、额度去向、采集健康、GLM 充值记录里的这一家一起收，
+// 以及「AI 能力构成」的模型画像 —— 画像出自 Codex 会话记录，跟着 Codex 一起收（见 dashboard.html 的 applyVisibility）。
 
 test('显示规则：只看用户设置 —— 缺键 = 显示（关掉采集的平台也照样显示），只有显式 false 才不显示', () => {
   const show = cfg => Object.fromEntries(Object.entries(cardsEditorValues(cfg)).map(([k, v]) => [k, v.show]));
@@ -324,7 +325,7 @@ test('cards 里的非法值在写入之前被拒绝', t => {
   }
 });
 
-test('窗口的「看板显示卡片」：预填注入值；取消勾选的那家写 false，勾着的写 null（回到默认显示）', { skip: process.platform !== 'win32' }, t => {
+test('窗口的「看板显示这一家」：预填注入值；取消勾选的那家写 false，勾着的写 null（回到默认显示）', { skip: process.platform !== 'win32' }, t => {
   const dir = fixture(t);
   const tools = path.join(dir, '程序', 'tools');
   fs.mkdirSync(tools, { recursive: true });

@@ -94,7 +94,7 @@ export const 发布层 = [
   ['程序/tools/setup-notify.mjs', '首次启用的中文完成提示（启用自动采集.vbs 调用）'],
   ['程序/tools/tray.ps1', '托盘常驻脚本（托盘图标.vbs 调用）'],
   ['程序/tools/uninstall.mjs', '卸载清理：停掉后台、注销任务与协议，用户数据默认保留'],
-  ['程序/tools/update.mjs', '检查更新与「跳过该版本」（看板「检查更新」、跳过按钮与启动时自动检查）'],
+  ['程序/tools/update.mjs', '检查更新、立即更新（下载/校验/交安装/重开看板）与「跳过该版本」'],
   ['程序/tools/upgrade-lifecycle.mjs', '升级前备份、失败回滚（安装器调用）'],
   ['程序/tools/windows-integration.mjs', '系统集成公共库：计划任务、快捷方式、托盘进程收口'],
 

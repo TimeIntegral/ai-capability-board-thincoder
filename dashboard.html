@@ -669,7 +669,9 @@ function applyCardLayout(count) {
 
 /* 「不显示这一家」生效的地方全部收在这里（一处收口：以后新增区块也只在这里加）。
    原则：整块收起 —— 不留空容器、孤立标题或错位的分隔线；只服务这三家的区块在三家全不显示时整体消失
-   （页面还有别的有用内容：模型画像、ThinCoder 项目、提醒记录）。
+   （页面还有别的有用内容：ThinCoder 项目、提醒记录）。
+   判据是「这块内容出自谁」：「AI 能力构成」（模型画像）的数据全出自 Codex 会话记录，
+   它不是"与某一家无关的内容"，跟着 Codex 的显示状态走（见下）。
    隐藏 ≠ 停采：采集、规则与提醒照旧（那是 config.platforms 的事）。 */
 const CHART_HOST = { codex: 'wrap-codex', deepseek: 'wrap-ds', glm: 'wrap-glm' };
 function showEl(el, on) { if (el) el.style.display = on ? '' : 'none'; }
@@ -694,11 +696,18 @@ function applyVisibility() {
   if (left.length && !left.some(b => b.dataset.heat === heatMetric)) syncHeatMetric(left[0].dataset.heat);
 
   // 额度去向（Codex 会话归因）与采集健康：各自按家收；两块都不剩时连标题与那一行网格一起收
-  const attrOn = !platHidden('codex'), attrCard = cardOf('attrBars');
-  showEl(attrCard, attrOn);
+  const codexOn = !platHidden('codex'), attrCard = cardOf('attrBars');
+  showEl(attrCard, codexOn);
   showEl(cardOf('healthList'), anyShown);
-  showEl(secOf('attrNote'), attrOn || anyShown);
-  showEl(attrCard?.parentElement ?? null, attrOn || anyShown);
+  showEl(secOf('attrNote'), codexOn || anyShown);
+  showEl(attrCard?.parentElement ?? null, codexOn || anyShown);
+
+  // 「AI 能力构成」（模型画像）：整块的内容都出自本地 Codex 会话记录 —— 模型清单与"接口当前可用"
+  // 来自 Codex（见 程序/tools/attribution.mjs 的 turn_context.model、build-dashboard-data.mjs 的
+  // models.available），使用方式画像也出自同一批会话。隐藏 Codex 的人不该还看到基于 Codex 的画像
+  // → 跟着 Codex 的显示状态走，区块标题与卡片一起收（不留空壳标题 + 空卡片）。
+  showEl(secOf('modelNote'), codexOn);
+  showEl(cardOf('modelBars'), codexOn);
 
   // 「历史与记录」里的 GLM 充值记录：整块只有 GLM 的内容
   showEl($('packs-table')?.closest('.panel') ?? null, !platHidden('glm'));

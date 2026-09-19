@@ -64,7 +64,7 @@ function KeyHint($name){
   if($status.$name.found){return '已有密钥，留空复用'}
   return '尚未添加密钥'
 }
-# 「看板显示卡片」这一勾的预填值：show = 这一家在看板上显不显示（node 侧算好，缺键 = 显示）。
+# 「看板显示这一家」这一勾的预填值：show = 这一家在看板上显不显示（node 侧算好，缺键 = 显示）。
 # 注入拿不到就按默认「显示」——不再跟平台开关联动：隐不隐藏只看用户自己这一勾。
 function CardShown($name){
   if($boardCards-and($boardCards.PSObject.Properties.Name-contains$name)){return [bool]$boardCards.$name.show}
@@ -98,13 +98,13 @@ function Add-PlatformCard($name,$y,$height){
     $link.Tag=if($name-eq'deepseek'){'https://platform.deepseek.com/'}else{'https://www.bigmodel.cn/'}
     $link.Add_LinkClicked({param($sender,$eventArgs) Start-Process $sender.Tag}); $card.Controls.Add($link)
   }
-  # 「看板显示卡片」：与上面那个平台开关是两件事——开关管采集与提醒，这一勾只管看板上显不显示这一家的内容
-  # （卡片、趋势图、热力图页签、额度去向与采集健康里那一家的内容）。默认 = 显示，取消勾选才是「不要这一家」。
-  $display=New-Object Windows.Forms.CheckBox; $display.Text='看板显示卡片'
+  # 「看板显示这一家」：与上面那个平台开关是两件事——开关管采集与提醒，这一勾管的是看板上显不显示**这一家的
+  # 全部内容**（卡片、趋势图、热力图页签、额度去向、采集健康、充值记录、模型画像）。默认 = 显示，取消勾选才是「不要这一家」。
+  $display=New-Object Windows.Forms.CheckBox; $display.Text='看板显示这一家'
   $display.Location=New-Object Drawing.Point(376,$(if($name-eq'codex'){36}else{44})); $display.Size=New-Object Drawing.Size($(if($name-eq'codex'){240}else{140}),24)
   $display.Font=$fontSmall; $display.ForeColor=$colors.Text; $display.BackColor=$colors.Card; $display.Checked=(CardShown $name)
   $card.Controls.Add($display); $displays[$name]=$display
-  $tip.SetToolTip($display,'不勾：看板上不显示这一家的内容（卡片与图表）。采集与提醒照常，不受影响。')
+  $tip.SetToolTip($display,'不勾：看板上关于这一家的内容全部收起。采集与提醒照常。')
   $check.Add_CheckedChanged({param($sender,$eventArgs)
     Set-CardState $sender   # 平台开关只管自己那一行（灰掉/恢复密钥框）：与卡片显示不再联动
   })
@@ -174,12 +174,17 @@ if($PreviewPath){
       if([Windows.Forms.TextRenderer]::MeasureText($hints[$name].Text,$hints[$name].Font).Width-gt$hints[$name].Width){throw "密钥来源提示被截断（$name）"}
     }}}
     if($descs.ContainsKey('deepseek')){if($descs['deepseek'].Text-ne'查看按量计费余额。'-or$descs['deepseek'].Text-match'Coding Plan'){throw 'DeepSeek 说明行不符'}}
-    # 「看板显示卡片」那一勾：必须在自己那一行里、不压住密钥框与链接、文字不被截断，
+    # 「看板显示这一家」那一勾：必须在自己那一行里、不压住密钥框与链接、文字不被截断，
     # 预填值 = node 侧注入的生效值（注入拿不到时按默认「显示」，不报错）。
     foreach($name in @($displays.Keys)){
       $display=$displays[$name];$panel=$display.Parent
       if($display.Left-lt 0-or$display.Top-lt 0-or($display.Left+$display.Width)-gt$panel.Width-or($display.Top+$display.Height)-gt$panel.Height){throw "看板显示勾选框越出行（$name）"}
       if([Windows.Forms.TextRenderer]::MeasureText($display.Text,$display.Font).Width-gt($display.Width-22)){throw "看板显示勾选框文字被截断（$name）"}
+      # 文字必须就是它做的事：这一勾管的是**这一家的全部内容**（卡片、趋势图、热力图页签、额度去向、采集健康、
+      # 充值记录、模型画像），不是只有卡片；提示语与它同步，且不许把「不勾」说成停采。
+      if($display.Text-ne'看板显示这一家'){throw "看板显示勾选框的文字不符（$name）：$($display.Text)"}
+      $displayTip=$tip.GetToolTip($display)
+      if(($displayTip-notmatch'全部')-or($displayTip-notmatch'采集与提醒照常')){throw "看板显示勾选框的提示与行为不符（$name）：$displayTip"}
       foreach($other in $panel.Controls){if($other-eq$display){continue}
         if($other.Visible-and$other.Left-lt($display.Left+$display.Width)-and($other.Left+$other.Width)-gt$display.Left-and$other.Top-lt($display.Top+$display.Height)-and($other.Top+$other.Height)-gt$display.Top){throw "看板显示勾选框与「$($other.Text)」重叠（$name）"}}
       if($boardCards-and($boardCards.PSObject.Properties.Name-contains$name)){if($display.Checked-ne[bool]$boardCards.$name.show){throw "看板显示的预填值与注入不符（$name）"}}
