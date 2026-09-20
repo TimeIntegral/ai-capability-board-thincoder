@@ -24,6 +24,9 @@
 //   T48/T49 「额度去向」两列随本机 ThinCoder 状态一起变：装了 → 无记录行给「创建」、有会话行给「⌨ 启动」（两处都是 opentc 协议）；
 //                没装 → 只给安装引导、启动列整列收起（不承诺起不来的动作）。
 //   T52 同两列，但数据里根本没有 thinCoderInstalled 字段（老数据 / 还没采集过）：按「未知」保守显示，两个入口照常给，不因取不到值就整列消失。
+//   T68/T69 「额度去向」的行集合 = 有 Codex 会话的项目 ∪ 有 ThinCoder 会话的项目：只用 ThinCoder 的项目也进表，
+//                 用量列显示「—」而不是 0（本机没有它们的 token 记录），行集合跟着窗口（7 天 / 30 天 / 全部）变；
+//                 T68 在 node 侧验并集本身（谁成行、谁跟谁合并、token 给什么、排序），T69 在页面侧验渲染。
 //   T61 两列「点得开吗」：点得开的行点下去真的发协议（openpath / opentc 的 URL 逐个断言）；白名单拒绝、目录已不在的行
 //                不给按钮、把怎么放行写在表下（2026-09-20 故障：白名单拒绝只写日志，页面上点下去零反馈）；老数据照旧给按钮。
 //   T50/T51/T62/T63/T65/T66/T67 「检查更新」与「立即更新」：检测到新版本时弹窗与横幅给三个动作——
@@ -43,6 +46,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { ROOT_DIR, cardSettings, enabledPlatforms } from '../lib/common.mjs';
+// T68 在 node 侧直接验「并集」这一步：页面只负责照着渲染，行是怎么并出来的在这里断言
+import { mergeProjectRows } from './attribution.mjs';
 
 const ROOT = ROOT_DIR;                       // 项目根（dashboard.html / dashboard-data.js 在那一层）
 const TMP = path.join(ROOT, 'data', '__test-dashboard__');
@@ -391,6 +396,67 @@ function tcLayoutOk(runs) {
   const line = x => x.snap ? `${x.size} 列宽 ${x.snap.noTc ? x.snap.noTc.cellW : '?'} · 文案宽 ${x.snap.noTc ? x.snap.noTc.linkW : '?'} · 表头对齐 ${x.snap.colAligned} · 横向溢出 ${x.snap.ovf}` : `${x.size} 无结果`;
   return runs.map(x => [`${x.size} 宽：入口在 ThinCoder 单元格内、表头与数据列不歪、页面不横向溢出`, fit(x) === true, line(x)]);
 }
+
+// ---------- 额度去向：行集合是「有 Codex 的」∪「有 ThinCoder 的」（T69 页面 / T68 node 侧） ----------
+// 用户 2026-09-20 报的问题：只用 ThinCoder、没用 Codex 的项目在这张表里完全看不见。
+// 数据形状就是采集端并完之后的：只有 ThinCoder 的行 token / 轮次是 null（不是 0——0 会被读成"用了但为零"）。
+const U_BOTH = ['D:', 'p', 'both'].join('\\');
+const U_CODEX = ['D:', 'p', 'codex-only'].join('\\');
+const U_TC_NEW = ['D:', 'p', 'tc-new'].join('\\');
+const U_TC_OLD = ['D:', 'p', 'tc-old'].join('\\');
+const U_EMPTY = ['D:', 'p', 'codex-empty'].join('\\');
+const unionRow = (o) => ({
+  sessions: 0, firstTs: Date.now() - 2 * 86400000, lastTs: Date.now() - 2 * 86400000,
+  tokens7: null, tokens30: null, tokensAll: null, turns7: null, turns30: null, turnsAll: null,
+  thinCoderLastMs: Date.now() - 2 * 86400000, act: 'ok', ...o,
+});
+const UNION_DATA = {
+  ...LIVE_DATA,
+  thinCoderInstalled: true,
+  attribution: {
+    generatedAtMs: 1, scannedFiles: 4, codexProjectCount: 2, thinCoderOnlyProjectCount: 2,
+    total7: 600, total30: 600, totalAll: 600, projects: [
+      unionRow({ project: '两边都用的项目', cwd: U_BOTH, hasCodex: true, tokens7: 500, tokens30: 500, tokensAll: 500, turns7: 5, turns30: 5, turnsAll: 5, thinCoderSessions: 2, thinCoderSessions7: 1, thinCoderSessions30: 2 }),
+      unionRow({ project: '只有 Codex 的项目', cwd: U_CODEX, hasCodex: true, tokens7: 100, tokens30: 100, tokensAll: 100, turns7: 2, turns30: 2, turnsAll: 2, thinCoderSessions: 0, thinCoderSessions7: 0, thinCoderSessions30: 0, thinCoderLastMs: null }),
+      unionRow({ project: '只有 ThinCoder 的新项目', cwd: U_TC_NEW, hasCodex: false, thinCoderSessions: 3, thinCoderSessions7: 3, thinCoderSessions30: 3 }),
+      // 有 Codex 会话、但一条 token 记录都没有（真机上的「桌面」就是这样：两个空会话文件）：
+      // token 是真数字 0，但那是「没有记录」——照「—」显示，免得读成「用了但为零」
+      unionRow({ project: '有 Codex 空会话的项目', cwd: U_EMPTY, hasCodex: true, tokens7: 0, tokens30: 0, tokensAll: 0, turns7: 0, turns30: 0, turnsAll: 0, thinCoderSessions: 1, thinCoderSessions7: 1, thinCoderSessions30: 1 }),
+      // 只在近 30 天里用过：近 7 天不该出现（行集合跟着窗口走），近 30 天与全部要出现
+      unionRow({ project: '只有 ThinCoder 的旧项目', cwd: U_TC_OLD, hasCodex: false, thinCoderSessions: 5, thinCoderSessions7: 0, thinCoderSessions30: 5, thinCoderLastMs: Date.now() - 20 * 86400000 }),
+    ],
+    models: [], usageStyle: null,
+    thinCoder: { projects: [], scannedFiles: 0, sessionDir: ['C:', 'Users', 'example', '.thincoder', 'sessions'].join('\\'), totalSessions: 0, total7: 0, total30: 0, totalAll: 0 },
+    coverage: { fromMs: Date.now() - 20 * 86400000, toMs: Date.now() },
+  },
+};
+// 三个窗口各读一次表：行集合 / 用量列 / 占比列 / ThinCoder 列 / 色带宽度
+const ATTR_UNION_DRIVER = `
+      await t.untilSel('#attrBars .arow:not(.head)');
+      function snap() {
+        return [].slice.call(document.querySelectorAll('#attrBars .arow:not(.head)')).map(function (r) {
+          var badge = r.querySelector('.tcc .on') || r.querySelector('.tcc a');
+          return {
+            name: (r.querySelector('.name').textContent || '').trim(),
+            tc: (r.querySelector('.tcc').textContent || '').trim(),
+            tcTitle: badge ? (badge.getAttribute('title') || '') : '',
+            num: (r.querySelector('.num').textContent || '').trim(),
+            pct: (r.querySelector('.pct').textContent || '').trim(),
+            band: (r.getAttribute('style') || ''),
+          };
+        });
+      }
+      var snaps = { d7: snap() };
+      t.click('#attrSeg [data-attr="30"]');
+      await t.wait(30);
+      snaps.d30 = snap();
+      t.click('#attrSeg [data-attr="all"]');
+      await t.wait(30);
+      snaps.dall = snap();
+      t.snapshot({ snaps: snaps, hint: (document.querySelector('#attrHint').textContent || ''), head: (document.querySelector('#attrBars .arow.head .name').textContent || '').trim() });
+    `;
+const snapRow = (list, name) => (list || []).filter(x => x.name === name)[0];
+const snapNames = list => (list || []).map(x => x.name);
 
 // ---------- 检查更新：两个动作（T50 检测到新版本 / T51 已跳过 / T62 拿不到 Release 地址 / T63 已是最新） ----------
 // 状态就是 tools/update.mjs 写进 update-data.js 的那份（window.BOARD_UPDATE）。
@@ -1680,6 +1746,40 @@ const CASES = [
       ];
     },
   },
+  {
+    id: 'T69', desc: '额度去向行集合 = Codex ∪ ThinCoder：只有 ThinCoder 的项目也进表，用量显示「—」而不是 0，行集合跟着窗口变',
+    windowSize: '1280,900',
+    page: { sdp: 'none', dataJs: liveJs(UNION_DATA), driver: ATTR_UNION_DRIVER },
+    check: r => {
+      const s = (r.res.snap && r.res.snap.snaps) || { d7: [], d30: [], dall: [] };
+      const d7 = s.d7, d30 = s.d30, dall = s.dall;
+      const tcNew7 = snapRow(d7, '只有 ThinCoder 的新项目');
+      const both7 = snapRow(d7, '两边都用的项目');
+      const tcOld7 = snapRow(d7, '只有 ThinCoder 的旧项目');
+      const tcOld30 = snapRow(d30, '只有 ThinCoder 的旧项目');
+      const tcNewAll = snapRow(dall, '只有 ThinCoder 的新项目');
+      const bothAll = snapRow(dall, '两边都用的项目');
+      const empty7 = snapRow(d7, '有 Codex 空会话的项目');
+      const emptyAll = snapRow(dall, '有 Codex 空会话的项目');
+      return [
+        ['只有 ThinCoder 的项目出现在表里（近 7 天）', !!tcNew7 && !!snapRow(d7, '只有 Codex 的项目'), snapNames(d7).join(' | ')],
+        ['它的用量列是「—」不是 0、占比列也是「—」', tcNew7.num === '—' && tcNew7.pct === '—' && tcNew7.num !== '0', JSON.stringify(tcNew7)],
+        ['ThinCoder 会话数照旧显示（⌨ 3）', tcNew7.tc === '⌨ 3', tcNew7.tc],
+        ['只有 ThinCoder 的行不画色带（宽度 0%，不留 1% 的最小宽度）', /--w:0%/.test(tcNew7.band), tcNew7.band],
+        ['两边都用的行不受影响：用量「500」、ThinCoder「⌨ 2」', both7.num === '500' && both7.tc === '⌨ 2', JSON.stringify(both7)],
+        ['累计会话数与窗口会话数分得开（title 里带本窗口数）', /共?有? 2 个 ThinCoder 会话/.test(both7.tcTitle) && /近 7 天 1 个/.test(both7.tcTitle), both7.tcTitle],
+        ['近 7 天不列「只在 30 天内用过」的项目', !tcOld7 && !!tcOld30, `7天=${snapNames(d7).join('|')} 30天=${snapNames(d30).join('|')}`],
+        ['近 30 天把它列出来（行集合跟着窗口变）', !!tcOld30 && tcOld30.num === '—', JSON.stringify(tcOld30)],
+        ['全部：五个项目都在，只有 ThinCoder 的排在 Codex 行之后', snapNames(dall).length === 5 && snapNames(dall).indexOf('只有 ThinCoder 的新项目') > snapNames(dall).indexOf('只有 Codex 的项目'), snapNames(dall).join(' | ')],
+        ['全部窗口下 token 仍是「—」（token 数来自 Codex，ThinCoder 侧没有，不编造）', tcNewAll.num === '—' && tcNewAll.pct === '—' && bothAll.num === '500', JSON.stringify({ tc: tcNewAll, both: bothAll })],
+        ['表下说明「—」不是 0', /不是 0/.test(r.res.snap.hint || ''), (r.res.snap.hint || '').slice(0, 120)],
+        ['Codex 只留下空会话（没记上用量）的行也显示「—」而不是 0（真机的「桌面」就是这种）',
+          !!empty7 && empty7.num === '—' && empty7.pct === '—' && /--w:0%/.test(empty7.band) && !!emptyAll && emptyAll.num === '—',
+          JSON.stringify({ d7: empty7, all: emptyAll })],
+        ['整页不横向溢出、无 JS 错误 / 无重复 id', r.res.errors.length === 0 && (r.res.dupIds || []).length === 0, JSON.stringify(r.res.errors.slice(0, 3))],
+      ];
+    },
+  },
 ];
 
 
@@ -1748,6 +1848,46 @@ function runCardsRule() {
     eq(enabledPlatforms({ platforms: { glm: false }, dashboard: { cards: { glm: true } } }), { codex: true, deepseek: true, glm: false }));
 }
 
+// ---------- T68：额度去向的行集合（node 侧 mergeProjectRows，与无头浏览器无关） ----------
+// 为什么放在这里验：页面只负责照着渲染（T69），「哪些项目该成行、谁跟谁并成一行、只有 ThinCoder 的行
+// token 给什么」是采集端这一步的事——这里给一串构造好的输入，直接断言输出。
+function runMergeRule() {
+  const day = 86400000, now = Date.now();
+  const codexRows = [
+    { project: 'A 两边都用', cwd: ['D:', 'p', 'a'].join('\\'), tokens7: 500, tokens30: 500, tokensAll: 500, turnsAll: 3, firstTs: now - 10 * day, lastTs: now },
+    { project: 'B 只有 Codex', cwd: ['D:', 'p', 'b'].join('\\'), tokens7: 100, tokens30: 100, tokensAll: 100, turnsAll: 1, firstTs: now - 5 * day, lastTs: now },
+  ];
+  const tcProjects = [
+    { cwd: ['d:', 'p', 'a'].join('\\'), project: 'A 两边都用', sessions: 2, sessions7: 1, sessions30: 2, firstMs: now - 9 * day, lastMs: now },
+    { cwd: ['D:', 'p', 'c'].join('\\'), project: 'C 只有 ThinCoder（新）', sessions: 3, sessions7: 3, sessions30: 3, firstMs: now - 2 * day, lastMs: now - day },
+    { cwd: ['D:', 'p', 'd'].join('\\'), project: 'D 只有 ThinCoder（旧）', sessions: 5, sessions7: 0, sessions30: 0, firstMs: now - 60 * day, lastMs: now - 40 * day },
+    { cwd: '', project: '（无路径记录）', sessions: 6, sessions7: 3, sessions30: 3, firstMs: now, lastMs: now },
+  ];
+  const rows = mergeProjectRows(codexRows, tcProjects, now);
+  const by = n => rows.filter(r => r.project === n)[0];
+  const order = rows.map(r => r.project);
+  const a = by('A 两边都用'), b = by('B 只有 Codex'), c = by('C 只有 ThinCoder（新）'), d = by('D 只有 ThinCoder（旧）');
+
+  check('T68', '行集合 = 两边的并集：只有 ThinCoder 的项目也成行',
+    rows.length === 4 && !!c && !!d, order.join(' | '));
+  check('T68', '同一个目录两边都有 → 只出一行，两列都有数（大小写不敏感）',
+    !!a && a.hasCodex === true && a.thinCoderSessions === 2 && a.thinCoderSessions7 === 1 && a.thinCoderSessions30 === 2
+      && rows.filter(r => (r.cwd || '').toLowerCase() === ['d:', 'p', 'a'].join('\\')).length === 1
+      && a.tokensAll === 500, JSON.stringify(a));
+  check('T68', '只有 Codex 的行照旧：ThinCoder 会话数为 0',
+    !!b && b.hasCodex === true && b.thinCoderSessions === 0 && b.tokensAll === 100, JSON.stringify(b));
+  check('T68', '只有 ThinCoder 的行：token / 轮次是 null（不是 0 —— 0 会被读成"用了但为零"）',
+    !!c && c.hasCodex === false && c.tokens7 === null && c.tokens30 === null && c.tokensAll === null
+      && c.turns7 === null && c.turns30 === null && c.turnsAll === null, JSON.stringify(c));
+  check('T68', '只有 ThinCoder 的行带着窗口口径的会话数（行集合要按窗口筛）',
+    !!c && c.thinCoderSessions7 === 3 && !!d && d.thinCoderSessions7 === 0 && d.thinCoderSessions30 === 0 && d.thinCoderSessions === 5,
+    JSON.stringify({ c: c && c.thinCoderSessions7, d: d && [d.thinCoderSessions, d.thinCoderSessions7, d.thinCoderSessions30] }));
+  check('T68', '排序：有 Codex 的在前（按用量降序），只有 ThinCoder 的在后（按会话数降序）',
+    JSON.stringify(order) === JSON.stringify(['A 两边都用', 'B 只有 Codex', 'D 只有 ThinCoder（旧）', 'C 只有 ThinCoder（新）']), order.join(' | '));
+  check('T68', '没有 cwd 的记录不进这张表（定位不到项目目录；ThinCoder 表里另有说明）',
+    !rows.some(r => !r.cwd) && rows.length === 4, order.join(' | '));
+}
+
 // ---------- 主流程 ----------
 const browser = findBrowser();
 if (!browser) { console.error('未找到 Edge/Chrome，无法运行看板桩测试'); process.exit(1); }
@@ -1772,6 +1912,10 @@ if (!ONLY) {
 if (!ONLY || ONLY === 'T60') {
   console.log(`\n=== T60 显示规则（node 侧，与无头浏览器无关） ===`);
   runCardsRule();
+}
+if (!ONLY || ONLY === 'T68') {
+  console.log(`\n=== T68 额度去向行集合（node 侧，与无头浏览器无关） ===`);
+  runMergeRule();
 }
 console.log(`\n=== 结果：${pass} 通过 / ${fail} 失败 ===`);
 if (failures.length) { console.log('失败明细：'); for (const f of failures) console.log('  - ' + f); }

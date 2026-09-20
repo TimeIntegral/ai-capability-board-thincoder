@@ -395,7 +395,7 @@ try { var __t = localStorage.getItem('quota-theme'); if (__t) document.documentE
   <div class="sec" style="margin-top:20px">额度去向与采集健康 <span class="span"></span><span class="muted" id="attrNote"></span></div>
   <div class="grid">
     <div class="card">
-      <h2>额度去向 <span class="tag">Codex 会话归因</span>
+      <h2>额度去向 <span class="tag">Codex 用量 + ThinCoder 项目</span>
         <span class="seg sm" id="attrSeg" style="margin-left:auto">
           <button data-attr="7">近 7 天</button>
           <button data-attr="30">近 30 天</button>
@@ -1326,7 +1326,9 @@ function sortHead(label, key, sort, attr) {
   return `<span class="so ${on ? 'on' : ''}" data-${attr}="${key}" title="点击按「${label}」排序">${label}<i>${arrow}</i></span>`;
 }
 
-/* ================= 额度去向（按项目归因 Codex 用量） ================= */
+/* ================= 额度去向（Codex 用量归因 + 只有 ThinCoder 的项目） =================
+   行集合由采集端算好（程序/tools/attribution.mjs 的 mergeProjectRows）：有 Codex 会话的项目 ∪ 有 ThinCoder
+   会话的项目，按 cwd 合并成一行；只有 ThinCoder 的行 token 为 null（不是 0）——本机没有它们的 token 记录。 */
 let attrDays = 7;   // 7 | 30 | 'all'
 let attrSort = { key: 'tokens', dir: -1 };
 // 整行色带用 rgba 分量的形式，便于按项目序号取色
@@ -1363,18 +1365,28 @@ function renderAttr() {
   }
   const pick = attrDays === 'all' ? { key: 'tokensAll', total: a.totalAll } : { key: attrDays === 30 ? 'tokens30' : 'tokens7', total: attrDays === 30 ? a.total30 : a.total7 };
   const { key, total } = pick;
+  // ThinCoder 会话数的窗口口径（与 token 同一档）：行集合要跟着窗口变，别在「近 7 天」里列一个
+  // 这两周内既没用 Codex、也没用 ThinCoder 的项目
+  const tcKey = attrDays === 'all' ? 'thinCoderSessions' : attrDays === 30 ? 'thinCoderSessions30' : 'thinCoderSessions7';
   const sorted = [...a.projects].sort((x, y) => (y[key] ?? 0) - (x[key] ?? 0));
-  const list0 = sorted.filter(p => (p[key] ?? 0) > 0);
+  // 行 = 「这个窗口内用过 Codex」∪「这个窗口内用过 ThinCoder」；只有 ThinCoder 的行 token 为空
+  const list0 = sorted.filter(p => (p[key] ?? 0) > 0 || (p[tcKey] ?? 0) > 0);
   const list = sortRows(list0, attrSort, {
     name: p => p.project,
     tc: p => p.thinCoderSessions ?? 0,
     tokens: p => p[key] ?? 0,
     pct: p => total > 0 ? (p[key] ?? 0) / total : 0,
   });
-  const max = Math.max(...list.map(p => p[key]), 1);
-  const fmtTokens = t => t >= 1e6 ? `${(t / 1e6).toFixed(1)}M` : t >= 1e3 ? `${(t / 1e3).toFixed(0)}K` : String(t);
+  // 缺 token 的行按 0 参与取最大值：直接扩散出 undefined 会让 Math.max 得 NaN，把所有色带一起弄没
+  const max = Math.max(...list.map(p => p[key] ?? 0), 1);
+  const fmtTokens = t => t == null ? '—' : t >= 1e6 ? `${(t / 1e6).toFixed(1)}M` : t >= 1e3 ? `${(t / 1e3).toFixed(0)}K` : String(t);
   const spanText = a.coverage?.fromMs ? `${new Date(a.coverage.fromMs).toLocaleDateString('zh-CN')} 起` : '';
   const months = a.coverage?.fromMs ? Math.max(1, Math.round((Date.now() - a.coverage.fromMs) / (30 * 86400000))) : 0;
+
+  // 「这一行有没有 token 记录」（决定用量列给数字还是「—」）：只有 ThinCoder 的行没有，
+  // Codex 只留下空会话（连一条 token_count 都没有）的行也没有——后者写 0 同样是「没有记录」冒充「用了但为零」。
+  // 有记录时即使是 0 也照实写（那是真的没用）。
+  const hasTokenData = p => p.hasCodex !== false && ((p.tokensAll ?? 0) > 0 || (p[key] ?? 0) > 0);
 
   // 表头与数据行共用同一套网格列（subgrid 继承，因此天然对齐）
   // 两个操作各自独立成列（文件夹 / 启动），不再挤在同一个单元格里
@@ -1384,7 +1396,10 @@ function renderAttr() {
     + `<span class="pct so ${attrSort.key === 'pct' ? 'on' : ''}" data-attr-sort="pct" title="点击按占比排序">占比<i>${attrSort.key === 'pct' ? (attrSort.dir < 0 ? '▾' : '▴') : '▾'}</i></span>`
     + `<span class="acts">文件夹</span><span class="acts">启动</span></div>`;
   box.innerHTML = head + list.map((p, i) => {
-    const pct = total > 0 ? (p[key] / total * 100) : 0;
+    const showTok = hasTokenData(p);         // true = 用量列给数字，false = 给「—」
+    const tok = p[key] ?? 0;
+    const tcWin = p[tcKey] ?? 0;
+    const pct = showTok && total > 0 ? (tok / total * 100) : null;
     const rgb = ATTR_RGB[i % ATTR_RGB.length];
     const cwd = p.cwd ?? '';
     const enc = encodeURIComponent(cwd);
@@ -1407,8 +1422,13 @@ function renderAttr() {
     // ThinCoder 列：有会话 → 醒目徽标；无 → 装了 ThinCoder 给「创建」入口（就在该目录起一个会话，与「启动」同一条协议），
     // 没装就只能引导去装（不能写「创建」：那台机器上点了也起不来）。连目录都没记录的行两种都给不了。
     // 「创建」与「⌨ 启动」是同一条协议（opentc），目录点不开时两者一起收起
+    // 徽标里的数是**累计**会话数（与改动前一致）；本窗口的会话数放进 title，
+    // 免得在「近 7 天」里把累计数读成这周的
+    const tcTitle = attrDays === 'all' || tcWin === p.thinCoderSessions
+      ? `该项目有 ${p.thinCoderSessions} 个 ThinCoder 会话`
+      : `该项目有 ${p.thinCoderSessions} 个 ThinCoder 会话（近 ${attrDays} 天 ${tcWin} 个）`;
     const tcCell = hasTc
-      ? `<span class="tcc"><span class="on" title="该项目有 ${p.thinCoderSessions} 个 ThinCoder 会话">⌨ ${p.thinCoderSessions}</span></span>`
+      ? `<span class="tcc"><span class="on" title="${tcTitle}">⌨ ${p.thinCoderSessions}</span></span>`
       : cwd
         ? (D.thinCoderInstalled !== false
           ? (blocked
@@ -1416,20 +1436,28 @@ function renderAttr() {
             : `<span class="tcc"><a class="tc" href="aiquotaboard://opentc?path=${esc(enc)}" title="在此项目目录启动 ThinCoder 工作台">创建</a></span>`)
           : `<span class="tcc"><a href="${TC_INSTALL_URL}" target="_blank" rel="noopener noreferrer" title="ThinCoder 下载与安装">安装 ThinCoder</a></span>`)
         : `<span class="tcc"><span class="off" title="该项目没有 ThinCoder 会话">·</span></span>`;
-    return `<div class="arow" style="--c:${rgb};--w:${Math.max(1, (p[key] / max) * 100).toFixed(1)}%">
+    // 只有 ThinCoder 的行没有 Codex token 数据：用量 / 占比显示「—」，也不画色带
+    // （色带宽度是「占最大用量的比例」；给它们留 1% 的最小宽度会让人以为它们有用量）
+    const band = showTok ? `${Math.max(1, (tok / max) * 100).toFixed(1)}%` : '0%';
+    return `<div class="arow" style="--c:${rgb};--w:${band}">
       <span class="name" title="${esc(cwd || p.project)}">${esc(p.project)}</span>
       ${tcCell}
-      <span class="num">${fmtTokens(p[key])}</span>
-      <span class="pct">${pct.toFixed(1)}%</span>
+      <span class="num">${showTok ? fmtTokens(tok) : '—'}</span>
+      <span class="pct">${pct == null ? '—' : pct.toFixed(1) + '%'}</span>
       ${folderCell}
       ${tcCellAct}
     </div>`;
   }).join('');
   $('attrNote').textContent = `解析 ${a.scannedFiles} 个会话文件 · 合计 ${fmtTokens(total)} tokens${attrDays === 'all' && spanText ? ` · ${spanText}` : ''}`;
   const blockedHint = notAllowedHint(list);
+  // 表里有显示「—」的行时说明那是什么意思：不是 0，是本机没有它们的 token 记录
+  const tcOnlyHint = list.some(p => !hasTokenData(p))
+    ? '用量列显示「—」= 本机没有这个项目的 token 记录（只用了 ThinCoder，或 Codex 只留下没记上用量的空会话），不是 0。'
+    : '';
   hint.textContent = (attrDays === 'all'
     ? `全部历史（${spanText}，约 ${months} 个月）。点击表头可排序（项目名 / ThinCoder / 用量 / 占比）。📁 打开项目文件夹，⌨ 在该目录启动 ThinCoder 工作台。`
     : '点击表头可排序（项目名 / ThinCoder / 用量 / 占比）。📁 打开项目文件夹，⌨ 在该目录启动 ThinCoder 工作台。')
+    + (tcOnlyHint ? ' ' + tcOnlyHint : '')
     + (blockedHint ? ' ' + blockedHint : '');
 }
 
@@ -1634,7 +1662,8 @@ function renderUsageStyle() {
 
 /* ================= ThinCoder 项目（独立模块） =================
    数据来自 ~/.thincoder/sessions 的会话索引（与 Codex 归因同一批维护任务生成）。
-   与「额度去向」的区别：这里覆盖**只用了 ThinCoder、没用 Codex** 的项目。 */
+   与「额度去向」的关系：那里的 ThinCoder 列只回答「这个有 Codex 用量的项目用过 ThinCoder 吗」；
+   这里看 ThinCoder 自己的口径（会话 / 轮次 / 最近使用），包括没有 cwd、定位不到目录的记录。 */
 let tcDays = 7;   // 7 | 30 | 'all'
 let tcSort = { key: 'last', dir: -1 };
 

@@ -197,13 +197,9 @@ export async function buildAttribution(cfg) {
   writeJsonAtomic(CACHE_FILE(), { version: CACHE_VERSION, generatedAtMs: now, files: nextFiles });
 
   const tc = buildThinCoderIndex();
-  const tcByCwd = new Map(tc.projects.map(p => [p.cwd.toLowerCase(), p]));
-  const list = [...acc.values()]
-    .map(p => {
-      const t = tcByCwd.get((p.cwd ?? '').toLowerCase());
-      return { ...p, thinCoderSessions: t?.sessions ?? 0, thinCoderLastMs: t?.lastMs ?? null };
-    })
-    .sort((a, b) => b.tokensAll - a.tokensAll);
+  const list = mergeProjectRows([...acc.values()], tc.projects, now);
+  const codexRows = list.filter(p => p.hasCodex);
+  const sumTokens = k => codexRows.reduce((s, x) => s + (x[k] ?? 0), 0);   // token 合计只算有 Codex 归因的行
 
   const out = {
     generatedAtMs: now,
@@ -213,9 +209,11 @@ export async function buildAttribution(cfg) {
     skippedFiles: skipped,
     readMB: Number((readBytes / 1048576).toFixed(2)),
     thinCoderProjectCount: tc.projects.length,
-    total7: list.reduce((s, x) => s + x.tokens7, 0),
-    total30: list.reduce((s, x) => s + x.tokens30, 0),
-    totalAll: list.reduce((s, x) => s + x.tokensAll, 0),
+    codexProjectCount: codexRows.length,
+    thinCoderOnlyProjectCount: list.length - codexRows.length,
+    total7: sumTokens('tokens7'),
+    total30: sumTokens('tokens30'),
+    totalAll: sumTokens('tokensAll'),
     projects: list,
     thinCoder: tc,
     // 模型使用画像：接口能给的只是"哪些可用"，这里回答"实际在用哪个、用在哪、什么时候换的"
@@ -229,7 +227,7 @@ export async function buildAttribution(cfg) {
     // 使用方式画像：你实际是怎么用它的（放权程度 / 沙箱策略 / 推理强度 / 单轮任务规模）
     usageStyle: {
       ...style,
-      avgTokensPerTurn: style.turns > 0 ? Math.round(list.reduce((s, x) => s + x.tokensAll, 0) / Math.max(1, list.reduce((s, x) => s + x.turnsAll, 0))) : null,
+      avgTokensPerTurn: style.turns > 0 ? Math.round(sumTokens('tokensAll') / Math.max(1, codexRows.reduce((s, x) => s + (x.turnsAll ?? 0), 0))) : null,
     },
     coverage: {
       fromMs: list.reduce((m, x) => Math.min(m, x.firstTs), now),
@@ -239,6 +237,57 @@ export async function buildAttribution(cfg) {
   ensureDataDir();
   writeJsonAtomic(path.join(DATA_DIR, 'attribution.json'), out);
   return out;
+}
+
+// 「额度去向」表的行集合 = （有 Codex 会话的项目）∪（有 ThinCoder 会话的项目），按 cwd 匹配
+// （Windows 路径大小写不敏感；Codex 行按目录名归并，cwd 是唯一可靠的连接键）。
+//
+// 为什么要有并集：只用 ThinCoder、没用 Codex 的项目此前在这张表里完全看不见——表是按 Codex 会话
+// 目录生成行的，ThinCoder 索引只给已有的行"贴"一个会话数，从不用来产生行（2026-09-20 用户报的就是这个）。
+//
+// 只有 ThinCoder 的行**没有 Codex token 数据**：token / 轮次一律 null，不是 0——
+// 0 会被读成"用了但为零"，而事实是"本机没有它的 token 记录"（看板把 null 渲染成「—」）。
+//
+// 排序：有 Codex 的行在前（按 token 用量降序），只有 ThinCoder 的行排在其后（按会话数降序、再按最近使用）。
+// 理由：这些行 token 为 0，混排会永远沉底且彼此无次序；看板默认按用量排且是稳定排序，因此会保留这个次序。
+export function mergeProjectRows(codexRows, tcProjects, now = Date.now()) {
+  // 没有 cwd 的 ThinCoder 记录（只有 manifest、正文文件缺失）定位不到项目目录 → 不进这张表；
+  // 它们仍在「ThinCoder 项目」表里，那里对该情形有专门说明。
+  const tcByCwd = new Map();
+  for (const t of tcProjects ?? []) {
+    if (!t?.cwd) continue;
+    const k = t.cwd.toLowerCase();
+    if (!tcByCwd.has(k)) tcByCwd.set(k, t);
+  }
+  const used = new Set();
+  const rows = (codexRows ?? []).map(r => {
+    const t = tcByCwd.get((r.cwd ?? '').toLowerCase());
+    if (t) used.add(t.cwd.toLowerCase());
+    return {
+      ...r,
+      hasCodex: true,
+      thinCoderSessions: t?.sessions ?? 0,
+      // 会话数也按窗口给一份：行集合要跟着「近 7 天 / 近 30 天 / 全部」变，得知道窗口内有没有用过
+      thinCoderSessions7: t?.sessions7 ?? 0,
+      thinCoderSessions30: t?.sessions30 ?? 0,
+      thinCoderLastMs: t?.lastMs ?? null,
+    };
+  });
+  for (const t of tcByCwd.values()) {
+    if (used.has(t.cwd.toLowerCase())) continue;
+    rows.push({
+      project: t.project, cwd: t.cwd, hasCodex: false,
+      tokens7: null, tokens30: null, tokensAll: null,
+      turns7: null, turns30: null, turnsAll: null,
+      sessions: 0, firstTs: t.firstMs || now, lastTs: t.lastMs || 0,
+      thinCoderSessions: t.sessions, thinCoderSessions7: t.sessions7,
+      thinCoderSessions30: t.sessions30, thinCoderLastMs: t.lastMs,
+    });
+  }
+  const withCodex = rows.filter(r => r.hasCodex).sort((a, b) => (b.tokensAll ?? 0) - (a.tokensAll ?? 0));
+  const tcOnly = rows.filter(r => !r.hasCodex)
+    .sort((a, b) => (b.thinCoderSessions - a.thinCoderSessions) || (b.lastTs - a.lastTs));
+  return [...withCodex, ...tcOnly];
 }
 
 // ThinCoder 项目索引：会话文件头部即 `{"version":2,"cwd":"..."}`，manifest 里有每个槽位的
@@ -342,13 +391,17 @@ if (process.argv[1] && process.argv[1].endsWith('attribution.mjs')) {
   console.log(`本次：复用 ${out.reusedFiles} 个未变文件 · 实读 ${out.scannedFiles} 个（${out.readMB}MB）· 跳过 ${out.skippedFiles} · 耗时 ${(out.scanMs / 1000).toFixed(2)}s`);
   console.log(`近 7 天 ${M(out.total7)} · 近 30 天 ${M(out.total30)} · 全部 ${M(out.totalAll)} tokens`);
   console.log(`\nThinCoder：${out.thinCoder.projects.length} 个项目 / ${out.thinCoder.totalAll} 个会话（近 7 天 ${out.thinCoder.total7} · 近 30 天 ${out.thinCoder.total30}）`);
+  console.log(`额度去向表：${out.projects.length} 行 = 有 Codex 的 ${out.codexProjectCount} 个 + 只有 ThinCoder 的 ${out.thinCoderOnlyProjectCount} 个`);
   console.log('\n模型使用画像:');
   const tot = out.models.reduce((s, m) => s + m.turns, 0);
   for (const m of out.models) {
     const top = m.topProjects[0];
     console.log(`  ${m.model.padEnd(18)} ${String(m.turns).padStart(5)} 轮 ${(m.tokens / 1e6).toFixed(1).padStart(7)}M ${(m.turns / tot * 100).toFixed(1).padStart(5)}%  最近 ${new Date(m.lastMs).toLocaleDateString('zh-CN')}  主要用在 ${top ? top.project : '—'}`);
   }
-  for (const p of out.projects.slice(0, 8)) {
-    console.log(`  ${p.project.padEnd(30)} ${M(p.tokensAll).padStart(8)} · ${p.turnsAll} 轮${p.thinCoderSessions ? ` · TC ${p.thinCoderSessions}` : ''}`);
-  }
+  const fmtRow = p => `${p.project.padEnd(30)} ${(p.tokensAll == null ? '—' : M(p.tokensAll)).padStart(8)} · ${String(p.turnsAll ?? '—').padStart(4)} 轮${p.thinCoderSessions ? ` · TC ${p.thinCoderSessions}（7 天 ${p.thinCoderSessions7} · 30 天 ${p.thinCoderSessions30}）` : ''}`;
+  console.log('\n额度去向（前 8 行）:');
+  for (const p of out.projects.slice(0, 8)) console.log(`  ${fmtRow(p)}`);
+  const tcOnly = out.projects.filter(p => !p.hasCodex);
+  console.log(`\n只有 ThinCoder 的行（${tcOnly.length} 个，表内排在 Codex 行之后）:`);
+  for (const p of tcOnly) console.log(`  ${fmtRow(p)}`);
 }
