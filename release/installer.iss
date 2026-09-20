@@ -57,6 +57,13 @@ Filename: "{app}\快捷操作\启动看板.vbs"; Description: "打开看板，�
 var
   Prepared, Completed, IntegrationFailed, DeleteUserData: Boolean;
 
+{ 用户数据清单在安装器里只有「删除」这几行（备份侧是 程序/tools/uninstall.mjs 的 用户数据，
+  测试会把两边逐项对一遍）。下面三个常量是 uninstall.mjs --backup-user-data 的退出码。 }
+const
+  BR_OK = 0;              { 备份已经落在安装目录之外：可以删 }
+  BR_EMPTY = 20;          { 本来就没有数据：不备份、也不删 }
+  BR_FAILED = 10;         { 备份没做成：一个文件都不许删 }
+
 function NotIsolated: Boolean;
 begin
   Result := ExpandConstant('{param:BOARDISOLATED|0}') <> '1';
@@ -141,28 +148,73 @@ begin
   if IntegrationFailed then Result := 1 else Result := 0;
 end;
 
-function InitializeUninstall: Boolean;
+{ 卸载时数据怎么处理 —— 2026-09-20 重写。旧文案「是否同时删除配置、密钥、历史记录及备份？」
+  是个反向提问：用户按了「是」＝删，11 天历史连同 backups/ 一起没了。现在四条硬规矩：
+    ① 两个按钮各写各的后果，没有需要二次翻译的是/否；
+    ② 保留那一侧明标『推荐』、又是默认按钮（直接回车即此）—— 两个按钮长得一样重，用户就会随手选一个；
+    ③ 只有明确点到「连同数据一起删除」才返回真 —— 其余任何返回值（含 Esc 关闭）都按保留处理；
+    ④ 真要删，先让 uninstall.mjs 把数据打包到安装目录之外，备份没成就一个文件都不删。
+  用的是 SuppressibleTaskDialogMsgBox（自定义按钮文字 + 可被静默模式抑制）；本套构建带的
+  private/build-tools/inno/ISCC.exe 是 Inno Setup 7.1.0，这个函数可用。 }
+function AskUserData: Boolean;
+var Labels: TArrayOfString;
+begin
+  SetArrayLength(Labels, 2);
+  { MB_YESNO 的第一个按钮是 IDYES，也就是默认按钮 —— 保留落在默认位置上。
+    按钮文字里 #13#10 之后那一行是任务对话框的按钮注释（第二行小字）。 }
+  Labels[0] := '保留数据并卸载（推荐）' + #13#10 + '下次安装还能接着用';
+  Labels[1] := '连同数据一起删除' + #13#10 + '配置、密钥和历史记录一并删掉，无法恢复';
+  Result := SuppressibleTaskDialogMsgBox('卸载 AI 能力看板', '卸载后本机保存的配置、密钥、历史记录和备份怎么处理？',
+    mbConfirmation, MB_YESNO, Labels, 0, IDYES) = IDNO;
+end;
+
+{ 卸载前的备份（在安装目录之外留一份 zip）。只看退出码：
+    BR_OK    备份已就位，可以删
+    BR_EMPTY 本来就没有数据
+    其它     备份没做成（含起不来）—— 调用方必须放弃删除 }
+function BackupUserData: Integer;
 var Code: Integer;
 begin
+  if Exec(ExpandConstant('{app}\runtime\node.exe'),
+    '"' + ExpandConstant('{app}\程序\tools\\uninstall.mjs') + '" --backup-user-data',
+    ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) then Result := Code
+  else Result := BR_FAILED;
+end;
+
+function InitializeUninstall: Boolean;
+var Code, Backup: Integer;
+begin
   Result := True;
-  if NotIsolated then
-    DeleteUserData := SuppressibleMsgBox('是否同时删除配置、密钥、历史记录及备份？选择“否”可在重装后继续使用这些数据。', mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES;
+  if NotIsolated then DeleteUserData := AskUserData;
   if not Exec(ExpandConstant('{app}\runtime\node.exe'), '"' + ExpandConstant('{app}\程序\tools\\uninstall.mjs') + '"' + ModeArg,
     ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then begin
     Result := False;
     SuppressibleMsgBox('后台清理未完成，请稍后重试卸载。', mbError, MB_OK, IDOK);
+    exit;
+  end;
+  { 后台清理走通了才轮到数据：先备份，备份只要没成就撤回删除的打算。
+    真正的删除留在 usPostUninstall（见 CurUninstallStepChanged）—— 那之后卸载已经成了，
+    中途放弃（在 Inno 的确认上点否、或者卸载没做成）都不会少一个文件。 }
+  if DeleteUserData then begin
+    Backup := BackupUserData;
+    DeleteUserData := Backup = BR_OK;
+    if Backup = BR_FAILED then
+      SuppressibleMsgBox('备份没能完成，已经取消删除：配置、密钥和历史记录都还在安装目录里。', mbError, MB_OK, IDOK);
   end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and DeleteUserData then begin
-    { Fixed children of the Inno-resolved application directory only. No computed user paths. }
+    { Fixed children of the Inno-resolved application directory only. No computed user paths.
+      进得来 = 用户明确选了「连同数据一起删除」，而且备份已经在安装目录之外就位。 }
     DelTree(ExpandConstant('{app}\data'), True, True, True);
     DelTree(ExpandConstant('{app}\backups'), True, True, True);
     DeleteFile(ExpandConstant('{app}\config.json'));
     DeleteFile(ExpandConstant('{app}\secrets.json'));
     DeleteFile(ExpandConstant('{app}\dashboard-data.js'));
-    DeleteFile(ExpandConstant('{app}\update-data.js'));
+    DeleteFile(ExpandConstant('{app}\\update-data.js'));
+    { 卸载完成时告诉用户备份在哪 —— 数据刚删掉，这句话是他唯一的退路。 }
+    SuppressibleMsgBox('配置、密钥和历史记录已删除；卸载前的备份在 ' + ExpandConstant('{localappdata}\AICapabilityBoard-backups') + '，需要时解压那份 zip 就能取回。', mbInformation, MB_OK, IDOK);
   end;
 end;
