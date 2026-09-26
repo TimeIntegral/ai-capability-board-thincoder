@@ -1,5 +1,5 @@
 // 发布上传：候选版 → GitHub Release（本地 → 公开的最后一步）
-// 用法：node release/upload-release.mjs [--dry] [--version X.Y.Z]
+// 用法：node release/upload-release.mjs [--dry] [--verify-only] [--version X.Y.Z]
 //
 // 一条命令跑完：核对候选 → 查远端 → 建草稿 → 传四个附件 → 发布为正式版 → 实测下载核对。
 //   （此前这一步是 %TEMP% 里的一次性脚本，2026-09-19 的 v1.4.0 就是这么发的；本文件把它固化下来。）
@@ -17,9 +17,16 @@
 //   · 凭据只在内存：同一个进程里向 git 凭据助手要一次，不落盘、不进命令行、不打印；输出统一脱敏。
 //   · --dry 只读：HTTP 层在预演模式下遇到非 GET 直接抛错 —— "预演不发写请求"由代码挡，不靠记性。
 //   · 上传后自检：发布为正式版后**实测下载每个附件**，SHA256 与 SHA256SUMS.txt 逐字符比对
-//     （release/上传说明.md 的硬要求：用户的自定义更新链就认这份清单）。
+//     （release/上传说明.md 的硬要求：用户的自定义更新链就认这份清单）。网络抖动是常态：
+//     下载与只读接口都带重试；重试仍不成也**不改写「发布已经成功了」这个事实** ——
+//     报「发布已完成、核对没跑完」并以退出码 2 结束（补核对：--verify-only），
+//     绝不让下一次跑的人以为没发出去、又去发布一遍。
 //
-// 退出码：0 = 完成（--dry = 预演跑完并给出结论，含"真实运行会停下"的情形）；1 = 停下（拒绝执行 / 核对失败）。
+// 退出码（四个结局互不混淆，关键是「东西到底发出去没有」）：
+//   0 = 全部完成：发布 + 实测核对通过（--dry = 预演跑完并给出结论，含「真实运行会停下」的情形；--verify-only = 补核对通过）
+//   1 = 停下：①–⑤ 任何一步没成，或本地候选版对不上 —— **什么都没发出去**（线上没有这次的东西，别去找）
+//   2 = 发布已完成、但核对没跑完：网络/代理等外部原因，重试后仍不成（内容没看出问题，只是没核对完）
+//   3 = 发布已完成、但核对不通过：下载回来的东西与清单不符（附件缺、大小/哈希/标签对不上）—— 先别对外公布
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
@@ -55,18 +62,28 @@ const ok = msg => console.log(`   ✅ ${msg}`);
 const info = msg => console.log(`   ${msg}`);
 const note = msg => console.log(`   ○ ${msg}`);
 // 用「抛哨兵 + 设 exitCode」而不是 process.exit()：Windows 上后者会截断还没 flush 的 stdout。
+// 哨兵上挂着退出码：1 = 停下（什么都没发出去）；2 / 3 由收场函数直接 return（见文件开头的退出码表）。
 const 停下 = Symbol('停下');
-function die(msg) { console.error(`\n⛔ ${msg}`); throw 停下; }
+const 哨兵 = 码 => ({ [停下]: 码 });
+function die(msg) { console.error(`\n⛔ ${msg}`); throw 哨兵(1); }
 const firstLine = s => String(s ?? '').split('\n')[0].slice(0, 200);
 const humanSize = b => (b >= 1048576 ? `${(b / 1048576).toFixed(1)}MB` : `${(b / 1024).toFixed(1)}KB`);
 
 function usage() {
-  console.log(`发布上传 —— 用法：node release/upload-release.mjs [--dry] [--version X.Y.Z]
+  console.log(`发布上传 —— 用法：node release/upload-release.mjs [--dry] [--verify-only] [--version X.Y.Z]
 
   （无参数）        核对 dist/candidate-<版本>-<提交>/ → 建 Release 草稿 → 传四个附件 → 发布为正式版 → 实测下载核对
   --dry             只核对与打印计划：不建、不传、不发布（HTTP 层连写请求都不发）
+  --verify-only     补核对：只做第 ⑥ 步的实测下载核对（下载线上已有 Release 的四个附件、比对 SHA256），
+                    不建、不传、不发布，也**不受「同 tag 已有 Release」那条守卫阻挡** ——
+                    发布成功但核对没跑完（退出码 2）时用它补跑。判据是本地候选目录里的 SHA256SUMS.txt，
+                    所以要补核对时别删 dist/candidate-<版本>-<提交>/。
   --version X.Y.Z   发这个版本（默认取 VERSION 文件；发布后继续开发、VERSION 已经涨号时用这个指定旧版本）
   -h, --help        显示这段帮助
+
+  退出码：0 = 全部完成（含 --dry 预演、--verify-only 核对通过）；1 = 停下，什么都没发出去；
+          2 = 发布已完成、但核对没跑完（网络等外部原因，可用 --verify-only 补跑）；
+          3 = 发布已完成、但核对不通过（内容与清单不符 —— 先别对外公布）。
 
   凭据来自 git 凭据助手（同一进程内读取，不落盘）；代理默认 http://127.0.0.1:7897（可用环境变量 RELEASE_UPLOAD_PROXY 覆盖）。
   同 tag 已有任何 Release → 停下报告，绝不覆盖；没有凭据时的人工兜底见 release/上传说明.md。`);
@@ -212,7 +229,8 @@ function 上传附件(releaseId, name, 文件) {
 }
 
 // 实测下载：只走公开地址（发布之后才有），不带凭据；GitHub 会 302 到 objects.githubusercontent.com，跟过去。
-function 下载并算哈希(url, 剩余跳转 = 5) {
+// 进度（可选）只报已下载字节数，供第 ⑥ 步在下载途中打进度。
+function 下载并算哈希(url, 剩余跳转 = 5, 进度) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     if (u.protocol !== 'https:') return reject(new Error(`拒绝非 https 的下载地址：${url}`));
@@ -221,12 +239,12 @@ function 下载并算哈希(url, 剩余跳转 = 5) {
         res.resume();
         const 下一个 = res.headers.location;
         if (!下一个 || 剩余跳转 <= 0) return reject(new Error(`下载跳转异常：HTTP ${res.statusCode}`));
-        return resolve(下载并算哈希(new URL(下一个, url).href, 剩余跳转 - 1));
+        return resolve(下载并算哈希(new URL(下一个, url).href, 剩余跳转 - 1, 进度));
       }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error(`下载返回 HTTP ${res.statusCode}`)); }
       const hash = crypto.createHash('sha256');
       let 字节 = 0;
-      res.on('data', c => { 字节 += c.length; hash.update(c); });
+      res.on('data', c => { 字节 += c.length; hash.update(c); 进度?.(字节); });
       res.on('end', () => resolve({ 字节, sha256: hash.digest('hex') }));
     });
     req.setTimeout(下载超时, () => req.destroy(new Error(`下载超时（${下载超时 / 1000}s）`)));
@@ -367,20 +385,28 @@ async function 列全部Release() {
   return 全部;
 }
 
-// 远端标签指向哪个提交（轻量标签直接是提交；附注标签要再解一层）。没有这个标签就返回 null。
-async function 远端标签提交(标签) {
+// 远端标签指向哪个提交（轻量标签直接是提交；附注标签要再解一层）。三种回答：有 / 没有 / 读不动（抛异常）。
+// 不在这里 die：第 ⑥ 步里「查不动」是「核对没跑完」（退出码 2），不是「发布失败」（退出码 1）。
+async function 查远端标签(标签) {
   const { owner, repo } = 仓库坐标();
   const res = await api('GET', `/repos/${owner}/${repo}/git/ref/tags/${标签}`);
-  if (res.status === 404) return null;
-  if (res.status !== 200) die(`查远端标签失败：HTTP ${res.status} ${firstLine(res.text)}`);
+  if (res.status === 404) return { 类型: '没有', 提交: null };
+  if (res.status !== 200) throw new Error(`HTTP ${res.status} ${firstLine(res.text)}`);
   const 对象 = res.json?.object ?? {};
-  if (对象.type === 'commit') return 对象.sha;
+  if (对象.type === 'commit') return { 类型: '有', 提交: 对象.sha };
   if (对象.type === 'tag' && 对象.sha) {
     const 内 = await api('GET', `/repos/${owner}/${repo}/git/tags/${对象.sha}`);
-    if (内.status !== 200) die(`解附注标签失败：HTTP ${内.status}`);
-    return 内.json?.object?.sha ?? null;
+    if (内.status !== 200) throw new Error(`解附注标签失败：HTTP ${内.status}`);
+    return { 类型: '有', 提交: 内.json?.object?.sha ?? null };
   }
-  return null;
+  return { 类型: '有', 提交: null };
+}
+
+// ①② 用：查不动是硬失败（停下），返回提交号或 null（没有这个标签）。
+async function 远端标签提交(标签) {
+  let r;
+  try { r = await 查远端标签(标签); } catch (e) { die(`查远端标签失败：${firstLine(e.message)}`); }
+  return r.提交;
 }
 
 // ── ③④⑤ 真实运行：建草稿 → 传附件 → 发布 ─────────────────────────────────
@@ -437,48 +463,191 @@ async function 发布为正式版(releaseId, 候选) {
 }
 
 // ── ⑥ 实测下载核对（release/上传说明.md 的硬要求）──────────────────────────
+// 网络抖动是常态（2026-09-26 头一次实战就撞上：代理断了一下，发布明明成功了，脚本却以失败退出，
+// 差一点被当成「没发出去」）。所以这里：下载与只读接口都重试；「没跑完」与「不通过」两种结局分开报。
+const 核对重试 = 3;                 // 一个文件最多下载 3 次
+const 重试等待 = [2000, 8000];      // 第 1 次失败后等 2s、第 2 次失败后等 8s
+const 等一下 = ms => new Promise(r => setTimeout(r, ms));
+// 确定性结论（例：「线上根本没这个 Release」）重试没有意义：单独标一下，重试包装遇到它直接报，不白等。
+const 不重试 = Symbol('不重试');
+const 确定性 = msg => Object.assign(new Error(msg), { [不重试]: true });
+
+// 下载进度：终端里原地刷新；重定向进日志时每 10s 一行（不把日志刷成几千行）。
+function 进度线(名, 期望字节) {
+  const tty = Boolean(process.stdout.isTTY);
+  const 开始 = Date.now();
+  let 上次 = 开始;
+  let 打过 = false;
+  const 文本 = 字节 => `${名} 已下载 ${(字节 / 1048576).toFixed(1)}MB / ${(期望字节 / 1048576).toFixed(1)}MB（${Math.min(100, Math.floor((字节 / Math.max(1, 期望字节)) * 100))}%，已用 ${((Date.now() - 开始) / 1000).toFixed(0)}s）`;
+  return {
+    更新(字节) {
+      const 现在 = Date.now();
+      if (现在 - 上次 < (tty ? 1000 : 10000)) return;
+      上次 = 现在;
+      if (tty) process.stdout.write(`\r${`   ${文本(字节)}`.padEnd(90)}`);
+      else console.log(`   ○ ${文本(字节)}`);
+      打过 = true;
+    },
+    收尾() { if (tty && 打过) process.stdout.write('\n'); },
+  };
+}
+
+// 一次下载核对（不重试）：结果三选一「通过 / 传输不完整 / 内容不符」；网络异常直接抛出（交给重试）。
+// 这里只能判「传回来的字节数」：「传输不完整」= 下载被打断（外部原因，重试）；
+// 「线上大小与本地不符」是内容问题，由调用方用 Release 元数据先判（归入「核对不通过」）—— 两者不是一回事。
+async function 下载核对一次(名, 资产, 候选, 期望字节) {
+  const 进度 = 进度线(名, 期望字节);
+  const t0 = Date.now();
+  let 下载;
+  try { 下载 = await 下载并算哈希(资产.browser_download_url, 5, 进度.更新); }
+  finally { 进度.收尾(); }
+  if (下载.字节 !== 期望字节) return { 结果: '传输不完整', 说明: `下载回来 ${下载.字节} 字节，本地是 ${期望字节} 字节` };
+  const 期望 = 名 === 'SHA256SUMS.txt' ? 候选.文件哈希.get(名) : 候选.校验表.get(名);
+  const 位置 = 首个不同位置(下载.sha256, 期望);
+  if (位置 !== -1) return { 结果: '内容不符', 说明: `与 SHA256SUMS.txt 逐字符比对不一致（第 ${位置 + 1} 个字符起不同）：\n       实测 ${下载.sha256}\n       清单 ${期望}` };
+  return { 结果: '通过', 字节: 下载.字节, sha256: 下载.sha256, 秒: (Date.now() - t0) / 1000 };
+}
+
+// 一个附件的实测核对：网络抖动、传输不完整都重试；哈希不符是内容问题（重试还是同一份东西）→ 直接判不通过。
+async function 核对一个附件(名, 序号, 总数, 资产, 候选) {
+  const 期望字节 = 候选.文件大小.get(名);
+  let 上次失败 = '';
+  for (let 尝试 = 1; 尝试 <= 核对重试; 尝试++) {
+    info(`正在核对 ${名}（第 ${序号}/${总数}）${尝试 > 1 ? `—— 第 ${尝试} 次尝试` : ''}…`);
+    let 结果;
+    try { 结果 = await 下载核对一次(名, 资产, 候选, 期望字节); }
+    catch (e) {
+      if (e?.[停下]) throw e;   // die() 的哨兵：该以退出码 1 停下，不能被当成「可重试的抖动」
+      结果 = { 结果: '下载失败', 说明: firstLine(e.message) };
+    }
+    if (结果.结果 === '通过') {
+      ok(`${名} 实测下载 ${humanSize(结果.字节)}，SHA256 ${结果.sha256.slice(0, 16)}… 与清单逐字符一致（${结果.秒.toFixed(1)}s）`);
+      return { 结局: '通过' };
+    }
+    if (结果.结果 === '内容不符') return { 结局: '不通过', 原因: `${名} ${结果.说明}` };
+    上次失败 = `${名} ${结果.结果}：${结果.说明}`;
+    if (尝试 < 核对重试) {
+      note(`${上次失败} —— ${重试等待[尝试 - 1] / 1000}s 后重试（第 ${尝试 + 1}/${核对重试} 次）`);
+      await 等一下(重试等待[尝试 - 1]);
+    }
+  }
+  return { 结局: '没跑完', 原因: `${上次失败}（一共试了 ${核对重试} 次仍未成）` };
+}
+
+// 只读接口同样重试：读不动是「核对没跑完」，不是「发布失败」。
+async function 重试读(描述, fn) {
+  let 上次 = '';
+  for (let 尝试 = 1; 尝试 <= 核对重试; 尝试++) {
+    try { return { 成功: true, 值: await fn() }; }
+    catch (e) {
+      if (e?.[停下]) throw e;                                               // die() 的哨兵：致命环境问题，立即停下
+      if (e?.[不重试]) return { 成功: false, 原因: firstLine(e.message) };   // 确定性结论，重试没意义
+      上次 = firstLine(e.message);
+      if (尝试 < 核对重试) {
+        note(`${描述} 第 ${尝试} 次失败：${上次} —— ${重试等待[尝试 - 1] / 1000}s 后重试`);
+        await 等一下(重试等待[尝试 - 1]);
+      }
+    }
+  }
+  return { 成功: false, 原因: `${描述}失败：${上次}（一共试了 ${核对重试} 次仍未成）` };
+}
+
+// 实测下载核对：四个附件逐个下载比对（带重试），再复核标签指向与「最新正式 Release」。
+// 返回三选一：{ 结局: '通过' } / { 结局: '没跑完', 原因 }（外部原因）/ { 结局: '不通过', 原因 }（内容不符）。
+// 退出码与收场文案交给调用方 —— 真实运行（⑥ 在发布之后）与 --verify-only 的前提不一样。
 async function 实测下载核对(版本, 候选) {
   // 发布之后 /releases/tags/<tag> 才查得到（草稿不返回 —— 这就是本文件开头那个坑的由来）
   const { owner, repo } = 仓库坐标();
-  const res = await api('GET', `/repos/${owner}/${repo}/releases/tags/v${版本}`);
-  if (res.status !== 200) die(`发布后仍查不到 v${版本} 的正式 Release（HTTP ${res.status}）—— 人工确认`);
-  const 附件表 = new Map((res.json.assets || []).map(a => [a.name, a]));
-  for (const 名 of 候选.附件) {
+  const 详情 = await 重试读(`读 v${版本} 的 Release 详情`, async () => {
+    const res = await api('GET', `/repos/${owner}/${repo}/releases/tags/v${版本}`);
+    if (res.status === 404) throw 确定性(`线上没有 v${版本} 的正式 Release（HTTP 404 —— 没发过？还没发布？版本号写错了？）`);
+    if (res.status !== 200) throw new Error(`HTTP ${res.status} ${firstLine(res.text)}`);
+    return res.json;
+  });
+  if (!详情.成功) return { 结局: '没跑完', 原因: 详情.原因 };
+  const 附件表 = new Map((详情.值.assets || []).map(a => [a.name, a]));
+  const 已过 = [];
+  for (const [i, 名] of 候选.附件.entries()) {
     const 资产 = 附件表.get(名);
-    if (!资产) die(`发布后的 Release 上没有附件：${名}`);
-    const t0 = Date.now();
-    const { 字节, sha256 } = await 下载并算哈希(资产.browser_download_url);
-    const 期望 = 名 === 'SHA256SUMS.txt' ? 候选.文件哈希.get(名) : 候选.校验表.get(名);
-    const 位置 = 首个不同位置(sha256, 期望);
-    if (字节 !== 候选.文件大小.get(名)) die(`下载回来的 ${名} 大小不对：${字节} / 本地 ${候选.文件大小.get(名)}`);
-    if (位置 !== -1) {
-      die(`下载回来的 ${名} 与 SHA256SUMS.txt 不一致（第 ${位置 + 1} 个字符起不同）：\n   实测 ${sha256}\n   清单 ${期望}\n   → 这次发布不要对外公布，先查清上传/下载链路`);
+    if (!资产) return { 结局: '不通过', 原因: `发布后的 Release 上没有附件：${名}`, 已过 };
+    // 大小先看 Release 元数据（确定性结论，不下载、不重试）：文档把「大小与清单对不上」归入「核对不通过」（3）。
+    // 下载中途的字节数不符（传输被打断）才归入「核对没跑完」（2）—— 两者不是一回事。
+    if (Number.isFinite(资产.size) && 资产.size !== 候选.文件大小.get(名)) {
+      return { 结局: '不通过', 原因: `${名} 线上大小与本地候选不一致：线上 ${资产.size} 字节 / 本地 ${候选.文件大小.get(名)} 字节`, 已过 };
     }
-    ok(`${名} 实测下载 ${humanSize(字节)}，SHA256 ${sha256.slice(0, 16)}… 与清单逐字符一致（${((Date.now() - t0) / 1000).toFixed(1)}s）`);
+    const 一个 = await 核对一个附件(名, i + 1, 候选.附件.length, 资产, 候选);
+    if (一个.结局 !== '通过') return { ...一个, 已过 };
+    已过.push(名);
   }
   // 标签必须落在候选提交上：发布后复核一次（缺标签的那次由 GitHub 在发布时创建）
-  const 远端提交 = await 远端标签提交(`v${版本}`);
-  if (远端提交 && 远端提交 !== 候选.提交) die(`远端标签 v${版本} 指向 ${远端提交}，候选提交是 ${候选.提交} —— 标签与这次发布的内容对不上`);
-  ok(远端提交 ? `远端标签 v${版本} → ${远端提交.slice(0, 8)}（与候选提交一致）` : `远端还没有 v${版本} 标签 —— 发布后 GitHub 没建，记得 git push origin v${版本}`);
+  const 标签 = await 重试读(`查远端标签 v${版本}`, () => 查远端标签(`v${版本}`));
+  if (!标签.成功) return { 结局: '没跑完', 原因: 标签.原因, 已过 };
+  const 远端提交 = 标签.值.提交;
+  if (标签.值.类型 === '没有') note(`远端还没有 v${版本} 标签 —— 发布后 GitHub 没建，记得 git push origin v${版本}`);
+  else if (远端提交 && 远端提交 !== 候选.提交) return { 结局: '不通过', 原因: `远端标签 v${版本} 指向 ${远端提交}，候选提交是 ${候选.提交} —— 标签与这次发布的内容对不上`, 已过 };
+  else if (远端提交) ok(`远端标签 v${版本} → ${远端提交.slice(0, 8)}（与候选提交一致）`);
+  else note(`远端标签 v${版本} 解析不出提交号（既不是提交也不是附注标签？）—— 人工确认一下`);
 
   // 用户端的「检查更新」读的是**最新正式 Release**，而 GitHub 的 latest 按发布时间判定（不是版本号大小）：
-  // 补发一个旧版本会把它顶成 latest（新用户下到旧版、老用户也不再被提示）。只提醒，不拦 —— 补发旧版本有时是有意的。
-  const 最新 = await api('GET', `/repos/${owner}/${repo}/releases/latest`);
-  if (最新.status === 200 && 最新.json?.tag_name !== `v${版本}`) {
+  // 补发一个旧版本会把它顶成 latest（新用户下到旧版、老用户也不再被提示）。只提醒，不拦 —— 补发旧版本有时是有意的；
+  // 这一个接口读不动也不影响核对结论。
+  const 最新 = await api('GET', `/repos/${owner}/${repo}/releases/latest`).catch(() => null);
+  if (最新?.status === 200 && 最新.json?.tag_name !== `v${版本}`) {
     note(`注意：GitHub 的「最新正式 Release」现在是 ${最新.json?.tag_name}，不是刚发的 v${版本} —— `);
     note('latest 按发布时间判定、不按版本号大小，用户端的「检查更新」会跟着它走；确认这是有意的。');
-  } else if (最新.status === 200) {
+  } else if (最新?.status === 200) {
     ok(`v${版本} 就是「最新正式 Release」—— 用户端「检查更新」读到的就是它`);
+  } else {
+    note('这次没读到「最新正式 Release」（不影响本次核对结论）');
   }
+  return { 结局: '通过' };
+}
+
+// 第 ⑥ 步没跑完 / 不通过时的收场。两种结局都必须说清**发布本身成没成** ——
+// 否则下一个人会以为没发出去、又去发布一遍（项目规矩：发布后不覆盖，重复发布是禁区）。
+function 核对未过的收场(核对, 版本, 补核对命令, 本次发布) {
+  const 没跑完 = 核对.结局 === '没跑完';
+  const 进度 = 核对.已过?.length ? `（前 ${核对.已过.length} 个附件已核对通过：${核对.已过.join('、')}）` : '';
+  blank();
+  console.log(没跑完
+    ? (本次发布 ? '════════ 发布已完成（但实测核对没跑完）════════' : '════════ 补核对没跑完 ════════')
+    : (本次发布 ? '════════ 发布已完成，但核对不通过 ════════' : '════════ 补核对不通过 ════════'));
+  if (本次发布) ok(`第 ①②③④⑤ 步都过了：v${版本} 的 Release 已在线上、四个附件都已上传 —— 发布本身没有失败。`);
+  else info(`线上 v${版本} 的 Release 一点没动：本次只下载核对，没有建、没有传、没有发布。`);
+  console.log(`   ${没跑完 ? '⚠️' : '⛔'} 第 ⑥ 步${没跑完 ? '没跑完' : '发现内容不符'}：${核对.原因}${进度}`);
+  if (没跑完) {
+    info(本次发布
+      ? '→ 这一步没跑完不等于发布失败（内容没看出问题）；多半是网络/代理抖动，也可能是线上状态与预期不符（看上面）。'
+      : '→ 这一步没跑完不等于内容有问题（看上面的原因）；多半是网络/代理抖动（若上面写的是「线上没有 v… 的正式 Release」，那是版本号或发布状态的问题）。');
+    info('→ 不要重复发布（项目规矩：发布后不覆盖）。');
+    info('→ 补跑核对（只下载核对：不建、不传、不发布）：');
+    info(`     ${补核对命令}`);
+    info(`○ 退出码 2 = ${本次发布 ? '发布成功、核对没完成' : '核对没跑完'}；1 才是「什么都没发出去」—— 两者不是一回事。`);
+  } else {
+    info('→ 四个附件与本地清单对不上：先别对外公布，也不要在同一个 tag 上重发或换附件（项目规矩：发布后不覆盖），');
+    info('  查清上传/下载链路后再定下一步（人工处理见 release/上传说明.md）。');
+    info('○ 退出码 3 = 核对不通过（内容有疑点）；2 = 只是没跑完（网络）—— 两者分开。');
+  }
+  return 没跑完 ? 2 : 3;
+}
+
+// 第 ⑥ 步里的**未预期**异常也不许把「发布已经成功」说成「什么都没发出去」（退出码 1）：
+// 兜住，归入「核对没跑完」（2），并把异常原文与栈打出来 —— 诊断信息一点不丢。
+function 兜住核对异常(e) {
+  if (e?.[停下]) throw e;   // die() 的哨兵（真正的环境问题）照常走它自己的退出码
+  console.error('\n⚠️ 核对过程中出了未预期的异常（发布本身不受影响）：');
+  console.error(e?.stack ?? String(e));
+  return { 结局: '没跑完', 原因: `核对过程中出了未预期的异常：${firstLine(e?.message) || String(e)}`, 已过: [] };
 }
 
 // ── 主流程 ────────────────────────────────────────────────────────────────
 async function main() {
-  const opt = { dry: false, version: null, help: false };
+  const opt = { dry: false, verifyOnly: false, version: null, help: false };
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry') opt.dry = true;
+    else if (a === '--verify-only') opt.verifyOnly = true;
     else if (a === '--version') {
       opt.version = argv[++i] ?? '';
       if (!opt.version) die('--version 后面要跟一个 x.y.z 版本号（例：--version 1.4.0）');
@@ -489,13 +658,29 @@ async function main() {
     else die(`不认识的参数：${a}（需要帮助就加 --help）`);
   }
   if (opt.help) { usage(); return 0; }
+  if (opt.dry && opt.verifyOnly) die('--dry 与 --verify-only 一起用没有意义：--verify-only 本身就是只读的（只下载核对，不建、不传、不发布），去掉 --dry 直接跑');
   DRY = opt.dry;
-  console.log(`发布上传${DRY ? '（预演 --dry：只核对与打印计划，不建、不传、不发布）' : ''}   ${new Date().toLocaleString('zh-CN')}`);
+  console.log(`发布上传${DRY ? '（预演 --dry：只核对与打印计划，不建、不传、不发布）' : opt.verifyOnly ? '（补核对 --verify-only：只下载线上附件核对，不建、不传、不发布）' : ''}   ${new Date().toLocaleString('zh-CN')}`);
 
   stepHead('①', '核对候选版');
   const { 版本, 文件版本 } = 读版本(opt);
   info(`要发的版本：${版本}${opt.version ? `（--version 指定；VERSION 文件是 ${文件版本}）` : '（取自 VERSION 文件）'}`);
   const 候选 = 核对候选(找候选目录(版本), 版本);
+  // 补核对的命令：VERSION 已经涨号时得把 --version 带上，人才能照抄就跑
+  const 补核对命令 = `node release/upload-release.mjs --verify-only${文件版本 === 版本 ? '' : ` --version ${版本}`}`;
+
+  // --verify-only：只做第 ⑥ 步的下载核对。不建、不传、不发布，也不看「同 tag 已有 Release」那条守卫
+  // （补核对的前提恰恰是线上已经有这个 Release）。判据仍是本地候选版的 SHA256SUMS.txt。
+  if (opt.verifyOnly) {
+    stepHead('⑥', '补核对：实测下载核对（只下载核对，不建、不传、不发布）');
+    info(`对象：线上 v${版本} 的四个附件；判据：本地候选（${path.basename(候选.目录)}）的 SHA256SUMS.txt，逐字符比对。`);
+    const 核对 = await 实测下载核对(版本, 候选).catch(兜住核对异常);
+    if (核对.结局 !== '通过') return 核对未过的收场(核对, 版本, 补核对命令, false);
+    blank();
+    console.log('════════ 补核对通过 ════════');
+    info(`v${版本} 的四个附件实测下载与本地清单逐字符一致；本次没有建、没有传、没有发布任何东西。`);
+    return 0;
+  }
 
   stepHead('②', '查远端现状（带凭据，只读：列表 + tag 过滤）');
   const 标签 = `v${版本}`;
@@ -506,6 +691,7 @@ async function main() {
     console.log(`   ⛔ ${标签} 上已经有 ${同标签.length} 个 Release（项目规矩：发布后不覆盖，本脚本不改动任何既有 Release）：`);
     for (const r of 同标签) console.log(`      ${描述(r)}`);
     console.log(`      → 要发新版本请改 VERSION 并重新 prepare；要处理这里的草稿/附件请人工在网页上做。`);
+    console.log(`      → 只是想补跑第 ⑥ 步的实测核对？用 node release/upload-release.mjs --verify-only（只下载核对，不受这条守卫阻挡）。`);
   } else {
     ok(`${标签} 上还没有任何 Release（草稿或正式版）—— 可以新建`);
   }
@@ -521,6 +707,7 @@ async function main() {
     if (!DRY) die(`${标签} 上已经有 ${同标签.length} 个 Release（见上面的报告）—— 不建、不传、不发布，停下。`);
     stepHead('◆', '预演结论：真实运行会停下（不动任何东西）');
     info('真实运行会在这里停下并 exit 1，不建、不传、不发布（原因见上）。');
+    info(`补核对（只下载核对、不建不传不发布，不受这条守卫阻挡）：${补核对命令}`);
     info('预演没有建、没有传、没有发布任何东西（HTTP 层在预演模式下只允许 GET）。');
     return 0;
   }
@@ -533,6 +720,8 @@ async function main() {
     info(`2) 上传 ${候选.附件.length} 个附件：${候选.附件.join('、')}`);
     info('3) 发布为正式版（draft=false，prerelease=false）');
     info('4) 实测下载四个附件，SHA256 与 SHA256SUMS.txt 逐字符比对，并复核远端标签指向');
+    info('   第 ⑥ 步网络抖动会重试；重试仍不成 → 退出码 2「发布已完成、核对没跑完」，那时补核对（不重发）：');
+    info(`     ${补核对命令}`);
     blank();
     info('预演没有建、没有传、没有发布任何东西（HTTP 层在预演模式下只允许 GET）。');
     return 0;
@@ -549,12 +738,13 @@ async function main() {
   await 发布为正式版(草稿.id, 候选);
 
   stepHead('⑥', '实测下载核对（用户依赖这份清单自动更新）');
-  await 实测下载核对(版本, 候选);
+  const 核对 = await 实测下载核对(版本, 候选).catch(兜住核对异常);
+  if (核对.结局 !== '通过') return 核对未过的收场(核对, 版本, 补核对命令, true);
 
   blank();
   console.log('════════ 发布完成 ════════');
   info(`标签：${标签}（远端指向 ${候选.提交.slice(0, 8)}${本地标签提交(标签) ? '' : '；本机还没这个标签，可 git tag 后 push'}）`);
-  info(`还没推的代码/标签：git push origin --tags`);
+  info(`还没推的代码/标签：git push origin --tags（退出码 0 = 发布与实测核对都完成了）`);
   info('用户侧：看板「检查更新」读最新正式 Release 的 latest.json，无需其它动作。');
   return 0;
 }
@@ -562,6 +752,6 @@ async function main() {
 try {
   process.exitCode = await main();
 } catch (e) {
-  if (e !== 停下) throw e;   // 真异常照常抛出（带栈）；核对不过/拒绝执行是干净退出
-  process.exitCode = 1;
+  if (!e?.[停下]) throw e;      // 真异常照常抛出（带栈）；停下/拒绝执行是干净退出
+  process.exitCode = e[停下];   // 1 = 什么都没发出去；2 / 3 = 发布已完成、核对没成（见文件开头的退出码表）
 }
