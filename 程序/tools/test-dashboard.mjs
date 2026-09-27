@@ -1795,7 +1795,8 @@ const CASES = [
 // 2026-09-17：顶部那行紧凑摘要条（三个 .tile 小块）整行删除（与大卡片信息重复）——清单里同步去掉 strip。
 // 2026-09-17：键盘快捷键与「快捷键帮助浮层」整块删除（页脚「按 ? 查看」同批移除）——清单里同步去掉 helpOverlay。
 // 2026-09-17：顶栏删掉「备份」按钮（用户要求；命令行 node 程序/tools/backup.mjs 入口保留）——清单里同步去掉 backupBtn。
-const T32_EXPECTED_IDS = ['alertCount','alerts-table','attrBars','attrHint','attrNote','attrSeg','bg1','cap-codex','cap-ds','cap-glm','cards','cfgPanelBtn','changes-ds','changes-glm','chartHint','dashboard-data-script','fresh','healthHint','healthList','heat','heatDays','heatFoot','heatMonths','heatNote','heatSeg','heatSummary','heatTip','heatWrap','hint-codex','intervalNote','modelBars','modelHint','modelNote','modelSummary','packs-table','refreshBtn','ring','ringTxt','setupBar','stats-codex','stats-ds','stats-glm','supportBtn','tcBars','tcHint','tcNote','tcSeg','tcSummary','themeBtn','updated','usageStyle','winSeg','wrap-codex','wrap-ds','wrap-glm'];
+// 2026-09-27：顶栏新增「悬浮看板 开/关」按钮（panelBtn，常驻悬浮看板的关闭/开启入口之一，协议动作 aiquotaboard://panel）——清单里同步加 panelBtn。
+const T32_EXPECTED_IDS = ['alertCount','alerts-table','attrBars','attrHint','attrNote','attrSeg','bg1','cap-codex','cap-ds','cap-glm','cards','cfgPanelBtn','changes-ds','changes-glm','chartHint','dashboard-data-script','fresh','healthHint','healthList','heat','heatDays','heatFoot','heatMonths','heatNote','heatSeg','heatSummary','heatTip','heatWrap','hint-codex','intervalNote','modelBars','modelHint','modelNote','modelSummary','packs-table','panelBtn','refreshBtn','ring','ringTxt','setupBar','stats-codex','stats-ds','stats-glm','supportBtn','tcBars','tcHint','tcNote','tcSeg','tcSummary','themeBtn','updated','usageStyle','winSeg','wrap-codex','wrap-ds','wrap-glm'];
 const T32_FIXTURE = JSON.stringify({
   generatedAtMs: 1, collectedAtMs: 900000, collectedAtText: '2026-09-15 00:00',
   health: null, mute: { active: false }, suppression: {}, config: { refreshSeconds: 0, defaultWindow: 'h24', theme: 'auto', staleMinutes: 15 },

@@ -147,6 +147,33 @@ Write-Output $startup
   return out.trim() + '\\' + SHORTCUT_NAME + ' 托盘.lnk（开机自启，已启动）';
 });
 
+// 6) 悬浮看板：开机自启（照托盘那套）+ 装完拉起（已经关掉的就不拉，尊重用户的开关）
+step('悬浮看板已就绪', () => {
+  const vbs = path.join(QUICK, '悬浮看板.vbs');
+  const exe = path.join(PROG, 'bin', 'board.exe');
+  if (!fs.existsSync(vbs)) throw new Error(`未找到 ${vbs}`);
+  if (!fs.existsSync(exe)) return `面板 exe 不在（${path.relative(ROOT, exe)}）—— 包还没编出面板，跳过`;
+  const icon = path.join(ROOT, 'icon.ico');
+  const 关闭着 = cfg.panel?.enabled === false;
+  const out = ps(`
+$ws = New-Object -ComObject WScript.Shell
+$startup = [Environment]::GetFolderPath('Startup')
+$lnk = $ws.CreateShortcut("$startup\${SHORTCUT_NAME} 悬浮看板.lnk")
+$lnk.TargetPath = 'wscript.exe'
+$lnk.Arguments = '"${vbs}"'
+$lnk.WorkingDirectory = '${ROOT}'
+$lnk.IconLocation = '${icon}'
+$lnk.Description = '${SHORTCUT_NAME}悬浮看板（开机自动出现）'
+$lnk.Save()
+# 先停旧的（按 exe 路径），再起新的 —— 与安装器/卸载器同一条路径判据
+Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq '${exe}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Write-Output $startup
+`);
+  if (关闭着) return out.trim() + `\\${SHORTCUT_NAME} 悬浮看板.lnk（开机自启；config.json 里关着，本次不拉起）`;
+  ps(`Start-Process 'wscript.exe' -ArgumentList '"${vbs}"' -WorkingDirectory '${ROOT}' -WindowStyle Hidden`);
+  return out.trim() + `\\${SHORTCUT_NAME} 悬浮看板.lnk（开机自启，已启动）`;
+});
+
 console.log(failed ? `\n⚠️ ${failed} 个步骤失败（其余已生效）` : '\n全部完成。采集会自动运行，看板双击桌面快捷方式打开，托盘图标常驻在任务栏。');
 
 // 收尾验证：真跑一次采集，把「到底成没成」用人话汇报出来（最后一句永远是可照做的下一步）。

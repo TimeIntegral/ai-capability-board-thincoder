@@ -110,6 +110,14 @@ ElseIf action = "opentc" Then
   ' launch the ThinCoder workbench in that project directory
   If pathval = "" Then WScript.Quit
   cmdline = "cmd /c " & nodeExe & " """ & dir & "\tools\open-tc.mjs"" """ & pathval & """ >> """ & root & "\data\protocol.log"" 2>&1"
+ElseIf action = "panel" Then
+  ' floating panel switch (dashboard button / tray menu / the panel's own right-click).
+  ' Fixed value allowlist: the URL only ever carries on|off|toggle, never a path or a command.
+  If setcmd = "on" Or setcmd = "off" Or setcmd = "toggle" Then
+    cmdline = "cmd /c " & nodeExe & " """ & dir & "\tools\panel.mjs"" " & setcmd & " >> """ & root & "\data\protocol.log"" 2>&1"
+  Else
+    WScript.Quit
+  End If
 ElseIf action = "setupcheck" Then
   ' dashboard first-run wizard: probe the machine, write data\setup-status.json.
   ' Fixed script, no parameters (same exposure class as collect / backup / openfile).

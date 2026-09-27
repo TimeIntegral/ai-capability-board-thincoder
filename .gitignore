@@ -4,6 +4,9 @@ backups/
 secrets.json
 config.json
 
+# ---- 构建时产物（exe 不进 git；只在冻结提交上由 release/build-panel.mjs 编出）----
+程序/bin/
+
 # ---- 生成物（含真实用量数据；每个用户本地生成）----
 dashboard-data.js
 update-data.js

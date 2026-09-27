@@ -64,6 +64,7 @@ function usage() {
   --version X.Y.Z   声明「这次发的是 X.Y.Z」，必须与 VERSION 文件一致（不一致就拒绝）
   --tag             审计与打包都通过后打 git 标签 v<版本>（要求工作区干净，否则标签会指向上一个提交）
   --no-runtime      本次发布包不带便携 Node 运行时（没装 Node 的用户无法「解压即用」，请确认是有意的）
+  --no-panel        本次发布包不带悬浮看板 exe（用户机器上就没有悬浮面板，请确认是有意的）
   -h, --help        显示这段帮助`);
 }
 
@@ -468,7 +469,43 @@ function inspectRuntime() {
   return { files, bytes, exeBytes: fs.statSync(exe).size, version: record.version ?? '未知', problems: [] };
 }
 
-function packZip(files, version, runtime) {
+// ── ④b 悬浮看板（构建时产物，不进 git）─────────────────────────────────
+// 与运行时同一条纪律：二进制不逐行审计，改用**来源核对** —— 记录里是
+// {提交, 源文件清单及其 SHA256, 编译器, 出厂 SHA256}（由 release/build-panel.mjs 在冻结构建树里写）。
+// 三边任何一边对不上就拒绝发布：exe 被换过 / 源码在编译后又改了 / 这棵树不是编出它的那个提交。
+const 面板exe = '程序/bin/board.exe';
+const 面板记录 = '程序/bin/panel-build.json';
+
+function inspectPanel() {
+  const 先跑 = '先跑 node release/build-panel.mjs（必须在冻结构建树里跑）；确实要发不含面板的包就加 --no-panel';
+  const exeAbs = path.join(ROOT, ...面板exe.split('/'));
+  const recAbs = path.join(ROOT, ...面板记录.split('/'));
+  if (!fs.existsSync(exeAbs)) return { files: [], problems: [`没有 ${面板exe}（悬浮看板不会进包）—— ${先跑}`] };
+  if (!fs.existsSync(recAbs)) return { files: [], problems: [`没有 ${面板记录}，无从核对面板 exe 的来源 —— ${先跑}`] };
+  let record = {};
+  try { record = JSON.parse(fs.readFileSync(recAbs, 'utf8')); } catch { return { files: [], problems: [`${面板记录} 不是合法 JSON —— ${先跑}`] }; }
+  const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+  const problems = [];
+  const 实际 = sha(exeAbs);
+  const 记录值 = String(record.exeSha256 ?? '').toLowerCase();
+  if (!记录值) problems.push(`记录里没有 exeSha256，无从核对面板 exe —— ${先跑}`);
+  else if (记录值 !== 实际) problems.push(`${面板exe} 的 SHA256 与记录不符（记录 ${记录值.slice(0, 12)}… / 实际 ${实际.slice(0, 12)}…）—— 重新跑 node release/build-panel.mjs`);
+  const 源 = Array.isArray(record.sources) ? record.sources : [];
+  if (!源.length) problems.push(`记录里没有源文件清单，无从核对面板 exe —— ${先跑}`);
+  for (const s of 源) {
+    const p = path.join(ROOT, ...String(s.path ?? '').split('/'));
+    if (!String(s.path ?? '') || !fs.existsSync(p)) { problems.push(`记录里的源文件不在：${s.path}`); continue; }
+    if (sha(p) !== s.sha256) problems.push(`源码在编译之后又改过了（源文件与记录不符）：${s.path} —— 重新跑 node release/build-panel.mjs`);
+  }
+  let head = '';
+  try { head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8', windowsHide: true }).trim(); } catch { head = ''; }
+  if (record.commit && head && record.commit !== head) {
+    problems.push(`记录里的提交 ${String(record.commit).slice(0, 8)} 与当前树 ${head.slice(0, 8)} 不一致 —— 包里的 exe 不是这个提交编出来的`);
+  }
+  return { files: problems.length ? [] : [面板exe], exeBytes: fs.statSync(exeAbs).size, record, problems };
+}
+
+function packZip(files, version, runtime, panel) {
   if (typeof zlib.crc32 !== 'function') die('当前 Node 太老（没有 zlib.crc32，需要 22.2 以上）—— 没能力给 zip 自检，就不打包');
   const prefix = `${ZIP_BASE}-v${version}/`;   // 压缩包内的一级目录：解压时不会把文件撒到用户目录里
   const entries = [];
@@ -476,6 +513,8 @@ function packZip(files, version, runtime) {
   for (const rel of files) add(path.join(ROOT, rel), prefix + rel);
   // 运行时保持仓库里的目录结构（安装脚本按 runtime\node.exe 找它）
   for (const rel of runtime.files) add(path.join(RUNTIME_DIR, rel), `${prefix}runtime/${rel}`);
+  // 悬浮看板（构建时产物）：同样的二进制路径，来源由 panel-build.json 核对
+  for (const rel of panel.files ?? []) add(path.join(ROOT, ...rel.split('/')), prefix + rel);
   fs.mkdirSync(DIST_DIR, { recursive: true });
   const zipPath = path.join(DIST_DIR, `${ZIP_BASE}-v${version}.zip`);
   writeZip(zipPath, entries);
@@ -485,6 +524,7 @@ function packZip(files, version, runtime) {
     prefix,
     count: entries.length,
     runtimeFiles: runtime.files.length,
+    panelFiles: (panel.files ?? []).length,
     rawBytes: entries.reduce((n, e) => n + e.size, 0),
     size: fs.statSync(zipPath).size,
   };
@@ -572,12 +612,13 @@ function printLayers({ 发布, 仅开发, 未分类, 冲突, 失效发布, 失�
 }
 
 function parseArgs(argv) {
-  const opt = { dry: false, tag: false, version: null, help: false, runtime: true };
+  const opt = { dry: false, tag: false, version: null, help: false, runtime: true, panel: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry') opt.dry = true;
     else if (a === '--tag') opt.tag = true;
     else if (a === '--no-runtime') opt.runtime = false;
+    else if (a === '--no-panel') opt.panel = false;
     else if (a === '--version') opt.version = argv[++i] ?? '';
     else if (a.startsWith('--version=')) opt.version = a.slice('--version='.length);
     else if (a === '-h' || a === '--help') opt.help = true;
@@ -640,23 +681,36 @@ function main() {
     info(`runtime/node.exe  ${humanSize(runtime.exeBytes)}（Node ${runtime.version}），SHA256 与 release/portable-node.json 一致 ✓`);
   }
 
+  blank();
+  stepHead('③c', '悬浮看板（构建时产物，不逐行审计，走来源核对）');
+  const panel = opt.panel ? inspectPanel() : { files: [], problems: [], skipped: true };
+  if (opt.panel === false) {
+    info('○ --no-panel：本次发布包不带悬浮看板 —— 用户装完没有屏幕边上的那条面板（确认这是有意的）');
+  } else if (panel.problems.length) {
+    for (const p of panel.problems) info(`❌ ${p}`);
+  } else {
+    info(`${面板exe}  ${humanSize(panel.exeBytes)}（提交 ${String(panel.record.commit ?? '').slice(0, 8)} · 源文件 ${(panel.record.sources ?? []).length} 个 · 出厂 SHA256 ${String(panel.record.exeSha256).slice(0, 12)}…），来源核对一致 ✓`);
+  }
+
   // 汇总拒绝
   const blocked = audit.hits.filter(h => h.rule.严重级 === 'block');
-  if (blocked.length || problems.length || runtime.problems.length) {
+  if (blocked.length || problems.length || runtime.problems.length || panel.problems.length) {
     blank();
     console.log('════════ 发布被拒绝 ════════');
     if (blocked.length) console.log(`   审计命中 ${blocked.length} 处（个人信息 / 密钥 / 禁入路径）`);
     for (const p of problems) console.log(`   版本不一致：${p}`);
     for (const p of runtime.problems) console.log(`   运行时：${p}`);
+    for (const p of panel.problems) console.log(`   悬浮看板：${p}`);
     console.log('   默认拒绝：先修掉上面这些，再跑一次 node release/publish.mjs --dry');
     return 1;
   }
-  ok('审计通过、版本一致、运行时已核对');
+  ok('审计通过、版本一致、运行时与悬浮看板已核对');
 
   if (opt.dry) {
     stepHead('④ ⑤', '预演模式：跳过打包与打标签');
     const 运行时数 = runtime.files.length ? ` + 便携运行时 ${runtime.files.length} 个文件（${humanSize(runtime.bytes)}）` : '（不含运行时）';
-    info(`正式发布会打包：L2 发布层 ${层次.发布.length} 个文件${运行时数} → dist/${ZIP_BASE}-v${version}.zip`);
+    const 面板数 = panel.files.length ? ` + 悬浮看板 exe（${humanSize(panel.exeBytes)}）` : '（不含悬浮看板）';
+    info(`正式发布会打包：L2 发布层 ${层次.发布.length} 个文件${运行时数}${面板数} → dist/${ZIP_BASE}-v${version}.zip`);
     blank();
     info(`给用户的包（L2）逐条列出 —— 这就是用户解压/装完看到的东西：`);
     let 上组 = null;
@@ -669,6 +723,7 @@ function main() {
       console.log('');
       console.log(`     ${运行时目录}${runtime.files.length === 1 ? 'node.exe' : `（便携运行时 ${runtime.files.length} 个文件）`}`);
     }
+    for (const rel of panel.files) console.log(`     ${rel}`);
     blank();
     info(`安装时还会追加（L3 = L2 + 注入，由安装器写入）：${安装时注入清单()}`);
     info(`正式发布跑：node release/publish.mjs${opt.tag ? ' --tag' : ''}`);
@@ -677,7 +732,7 @@ function main() {
 
   // ④ 打包（只打 L2 发布层 + 便携运行时）
   stepHead('④', '打包');
-  const zip = packZip(层次.发布, version, runtime);
+  const zip = packZip(层次.发布, version, runtime, panel);
   ok(`${path.relative(ROOT, zip.zipPath).split(path.sep).join('/')}  ${humanSize(zip.size)}（原始 ${humanSize(zip.rawBytes)}，${zip.count} 个文件，自检通过）`);
   info(`压缩包内一级目录：${zip.prefix}     dist/ 已在 .gitignore 里，不会进仓库`);
   info(`包内 = L2 发布层 ${层次.发布.length} 个文件${zip.runtimeFiles ? ' + 便携 Node 运行时' : ''}（清单：release/publish-files.mjs）`);
@@ -685,6 +740,11 @@ function main() {
     info(`含便携 Node 运行时 runtime/node.exe（${humanSize(runtime.exeBytes)}）—— 它是二进制，不逐行审计，改由 SHA256 核对来源`);
   } else {
     info('不含便携 Node 运行时：没装 Node 的用户无法直接用（本次是 --no-runtime）');
+  }
+  if (zip.panelFiles) {
+    info(`含常驻悬浮看板 ${面板exe}（${humanSize(panel.exeBytes)}）—— 它也是二进制，改由来源记录（提交 + 编译器 + 出厂 SHA256）核对`);
+  } else {
+    info('不含悬浮看板 exe：用户装完没有屏幕边上的那条面板（本次是 --no-panel）');
   }
 
   // ⑤ 打标签

@@ -51,7 +51,9 @@ foreach ($name in @('AI-Capability-Board-Collect','AI-Quota-Board-Collect')) {
 Get-CimInstance Win32_Process | Where-Object {
   $_.ProcessId -ne ${process.pid} -and (
     ($_.Name -eq 'powershell.exe' -and $_.CommandLine -and (Test-AnyHit $_.CommandLine $trayPaths)) -or
-    ($_.Name -eq 'node.exe' -and $_.ExecutablePath -eq $runtime)
+    ($_.Name -eq 'node.exe' -and $_.ExecutablePath -eq $runtime) -or
+    # 悬浮看板：**按可执行文件路径**匹配 —— 不按名字裸杀 board.exe（那样会误伤别人的同名程序）
+    ($_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq (Join-Path $root '程序\bin\board.exe'))
   )
 } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction Stop }
 ${remove ? `
@@ -75,6 +77,15 @@ if (Test-Path -LiteralPath $commandKey) {
     if (Test-Path -LiteralPath $appKey) { Remove-Item -LiteralPath $appKey -Recurse -Force }
   }
 }
-` : ''}
+    # 悬浮看板的状态文件（位置记忆）：它是用户偏好，与 config.json 同类 ——
+    # 选「连同数据一起删除」时一并清掉。**不在安装目录里**（在 %LOCALAPPDATA%），
+    # 所以 installer.iss 的删除分支碰不到它，这里单独按固定路径清。
+    $panelDir = Join-Path $env:LOCALAPPDATA 'AICapabilityBoard'
+    $panelState = Join-Path $panelDir 'panel-state.json'
+    if (Test-Path -LiteralPath $panelState) { Remove-Item -LiteralPath $panelState -Force -ErrorAction SilentlyContinue }
+    if ((Test-Path -LiteralPath $panelDir) -and -not @(Get-ChildItem -LiteralPath $panelDir -Force | Select-Object -First 1).Count) {
+      Remove-Item -LiteralPath $panelDir -Force -ErrorAction SilentlyContinue
+    }
+    ` : ''}
 `);
 }

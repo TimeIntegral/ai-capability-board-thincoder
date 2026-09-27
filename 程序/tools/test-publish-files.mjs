@@ -81,13 +81,14 @@ test('安装器文件列表逐条渲染（含中文路径），且与 L3 一一�
 test('build-installer 的接缝：stage 里的内容（发布件 + 便携运行时 + 注入）能推出 L3', () => {
   // 真实 stage = 发布层 + runtime/node.exe（打包时加进来的，不在 git 清单里）+ 注入的安装清单。
   // 这里钉住 2026-09-17 踩到的一个坑：运行时不在 L1 清单里，曾经会被当成「未分类」把构建卡死。
-  const stage = [...层次.发布, 'runtime/node.exe', ...安装时注入.map(e => (Array.isArray(e) ? e[0] : e))];
+  const stage = [...层次.发布, 'runtime/node.exe', '程序/bin/board.exe', ...安装时注入.map(e => (Array.isArray(e) ? e[0] : e))];
   const { 分层, 构建时, 安装清单, 不对 } = 从stage推导(stage);
-  assert.deepEqual(构建时, ['runtime/node.exe']);
+  assert.deepEqual(构建时, ['runtime/node.exe', '程序/bin/board.exe']);
   assert.deepEqual(分层.发布, 层次.发布);
   assert.deepEqual(不对, []);
   assert.ok(安装清单.includes('runtime/node.exe'), '运行时必须进 L3（卸载器与升级链靠它）');
-  assert.equal(安装清单.length, 层次.发布.length + 1 + 安装时注入.length);
+  assert.ok(安装清单.includes('程序/bin/board.exe'), '悬浮看板 exe 必须进 L3（装完就有面板，卸载器也靠它收口）');
+  assert.equal(安装清单.length, 层次.发布.length + 2 + 安装时注入.length);
   // 反向：stage 里混进不该给用户的文件 / 少了一个发布件，两种都要被报出来
   assert.ok(从stage推导([...stage, 'AGENTS.md']).不对.includes('AGENTS.md'));
   assert.ok(从stage推导(stage.filter(f => f !== 'VERSION')).不对.includes('VERSION'));

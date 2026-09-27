@@ -93,6 +93,9 @@ $miCollect = $menu.Items.Add('立即刷新数据')
 $miCollect.add_Click({ Wait-Task })
 $miSettings = $menu.Items.Add('连接与提醒设置…')
 $miSettings.add_Click({ Invoke-Node 'tools/connections.mjs' })
+# 悬浮看板：勾选状态 = config.json 的 panel.enabled（缺字段 = 开）；点一下 = 开关（与看板页面按钮、面板右键同一条执行端）
+$miPanel = $menu.Items.Add('悬浮看板')
+$miPanel.add_Click({ Invoke-Node 'tools/panel.mjs' 'toggle' })
 $null = $menu.Items.Add('-')
 $miUpdate = $menu.Items.Add('检查更新')
 $miUpdate.add_Click({ Invoke-Node 'tools/update.mjs' 'check'; Start-Process (([Uri]$dash).AbsoluteUri + '#support') })
@@ -125,6 +128,11 @@ function Update-Tray {
   } catch { $muted = $false }
   $miMute2.Visible = -not $muted
   $miMuteOff.Visible = $muted
+  try {
+    $panelExe = Join-Path $code 'bin\board.exe'
+    $miPanel.Visible = Test-Path -LiteralPath $panelExe
+    $miPanel.Checked = -not ((Get-Config) -and (Get-Config).panel -and (Get-Config).panel.enabled -eq $false)
+  } catch { }
   if (-not $PreviewPath -and ([DateTime]::Now - $script:lastUpdateCheck).TotalHours -ge 1) {
     $script:lastUpdateCheck = [DateTime]::Now
     Invoke-Node 'tools/update.mjs' 'auto'
