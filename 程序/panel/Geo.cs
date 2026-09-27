@@ -79,6 +79,12 @@ namespace Board {
     public const double FORM_FEED_SCALE = 0.05, FORM_FEED_FADE = 0.14, FORM_FEED_RF = 2.0;
     public const double RING_SWEEP_MS = 240.0, RING_SWEEP_MIN = 0.05;
     public const double STALE_QUOTA_MIN = 45.0, STALE_BAL_MIN = 10.0, STALE_DIM = 0.45;
+    // 发丝描边（形状轮廓的唯一出处）：1 DIP、15% 白。
+    // 2026-09-27 实测：面板体是 #FA000000（98% 黑），压到深色桌面上与桌面只差 5%（桌面 #0C0C0C vs 体 #000），
+    //   而 5% 白的描边合成出来恰好也是 #0D —— 与桌面同亮 → 贴边之后轮廓（连同两角的内凹圆角）完全看不见。
+    //   抬到 15%：深色桌面上描边 #262626 与桌面 #0C0C0C 差 26/255（看得见），浅色桌面上靠黑色体本身对比（描边不抢眼）。
+    public const string HAIRLINE = "#26FFFFFF";
+    public const double HAIRLINE_T = 1.0;
     public const int RUNNING_FRESH_SEC = 20;
     public static readonly string[] TIE_ORDER = new string[] { "right", "left", "top", "bottom" };
     public static string EdgeCn(string edge) {
@@ -251,6 +257,17 @@ namespace Board {
       double d = target - cur;
       if (Math.Abs(d) < FORM_FOLLOW_SNAP) return target;
       return cur + d * (1.0 - Math.Exp(-dt / FORM_FOLLOW_TAU));
+    }
+
+    // 贴边内凹圆角的取样点（唯一出处）：翼根 = 角点往屏幕内 0.29·rf（该是**实的**）、
+    //   咬口 = 沿对角线 0.71·rf（该是**空的**）。
+    // 内凹画对了，这两点必然「翼根实 / 咬口空」；画成普通圆角（外凸）时必然反过来 —— 自检 T30 就拿它判。
+    public static void FilletProbe(string edge, double w, double h, double rf, out double rootX, out double rootY, out double biteX, out double biteY) {
+      double k1 = 0.29, k2 = 0.71;
+      if (edge == "right") { rootX = w - rf * k1; rootY = -rf * k1; biteX = w - rf * k2; biteY = -rf * k2; }
+      else if (edge == "left") { rootX = rf * k1; rootY = -rf * k1; biteX = rf * k2; biteY = -rf * k2; }
+      else if (edge == "top") { rootX = -rf * k1; rootY = rf * k1; biteX = -rf * k2; biteY = rf * k2; }
+      else { rootX = -rf * k1; rootY = h - rf * k1; biteX = -rf * k2; biteY = h - rf * k2; }
     }
 
     public static double EaseOutCubic(double p) {

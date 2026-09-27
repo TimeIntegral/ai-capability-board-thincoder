@@ -7,6 +7,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Windows;
+using System.Windows.Media;
 
 namespace Board {
   internal static class SelfTest {
@@ -37,6 +38,9 @@ namespace Board {
         Section("T14", delegate { T14(dir); });
         Section("T15", delegate { T15(); });
         Section("T16", delegate { T16(dir); });
+        Section("T28", delegate { T28(dir); });
+        Section("T29", delegate { T29(dir); });
+        Section("T30", delegate { T30(M, M15); });
       } finally {
         try { Directory.Delete(dir, true); } catch { }
       }
@@ -437,6 +441,142 @@ namespace Board {
       System.Windows.Threading.Dispatcher.PushFrame(frame);
     }
 
+    // ==================== T28 现场读路径（Model.Build：启动与每 30 秒重读走的就是它）====================
+    // 2026-09-27 的缺陷就是这个用例没写：自检都用 BuildFor（自己先把快照读好再喂进去），
+    //   而产品现场走的是 Build —— 那条路上漏了「读余额」，于是面板永远「数据 —」+ 两家「—」。
+    //   这条用例只用 Model.Build（把 Ctx.DataRoot 指到夹具），才叫真验了产品读数据这条路。
+    private static void T28(string dir) {
+      string saved = Ctx.DataRoot;
+      try {
+        Ctx.DataRoot = dir;
+        // ① 看板里两家都显示：现场读必须真读到余额（金额与圈都对上）
+        WriteFixture(dir, "two");
+        var m = Model.Build();
+        var ds = GroupOf(m, "deepseek");
+        Check("T28-read-balance", m.bal.ok && m.balN == 2 && m.balView.dataText != "数据 —"
+          && ds != null && ds.amountText == "¥64.00" && ds.ringCount == 1,
+          "现场读（Model.Build）：余额段「" + m.balView.dataText + "」、DeepSeek「" + (ds == null ? "（没有这一行）" : ds.amountText + " / " + ds.ringCount + " 段弧")
+          + "」（不是「数据 —」+ 两家「—」）｜err=" + m.bal.err);
+        // ② 智谱 GLM 被看板关掉 —— 真数据的形状：glm.ok=false + disabled=true + **没有 balance 字段**
+        WriteFixture(dir, "glmdisabled");
+        var m2 = Model.Build();
+        Check("T28-hidden", m2.balN == 1 && GroupOf(m2, "deepseek") != null && GroupOf(m2, "glm") == null && m2.bal.plat["glm"].hidden,
+          "现场读：cards.glm.show=false（后端也在关）→ 面板 " + m2.balN + " 组（" + Names(m2) + "），关掉的那家整组不出现");
+        // ③ 开关打开（这家有余额）：整组回来（两个方向都验）
+        WriteFixture(dir, "two");
+        var m3 = Model.Build(m2);
+        var g3 = GroupOf(m3, "glm");
+        Check("T28-shown-again", m3.balN == 2 && g3 != null && g3.amountText == "¥8,888.12",
+          "开关打开 → 整组回来：" + Names(m3) + "｜智谱 GLM「" + (g3 == null ? "—" : g3.amountText) + "」");
+        // ④ 两家都不显示：余额段整段不出现（面板高回到 328）
+        WriteFixture(dir, "allhidden");
+        var m4 = Model.Build();
+        Check("T28-allhidden", m4.balN == 0 && Geo.PanelH(m4.balN, Metrics.Fake(1920, 1080, 1.0)) == 328.0,
+          "两家都被关掉 → 余额段整段不出现（" + m4.balN + " 组、面板高 " + Fmt.Num(Geo.PanelH(m4.balN, Metrics.Fake(1920, 1080, 1.0))) + "）");
+      } finally { Ctx.DataRoot = saved; }
+    }
+
+    // ==================== T29 读失败时的降级（保留上一份 / 不编造）====================
+    private static void T29(string dir) {
+      string saved = Ctx.DataRoot;
+      try {
+        Ctx.DataRoot = dir;
+        WriteFixture(dir, "glmdisabled");
+        var good = Model.Build();
+        // ① 半截文件（采集器正在原地重写）：这一份读不出来 → **保留上一份好数据**
+        WriteHalfFixture(dir);
+        var after = Model.Build(good);
+        var ds = GroupOf(after, "deepseek");
+        Check("T29-retain", after.balRetained && after.balN == 1 && GroupOf(after, "glm") == null
+          && ds != null && ds.amountText == "¥64.00" && after.balView.dataText == good.balView.dataText,
+          "半截文件 → 保留上一份好数据：仍 " + after.balN + " 组（" + Names(after) + "）、金额「" + (ds == null ? "—" : ds.amountText)
+          + "」、数据时间「" + after.balView.dataText + "」；被关掉的那家不出现（不是清空成两家「—」）");
+        // ② 保留的是旧数据 → 陈旧规则照旧生效（余额 10 分钟 / 每家自己的 atMs）
+        long old = Fmt.NowMs() - 15L * 60000L;
+        var stale = Model.BuildFor(good.codex, Sessions.FromSlots(new List<SlotRec>(), Fmt.NowMs()), new Att7(),
+          BalWithAt(dir, old, Fmt.NowMs()), Fmt.NowMs(), new Activity());
+        Check("T29-dim", stale.Freshness().StaleOf("deepseek") && !stale.Freshness().StaleOf("glm"),
+          "保留的是旧数据 → 按陈旧规则变暗（阈值 " + Fmt.Num(Geo.STALE_BAL_MIN) + " 分钟）：DeepSeek 陈旧="
+          + stale.Freshness().StaleOf("deepseek") + "；被关掉的那家不参与判定");
+        // ③ 从没读到过（启动就撞上没文件 / 半截）：按设计写「—」、不画圈，绝不假装 0
+        string empty = Path.Combine(dir, "empty-root");
+        if (!Directory.Exists(empty)) Directory.CreateDirectory(empty);
+        Ctx.DataRoot = empty;
+        var fresh = Model.Build(null);
+        bool allUnknown = true, noRings = true;
+        foreach (var g in fresh.balView.groups) { if (g.known) allUnknown = false; if (g.ringCount > 0) noRings = false; }
+        Check("T29-firstfail", !fresh.bal.ok && fresh.balView.dataText == "数据 —" && allUnknown && noRings,
+          "从没读到过 → 「" + fresh.balView.dataText + "」、" + fresh.balView.groupCount + " 行都写「—」、圈 " + (noRings ? "0 段" : "（不该有）")
+          + "（读不到 ≠ 0；额度那一半同理：codexOk=" + fresh.codexOk + "）");
+        // ④ 能读了 → 回到正常（不再沿用）
+        Ctx.DataRoot = dir;
+        WriteFixture(dir, "glmdisabled");
+        var back = Model.Build(fresh);
+        Check("T29-recover", !back.balRetained && back.bal.ok && back.balN == 1 && back.balView.dataText != "数据 —",
+          "文件恢复可读 → 不再沿用上一份（balRetained=" + back.balRetained + "），余额段「" + back.balView.dataText + "」");
+      } finally { Ctx.DataRoot = saved; }
+    }
+
+    // ==================== T30 贴边内凹圆角（fillet）与轮廓可见性 ====================
+    // 三条判据：① 贴边那侧两角确实是**内凹**（翼根在形状里、咬口在形状外 —— 画成普通圆角必然反过来）；
+    //   ② 翼真的溢出了 rf（没画出来就没有翼）；③ 咬口那一块在窗口与裁剪之内（没被裁掉），且描边够亮（深色桌面上看得见）。
+    private static void T30(Metrics M, Metrics M15) {
+      string[] edges = new string[] { "right", "left", "top", "bottom" };
+      double h = Geo.PanelH(2, M), rf = Geo.PANEL_RF;
+      bool allOk = true; string detail = "";
+      foreach (string e in edges) {
+        var g = Geo.Medium(e, 540.0, h, M);
+        var path = Geometry.Parse(g.panelPath);
+        double rx, ry, bx, by;
+        Geo.FilletProbe(e, Geo.PANEL_W, h, rf, out rx, out ry, out bx, out by);
+        bool rootIn = path.FillContains(new Point(rx, ry));
+        bool biteOut = !path.FillContains(new Point(bx, by));
+        var b = path.Bounds;
+        bool wing = (e == "right" || e == "left")
+          ? (b.Top <= -rf + 0.01 && b.Bottom >= h + rf - 0.01)
+          : (b.Left <= -rf + 0.01 && b.Right >= Geo.PANEL_W + rf - 0.01);
+        double wx = g.win.x + g.panel.x, wy = g.win.y + g.panel.y;         // 面板盒在屏幕里的位置
+        bool biteInWindow = (bx + wx) >= g.win.x - 0.01 && (bx + wx) <= g.win.x + g.win.w + 0.01
+                         && (by + wy) >= g.win.y - 0.01 && (by + wy) <= g.win.y + g.win.h + 0.01;
+        var clipE = Geo.ClipRectFor(e, Geo.PANEL_W, h, Geo.ClipReveal(e, new RectD(0, 0, Geo.PANEL_W, h)), rf);
+        bool biteUnclipped = (bx >= clipE.x - 0.01) && (bx <= clipE.x + clipE.w + 0.01) && (by >= clipE.y - 0.01) && (by <= clipE.y + clipE.h + 0.01);
+        allOk = allOk && rootIn && biteOut && wing && biteInWindow && biteUnclipped;
+        detail += Geo.EdgeCn(e) + "[翼根" + (rootIn ? "实" : "空！") + "/咬口" + (biteOut ? "空" : "实！") + "/翼" + (wing ? "有" : "无！") + "] ";
+      }
+      Check("T30-fillet", allOk, "四条边：贴边那侧两角是内凹（翼根在形状里、咬口在形状外；翼溢出 rf=" + Fmt.Num(rf) + "，咬口在窗口与裁剪内）" + detail);
+      // 收起小条的内凹（SLIVER_RF）：同一套判据
+      var slPath = Geometry.Parse(Geo.Medium("right", 540.0, h, M).sliverPath);
+      double srx, sry, sbx, sby;
+      Geo.FilletProbe("right", Geo.SLIVER_W, h, Geo.SLIVER_RF, out srx, out sry, out sbx, out sby);
+      Check("T30-sliver", slPath.FillContains(new Point(srx, sry)) && !slPath.FillContains(new Point(sbx, sby)),
+        "收起条（宽 " + Fmt.Num(Geo.SLIVER_W) + "、内凹 " + Fmt.Num(Geo.SLIVER_RF) + "）同样内凹：翼根在形状里=" + slPath.FillContains(new Point(srx, sry))
+        + "、咬口在形状外=" + !slPath.FillContains(new Point(sbx, sby)));
+      // 轮廓：发丝描边要亮到在深色桌面上看得见（旧值 5% 白合成 #0D，与 #0C0C0C 的桌面同亮 → 看不见）
+      int a = AlphaOf(Geo.HAIRLINE);
+      int darkPx = a;      // 描边压在近乎全黑的面板体上 → 合成值 ≈ α（体本身压到 #0C0C0C 的桌面上也只剩 #000）
+      int oldPx = 13;      // 旧值 #0DFFFFFF：α=13 → 合成 #0D，与桌面 #0C 只差 1/255（看不见）
+      Check("T30-hairline", a >= 32 && Geo.HAIRLINE_T >= 1.0 && (darkPx - 12) >= 16,
+        "轮廓描边 " + Geo.HAIRLINE + "（α=" + a + "/255，粗 " + Fmt.Num(Geo.HAIRLINE_T) + " DIP）：压在深色桌面 #0C0C0C 上合成 #" + darkPx.ToString("X2")
+        + "（差 " + (darkPx - 12) + "/255）；旧值 #0DFFFFFF（5% 白）合成 #" + oldPx.ToString("X2") + "（差 " + (oldPx - 12) + "/255，与桌面同亮 → 看不见）");
+      Read("T30.hairline", Geo.HAIRLINE + " α=" + a);
+      Read("T30.fillet", detail.Trim());
+    }
+
+    private static BalGroup GroupOf(Model m, string key) {
+      foreach (var g in m.balView.groups) if (g.key == key) return g;
+      return null;
+    }
+    private static string Names(Model m) {
+      var l = new List<string>();
+      foreach (var g in m.balView.groups) l.Add(g.name);
+      return string.Join("、", l.ToArray());
+    }
+    private static int AlphaOf(string color) {
+      string c = (color ?? "").TrimStart('#');
+      if (c.Length != 8) return 0;
+      return int.Parse(c.Substring(0, 2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     // ==================== 夹具 ====================
     private static SlotRec Slot(string cwd, long ms, int turns, string sid) {
       var s = new SlotRec(); s.cwd = cwd; s.ms = ms; s.turns = turns; s.sessionId = sid; return s;
@@ -466,35 +606,83 @@ namespace Board {
       File.WriteAllText(Path.Combine(dir, "dashboard-data.js"), FixtureText(kind, now, now - 2 * 60000, now - 2 * 60000, now - 2 * 60000, now - 2 * 60000), PanelControl.Utf8NoBom);
     }
 
+    // 半截文件：采集器是**原地重写**（截断后写），读的人可能正好撞上写了一半的那一瞬
+    private static void WriteHalfFixture(string dir) {
+      long now = Fmt.NowMs();
+      string full = FixtureText("two", now, now - 2 * 60000, now - 2 * 60000, now - 2 * 60000, now - 2 * 60000);
+      File.WriteAllText(Path.Combine(dir, "dashboard-data.js"), full.Substring(0, full.Length / 2), PanelControl.Utf8NoBom);
+    }
+
+    // 夹具（唯一出处）：**字段名与层级照抄真数据的生成器**（程序/tools/build-dashboard-data.mjs 的
+    //   shapeCodex / shapeDeepseek / shapeGlm / cardSettings）—— 值全是假的。
+    // 为什么必须照真结构写（2026-09-27 复盘）：自检自己调用 BalSnapshot.Read 再喂给 BuildFor，
+    //   把产品漏掉的那一步（Build 里根本没读余额）替它做了 → 自检全绿而面板永远「数据 —」。
+    //   假数据一旦「长得像代码以为的样子」，就会替产品把活儿干了；照真文件的长相写，才叫验产品。
+    //   glm 关掉的形状尤其要照真：ok=false + disabled=true + **没有 balance 字段**（用户的日常就是这个形状）。
     private static string FixtureText(string kind, long now, long atMs, long genMs, long dsAt, long glmAt) {
-      string ds, glm, cards;
-      if (kind == "readfail") {
-        ds = "{\"ok\":false,\"error\":\"夹具：读不到\"}";
-        glm = "{\"ok\":false,\"error\":\"夹具：读不到\"}";
-        cards = "{\"deepseek\":{\"show\":true},\"glm\":{\"show\":true}}";
-      } else if (kind == "glmoff") {
-        ds = "{\"ok\":true,\"carried\":false,\"atMs\":" + dsAt + ",\"currency\":\"CNY\",\"totalBalance\":64.0}";
-        glm = "{\"ok\":true,\"carried\":false,\"atMs\":" + glmAt + ",\"balance\":8888.12}";
-        cards = "{\"deepseek\":{\"show\":true},\"glm\":{\"show\":false}}";
-      } else if (kind == "nocards") {
-        ds = "{\"ok\":true,\"carried\":false,\"atMs\":" + dsAt + ",\"currency\":\"CNY\",\"totalBalance\":64.0}";
-        glm = "{\"ok\":true,\"carried\":false,\"atMs\":" + glmAt + ",\"balance\":12.0}";
-        cards = "";
+      bool dsOk = kind != "readfail";
+      bool glmOk = kind == "two" || kind == "glmoff" || kind == "nocards";
+      bool glmDisabled = kind == "glmdisabled" || kind == "allhidden";
+      bool glmShow = kind != "glmdisabled" && kind != "glmoff" && kind != "allhidden";
+      string ds = dsOk
+        ? "{\"ok\":true,\"carried\":false,\"atMs\":" + dsAt + ",\"ageMinutes\":0,\"keySource\":\"ThinCoder 配置\",\"currency\":\"CNY\","
+          + "\"totalBalance\":64.0,\"grantedBalance\":0.0,\"toppedUpBalance\":64.0,\"isAvailable\":true,\"burnPerDay\":null,\"projectedDays\":null}"
+        : "{\"ok\":false,\"error\":\"夹具：读不到\",\"atMs\":null,\"disabled\":false,\"unconfigured\":false,\"keySource\":null}";
+      string glm;
+      if (glmOk) {
+        glm = "{\"ok\":true,\"carried\":" + (kind == "two" ? "true" : "false") + ",\"atMs\":" + glmAt + ",\"ageMinutes\":0,\"keySource\":\"ThinCoder 配置\","
+            + "\"balance\":8888.12,\"availableBalance\":8888.12,\"rechargeAmount\":9000.0,\"giveAmount\":0.0,\"totalSpendAmount\":111.88,"
+            + "\"depleted\":false,\"burnPerDay\":null,\"projectedDays\":null,\"packs\":[]}";
+      } else if (glmDisabled) {
+        glm = "{\"ok\":false,\"error\":\"平台已在 config.json 的 platforms 段关闭（glm）\",\"atMs\":null,\"disabled\":true,\"unconfigured\":false,\"keySource\":null}";
       } else {
-        ds = "{\"ok\":true,\"carried\":false,\"atMs\":" + dsAt + ",\"currency\":\"CNY\",\"totalBalance\":64.0}";
-        glm = "{\"ok\":true,\"carried\":true,\"atMs\":" + glmAt + ",\"balance\":8888.12}";
-        cards = "{\"deepseek\":{\"show\":true},\"glm\":{\"show\":true}}";
+        glm = "{\"ok\":false,\"error\":\"夹具：读不到\",\"atMs\":null,\"disabled\":false,\"unconfigured\":false,\"keySource\":null}";
       }
+      bool dsShow = kind != "allhidden";
+      string cards = kind == "nocards" ? "" :
+        "  \"cards\": { \"codex\": { \"show\": true }, \"deepseek\": { \"show\": " + (dsShow ? "true" : "false") + " }, \"glm\": { \"show\": " + (glmShow ? "true" : "false") + " } },\n";
       var sb = new StringBuilder();
       sb.Append("window.DASHBOARD_DATA = {\n");
       sb.Append("  \"generatedAtMs\": ").Append(genMs).Append(",\n");
-      sb.Append("  \"codex\": { \"ok\": true, \"atMs\": ").Append(atMs)
-        .Append(", \"fiveHour\": { \"usedPercent\": 38, \"resetAt\": ").Append(now + 2 * 3600 * 1000)
-        .Append(" }, \"weekly\": { \"usedPercent\": 57, \"resetAt\": ").Append(now + 5L * 24 * 3600 * 1000).Append(" } },\n");
+      sb.Append("  \"collectedAtMs\": ").Append(genMs - 900).Append(",\n");
+      sb.Append("  \"collectedAtText\": \"2026-09-27 22:05\",\n");
+      sb.Append("  \"health\": { \"consecutiveFailures\": { \"codex\": 0, \"deepseek\": 0, \"glm\": 0 },")
+        .Append(" \"lastErrors\": { \"codex\": null, \"deepseek\": null, \"glm\": null },")
+        .Append(" \"lastOkAt\": { \"codex\": ").Append(atMs).Append(", \"deepseek\": ").Append(dsAt).Append(", \"glm\": ").Append(glmAt).Append(" } },\n");
+      sb.Append("  \"mute\": { \"active\": false, \"until\": null, \"untilText\": null, \"note\": null },\n");
+      sb.Append("  \"suppression\": { \"glm\": { \"atMs\": ").Append(genMs).Append(", \"balanceAt\": null, \"note\": null } },\n");
+      sb.Append("  \"config\": { \"refreshSeconds\": 30, \"defaultWindow\": \"24h\", \"theme\": \"dark\", \"staleMinutes\": 45 },\n");
+      sb.Append("  \"thresholds\": { \"glmLow\": 5, \"glmCritical\": 2, \"dsLow\": 5, \"dsCritical\": 2, \"codex5hWarn\": 80, \"codex5hCritical\": 95, \"codexWeekWarn\": 80 },\n");
+      sb.Append("  \"intervals\": { \"codex\": 5, \"balance\": 5 },\n");
+      sb.Append("  \"codex\": { \"ok\": true, \"degraded\": false, \"carried\": false, \"source\": \"live\", \"snapshotAgeMinutes\": null, \"error\": null,")
+        .Append(" \"atMs\": ").Append(atMs).Append(", \"ageMinutes\": 0, \"keySource\": \"夹具\", \"plan\": \"plus\", \"email\": null,")
+        .Append(" \"fiveHour\": { \"usedPercent\": 38, \"windowMinutes\": 300, \"resetAt\": ").Append(now + 2 * 3600 * 1000)
+        .Append(", \"resetAfterSeconds\": 7200, \"resetText\": \"夹具\", \"resetAfter\": \"夹具\" },")
+        .Append(" \"weekly\": { \"usedPercent\": 57, \"windowMinutes\": 10080, \"resetAt\": ").Append(now + 5L * 24 * 3600 * 1000)
+        .Append(", \"resetAfterSeconds\": 432000, \"resetText\": \"夹具\", \"resetAfter\": \"夹具\" },")
+        .Append(" \"limitReached\": false, \"limitReachedType\": null, \"credits\": { \"hasCredits\": false, \"balance\": \"0\" } },\n");
       sb.Append("  \"deepseek\": ").Append(ds).Append(",\n");
       sb.Append("  \"glm\": ").Append(glm).Append(",\n");
-      if (!string.IsNullOrEmpty(cards)) sb.Append("  \"cards\": ").Append(cards).Append(",\n");
-      sb.Append("  \"thresholds\": { \"dsLow\": 5, \"dsCritical\": 2, \"glmLow\": 5, \"glmCritical\": 2, \"codex5hWarn\": 80, \"codex5hCritical\": 95, \"codexWeekWarn\": 80 }\n");
+      sb.Append("  \"platforms\": { \"codex\": true, \"deepseek\": true, \"glm\": ").Append(glmShow ? "true" : "false").Append(" },\n");
+      sb.Append(cards);
+      sb.Append("  \"models\": { \"available\": { \"gpt-6-astra\": { \"available\": true, \"availableAt\": null } } },\n");
+      sb.Append("  \"links\": { \"codex\": { \"name\": \"Codex\", \"usage\": \"\", \"topup\": null },")
+        .Append(" \"deepseek\": { \"name\": \"DeepSeek\", \"usage\": \"\", \"topup\": \"\" },")
+        .Append(" \"glm\": { \"name\": \"智谱 GLM\", \"usage\": \"\", \"topup\": \"\" } },\n");
+      sb.Append("  \"predict\": { \"$comment\": \"夹具\", \"enabled\": false, \"warnMinutes\": 30, \"minUsedPercent\": 20, \"slopeWindowMinutes\": 60 },\n");
+      sb.Append("  \"anomaly\": { \"$comment\": \"夹具\", \"enabled\": false, \"factor\": 3, \"minAmount\": 10 },\n");
+      sb.Append("  \"attribution\": { \"generatedAtMs\": ").Append(genMs).Append(", \"scanMs\": 1, \"scannedFiles\": 0, \"reusedFiles\": 0, \"skippedFiles\": 0,")
+        .Append(" \"readMB\": 0, \"thinCoderProjectCount\": 0, \"total7\": 0, \"total30\": 0, \"totalAll\": 0, \"projects\": [],")
+        .Append(" \"thinCoder\": { \"projects\": [], \"scannedFiles\": 0, \"sessionDir\": \"夹具\", \"totalSessions\": 0, \"total7\": 0, \"total30\": 0, \"totalAll\": 0 },")
+        .Append(" \"models\": [], \"usageStyle\": { \"approval\": {}, \"sandbox\": {}, \"effort\": {}, \"turns\": 0, \"avgTokensPerTurn\": 0 },")
+        .Append(" \"coverage\": { \"fromMs\": 0, \"toMs\": 0 } },\n");
+      sb.Append("  \"thinCoderInstalled\": true,\n");
+      sb.Append("  \"recentAlerts\": [],\n");
+      sb.Append("  \"daily\": { \"2026-09-27\": { \"codex\": { \"n\": 1, \"max5h\": 38, \"avg5h\": 38, \"max7d\": 57 },")
+        .Append(" \"deepseek\": { \"n\": 1, \"spend\": 0, \"first\": 64, \"last\": 64 }, \"glm\": null } },\n");
+      sb.Append("  \"history\": { \"codex\": { \"h24\": [], \"d7\": [], \"d30\": [], \"all\": [] },")
+        .Append(" \"deepseek\": { \"h24\": [], \"d7\": [], \"d30\": [], \"all\": [] },")
+        .Append(" \"glm\": { \"h24\": [], \"d7\": [], \"d30\": [], \"all\": [] } }\n");
       sb.Append("};\n");
       return sb.ToString();
     }

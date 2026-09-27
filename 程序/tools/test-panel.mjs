@@ -21,6 +21,17 @@ const sha = file => crypto.createHash('sha256').update(fs.readFileSync(file)).di
 const 读 = rel => { try { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); } catch { return null; } };
 const skip若未编译 = () => (!有exe ? '还没编译面板（开发目录不产 exe，A3 —— 要编就在冻结树里编：node release/prepare.mjs，或在 private/ 下的链接工作树里编）' : false);
 
+// 本机另有**别处**的看板在跑（比如用户自己的日常版）：单实例锁是会话级的（Local\AICapabilityBoard-Panel），
+//   会被它占着 —— 本树起的面板会立刻退出并去唤出它（等于去动别人的窗口）。这几条用例要真起面板，
+//   遇到这种情况一律跳过并写明理由（换一台隔离机跑就是全绿）；停别人的进程与强夺锁都不是测试该干的事。
+const 外来面板在跑 = () => {
+  try {
+    const e = EXE.replace(/'/g, "''");
+    const n = Number(String(powershell(`@(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'board.exe' -and $_.ExecutablePath -ine '${e}' }).Count`)).trim());
+    return n > 0 ? `本机另有一个别处的看板在跑（${n} 个，路径不是 ${EXE}）—— 单实例锁被它占着，本用例会去动别人的窗口，故跳过` : false;
+  } catch { return false; }
+};
+
 // ── 面板自检（T6–T16）──────────────────────────────────────────────────────
 function 跑自检(extra = []) {
   const r = spawnSync(EXE, ['--selftest', '--data', ROOT, ...extra], { encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
@@ -43,11 +54,36 @@ test('T6–T16 面板自检全部通过（几何 / 拖动阈值 / 位置记忆 /
   const r = 跑自检();
   const 失败 = r.checks.filter(c => !c.ok);
   assert.equal(失败.length, 0, `自检有失败项：\n${失败.map(c => `  ${c.id} ${c.detail}`).join('\n')}`);
-  assert.ok(r.checks.length >= 40, `自检项太少（${r.checks.length} 条）—— 用例可能没跑全`);
-  for (const id of ['T6-panelH', 'T7-detach', 'T8-clamp', 'T9-remain', 'T10-shared-unit', 'T11-hidden', 'T12-today', 'T13-running', 'T14-quota', 'T15-change', 'T16-list']) {
+  assert.ok(r.checks.length >= 60, `自检项太少（${r.checks.length} 条）—— 用例可能没跑全`);
+  for (const id of ['T6-panelH', 'T7-detach', 'T8-clamp', 'T9-remain', 'T10-shared-unit', 'T11-hidden', 'T12-today', 'T13-running', 'T14-quota', 'T15-change', 'T16-list',
+    'T28-read-balance', 'T28-hidden', 'T28-shown-again', 'T29-retain', 'T29-firstfail', 'T30-fillet', 'T30-hairline']) {
     assert.ok(r.checks.some(c => c.id === id), `自检缺少用例 ${id}`);
   }
   assert.match(r.summary, /fail=0/, `自检汇总不是全绿：${r.summary}`);
+});
+
+// 2026-09-27 的缺陷：面板现场读的那条路（Model.Build）根本没调 BalSnapshot.Read，
+//   余额快照只存在于自检里 —— 自检全绿而面板永远「数据 —」。行为判据在自检 T28/T29（跑的就是 Model.Build）；
+//   这里再钉一道「接线」：那条路上必须真的调过一次读（“自检替产品把活干了”这个坑就在这条判据上）。
+test('现场读路径确实读了余额快照（Model.Build → BalSnapshot.Read）', () => {
+  const 源 = 读('程序/panel/Model.cs') ?? '';
+  const build = 源.split('public static Model Build(Model prev)')[1] ?? '';
+  const body = build.split('public static Model BuildFor')[0] ?? '';
+  assert.match(body, /ReadBalance\(prev\)|BalSnapshot\.Read\(/, 'Model.Build（现场读）必须读余额快照（只读额度、余额拿空快照 = 面板永远显示「数据 —」）');
+  assert.ok(/public void ReadBalance\(Model prev\)[\s\S]*?BalSnapshot\.Read\(Ctx\.DataRoot\)/.test(源), 'ReadBalance 里必须真的调 BalSnapshot.Read(Ctx.DataRoot)');
+  assert.ok(!/bal\s*=\s*bal\s*\?\?\s*new BalSnapshot\(\);/.test(body), '现场读那条路不许再用「空快照」当余额');
+});
+
+// 轮廓可见性：贴边那侧的内凹圆角只能靠「形状轮廓」读出来 —— 描边值必须是唯一出处（Geo.HAIRLINE），
+//   且不允许面板里再写死一个当时那种 5% 白（与深色桌面同亮，等于没画）。判据本体在自检 T30。
+test('轮廓描边取 Geo.HAIRLINE（不得写死 5% 白）', () => {
+  const 源 = 读('程序/panel/Panel.cs') ?? '';
+  assert.match(源, /Stroke = Brush\(Geo\.HAIRLINE\)/, '面板/收起条的描边必须取 Geo.HAIRLINE');
+  assert.ok(!/#0DFFFFFF/.test(源), '面板里不许再写死 #0DFFFFFF（5% 白；压在深色桌面上与桌面同亮 → 贴边之后看不到轮廓）');
+  const geo = 读('程序/panel/Geo.cs') ?? '';
+  assert.match(geo, /HAIRLINE = "#([0-9A-Fa-f]{2})FFFFFF"/, 'Geo.HAIRLINE 必须是 8 位 #AARRGGBB');
+  const m = geo.match(/HAIRLINE = "#([0-9A-Fa-f]{2})FFFFFF"/);
+  assert.ok(parseInt(m[1], 16) >= 32, `Geo.HAIRLINE 的 α 太小（${m[1]}）—— 深色桌面上读不出来`);
 });
 
 test('T16 上屏文本 ⊆ 固定词表（无解释性句子）', { skip: skip若未编译() }, () => {
@@ -158,7 +194,7 @@ test('T5 开发目录不产 exe：程序/bin 下没有构建产物，且编译�
 });
 
 // ── 单实例（T17）────────────────────────────────────────────────────────
-test('T17 单实例：连起两次只留一个面板窗口，第二次唤出已有并退出码 0', { skip: skip若未编译() }, () => {
+test('T17 单实例：连起两次只留一个面板窗口，第二次唤出已有并退出码 0', { skip: skip若未编译() || 外来面板在跑() }, () => {
   const 数据 = path.join(ROOT, 'data');
   const 状态 = path.join(process.env.TEMP, `panel-state-test-${Date.now()}.json`);
   const 起 = () => spawnSync(EXE, ['--data', ROOT, '--state', 状态, '--form', 'micro', '--seconds', '8'], { windowsHide: true, encoding: 'utf8' });
@@ -203,7 +239,7 @@ test('T18 升级针：按 exe 路径匹配，绝不按名字裸杀', () => {
 // 契约文本对了不等于针是通的：2026-09-27 的演练实测过这个坑 —— 模板字符串里写 '程序\bin\board.exe'，
 // \b 被 JS 吃成退格符，针的路径与真实 exe 路径永远不相等（T18 只看源码文本，看不出来）。
 // 这里真起一个面板，再调本树里的 stopOwned（isolated:false、remove 默认 false = 只停进程），必须真的停掉。
-test('T18b 升级针行为：面板在跑时 stopOwned 真的把它停掉（不是只对得上文本）', { skip: skip若未编译() }, () => {
+test('T18b 升级针行为：面板在跑时 stopOwned 真的把它停掉（不是只对得上文本）', { skip: skip若未编译() || 外来面板在跑() }, () => {
   const 状态 = path.join(process.env.TEMP, `panel-state-needle-${Date.now()}.json`);
   const 个数 = () => Number(String(powershell(`@(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq ${psQuote(EXE)} }).Count`)).trim());
   try {
@@ -235,7 +271,7 @@ test('T19 入口与纪律：.vbs 纯 ASCII、指向正确；先看我.txt 有入
 });
 
 // ── 真机窗口属性读回（T21 / A4；需要桌面会话，没有就跳过）─────────────────
-test('T21 窗口属性读回：透明 / 穿透 / 置顶 / 不抢焦点 / 不占任务栏', { skip: skip若未编译() }, () => {
+test('T21 窗口属性读回：透明 / 穿透 / 置顶 / 不抢焦点 / 不占任务栏', { skip: skip若未编译() || 外来面板在跑() }, () => {
   if (process.env.PANEL_SKIP_WINDOW === '1') return;   // 明确跳过（无桌面会话时由调用方设）
   const 状态 = path.join(process.env.TEMP, `panel-state-probe-${Date.now()}.json`);
   const script = `

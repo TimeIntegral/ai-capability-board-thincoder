@@ -230,7 +230,7 @@ namespace Board {
       // 收起条（贴边那一条）
       sliverBox = new Canvas();
       sliverFill = new Path(); sliverFill.Fill = Brush("#FA000000");
-      sliverEdge = new Path(); sliverEdge.Stroke = Brush("#0DFFFFFF"); sliverEdge.StrokeThickness = 1;
+      sliverEdge = new Path(); sliverEdge.Stroke = Brush(Geo.HAIRLINE); sliverEdge.StrokeThickness = Geo.HAIRLINE_T;
       // 第一刀：不做呼吸动画 —— 发丝描边常亮（原来那条动画每帧整窗重绘 = 15~18%/核）
       sliverBox.Children.Add(sliverFill);
       sliverBox.Children.Add(sliverEdge);
@@ -239,7 +239,7 @@ namespace Board {
       // 面板
       panelBox = new Canvas();
       panelShape = new Path();
-      panelShape.Fill = Brush("#FA000000"); panelShape.Stroke = Brush("#0DFFFFFF"); panelShape.StrokeThickness = 1;
+      panelShape.Fill = Brush("#FA000000"); panelShape.Stroke = Brush(Geo.HAIRLINE); panelShape.StrokeThickness = Geo.HAIRLINE_T;
       panelBox.Children.Add(panelShape);
       panelScale = new ScaleTransform(1, 1);
       panelBox.RenderTransform = panelScale;
@@ -473,6 +473,19 @@ namespace Board {
       PanelState.Save(this, false);
     }
 
+    // 面板高 / 形状 / 窗口 / 裁剪一起重算（家数变了之后；微型形态不动 —— 卡片自己一套几何）
+    private void ApplyMediumGeometry() {
+      if (form != "medium") return;
+      panelH = Geo.PanelH(model.balN, M);
+      var g = Geo.Medium(edge, anchor, panelH, M);
+      LayoutScene(true);
+      dragLastPathK = -1.0;
+      cardBranch.Width = g.win.w; cardBranch.Height = g.win.h;
+      root.Width = g.win.w; root.Height = g.win.h;
+      SetWindowRect(g.win.x, g.win.y, g.win.w, g.win.h);
+      ResetClip(state);
+    }
+
     public void SetWindowRect(double x, double y, double w, double h) {
       if (w > 0 && Math.Abs(Width - w) > 0.01) Width = w;
       if (h > 0 && Math.Abs(Height - h) > 0.01) Height = h;
@@ -584,7 +597,9 @@ namespace Board {
     // ==================== 刷新 ====================
     public void UpdateAll(bool first) {
       if (model == null) return;
-      EnsureSceneShape();
+      // 家数变了 → 整段重建，并且把面板高 / 形状 / 窗口 / 裁剪一起拉齐
+      //   （只重建内容不动窗口 → 窗口还留在上一档的高度，不穿透的矩形也跟着不对）
+      if (EnsureSceneShape()) ApplyMediumGeometry();
       var fr = model.Freshness();
       var L = PanelLayout.ForCount(model.balN);
       string c5 = model.codexOk ? Ctx.ColorOfRemain(model.fiveRemain, model.codex.warn5hUsed, model.codex.crit5hUsed) : "#8A909C";
@@ -812,7 +827,8 @@ namespace Board {
 
     public void ReloadData() {
       try {
-        model = Model.Build();
+        // 把上一份交给 Build：这一次读失败时保留上一份好数据（读不到 ≠ 清空；旧数据按陈旧规则变暗）
+        model = Model.Build(model);
         lastActivityMax = ReadActivityMax();
         UpdateAll(false);
       } catch (Exception ex) { stepErrors.Add("ReloadData: " + ex.Message); }

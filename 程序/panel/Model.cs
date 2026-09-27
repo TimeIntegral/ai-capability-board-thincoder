@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace Board {
   internal static class Fmt {
@@ -123,7 +124,8 @@ namespace Board {
       var o = new QuotaSnap();
       if (!File.Exists(path)) { o.err = "找不到 " + path; return o; }
       try {
-        string raw = Io.ReadAllTextShared(path);
+        // 采集器是**原地重写**这个文件（截断后写）——读到半截就再读一次，别把一次竞态当成「读不到」
+        string raw = Io.ReadAllTextRetry(path, 3, 150);
         var d = Json.Obj(Json.ParseJsWrap(raw));
         if (d == null) { o.err = "文件里没有 JSON 主体"; return o; }
         var c = Json.Obj(Json.Get(d, "codex"));
@@ -159,6 +161,34 @@ namespace Board {
       using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
         using (var sr = new StreamReader(fs, new UTF8Encoding(false))) return sr.ReadToEnd();
       }
+    }
+
+    // 重试读（唯一入口）：采集器正在原地重写时，一次读可能拿到半截 —— 隔一小会儿再读
+    //   只在**失败**时重试（成功一次就返回），所以正常路径零开销；抛出的仍是最后一次的异常
+    public static string ReadAllTextRetry(string path, int tries, int delayMs) {
+      Exception last = null;
+      int n = tries < 1 ? 1 : tries;
+      for (int i = 0; i < n; i++) {
+        try { return ReadAllTextShared(path); }
+        catch (Exception ex) { last = ex; }
+        if (i + 1 < n && delayMs > 0) Thread.Sleep(delayMs);
+      }
+      throw last;
+    }
+
+    // 解析重试（唯一入口）：文本读到了但解不出主体（半截文件就是这样）→ 重读重解
+    public static object ReadJsRetry(string path, int tries, int delayMs, out string err) {
+      err = "";
+      int n = tries < 1 ? 1 : tries;
+      for (int i = 0; i < n; i++) {
+        try {
+          object o = Json.ParseJsWrap(ReadAllTextShared(path));
+          if (o != null) return o;
+          err = "文件里没有 JSON 主体";
+        } catch (Exception ex) { err = ex.Message; }
+        if (i + 1 < n && delayMs > 0) Thread.Sleep(delayMs);
+      }
+      return null;
     }
   }
 
@@ -448,8 +478,9 @@ namespace Board {
       o.path = p;
       if (!File.Exists(p)) { o.err = "找不到 " + p; return o; }
       try {
-        var d = Json.Obj(Json.ParseJsWrap(Io.ReadAllTextShared(p)));
-        if (d == null) { o.err = "文件里没有 JSON 主体"; return o; }
+        string perr;
+        var d = Json.Obj(Io.ReadJsRetry(p, 3, 150, out perr));
+        if (d == null) { o.err = perr; return o; }
         long? gen = Json.Long(Json.Get(d, "generatedAtMs"));
         if (gen.HasValue) { o.genMs = gen.Value; o.genText = "数据 " + Fmt.MD(o.genMs); }
         double dsLow = 5.0, dsCrit = 2.0, glmLow = 5.0, glmCrit = 2.0;
@@ -636,15 +667,25 @@ namespace Board {
     public double quotaRemain, quotaUsed, qWarnUsed = 80.0, qCritUsed = 95.0;
     public string sessId = ""; public long mintMs; public long slotMs; public string slotNo = "";
     public BalSnapshot bal = new BalSnapshot();
+    public bool balRetained, codexRetained;   // 这一份是不是「上一份好数据」的沿用（读失败时的降级，不是假装新数据）
     public BalView balView = new BalView();
     public BalGroup balPick;
     public int balN { get { return balView.groupCount; } }
     public long nowMs;
 
-    public static Model Build() {
+    public static Model Build() { return Build(null); }
+
+    // 现场读（唯一入口）：面板启动与每 30 秒重读都走这里 —— 额度与余额**都必须在这条路上真读一遍**。
+    // 2026-09-27 的缺陷复盘：这条路上只读了额度，余额那一段拿的是个空快照（`new BalSnapshot()`），
+    //   于是面板永远显示「数据 —」+ 两家「—」，连被看板关掉的平台也照样出现；
+    //   而自检因为自己先调用了 BalSnapshot.Read 再喂给 BuildFor，把产品漏掉的那一步替它做了，所以全绿。
+    // prev：上一份模型；这一份读失败时保留上一份好数据（按陈旧规则变暗，绝不假装 0、也不清空）。
+    public static Model Build(Model prev) {
       var o = new Model();
       o.nowMs = Fmt.NowMs();
       o.codex = QuotaSnap.Read(Ctx.DataPath);
+      if (!o.codex.ok && prev != null && prev.codex != null && prev.codex.ok) { o.codex = prev.codex; o.codexRetained = true; }
+      o.ReadBalance(prev);
       o.sess = Sessions.Read();
       if (o.sess.ok && o.sess.projects.Count > 0) { o.proj = o.sess.projects[0]; o.projName = o.proj.name; o.projCwd = o.proj.cwd; }
       o.att7 = Att7.Read(Ctx.DataRoot, o.projCwd);
@@ -652,6 +693,12 @@ namespace Board {
       o.status = StatusLogic.Compute(o.nowMs, act.sessionMs, act.logMs, act.peerMs, act.livePeers, o.sess.todaySessions);
       o.Finish(act);
       return o;
+    }
+
+    // 余额快照的现场读（唯一入口）：读真文件；读失败时保留上一份好数据（口径：读不到 ≠ 0，也 ≠ 清空）
+    public void ReadBalance(Model prev) {
+      bal = BalSnapshot.Read(Ctx.DataRoot);
+      if (!bal.ok && prev != null && prev.bal != null && prev.bal.ok) { bal = prev.bal; balRetained = true; }
     }
 
     // 自检夹具入口：给定快照与会话，不动真实文件
