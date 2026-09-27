@@ -24,6 +24,7 @@ import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { 分类, 检查悬空引用, 发布层, 仅供开发, 安装时注入, 运行时目录 } from './publish-files.mjs';
+import { 树类型 } from './git-tree.mjs';
 
 const ROOT = path.dirname(import.meta.dirname);              // 仓库根目录
 const RULES_FILE = path.join(import.meta.dirname, 'audit-rules.json');
@@ -469,15 +470,32 @@ function inspectRuntime() {
   return { files, bytes, exeBytes: fs.statSync(exe).size, version: record.version ?? '未知', problems: [] };
 }
 
-// ── ④b 悬浮看板（构建时产物，不进 git）─────────────────────────────────
+// ── ④b 悬浮看板（构建时产物，不进 git）─────────────────────────────
 // 与运行时同一条纪律：二进制不逐行审计，改用**来源核对** —— 记录里是
-// {提交, 源文件清单及其 SHA256, 编译器, 出厂 SHA256}（由 release/build-panel.mjs 在冻结构建树里写）。
-// 三边任何一边对不上就拒绝发布：exe 被换过 / 源码在编译后又改了 / 这棵树不是编出它的那个提交。
+// {提交, 源码清单及其 SHA256, 编译器, 出厂 SHA256, 构建树}（由 release/build-panel.mjs 在冻结构建树里写）。
+// 任一条对不上就拒绝发布：exe 被换过 / 源码在编译后又改了 / 这棵树不是编出它的那个提交 / **不是在冻结树里编的**。
 const 面板exe = '程序/bin/board.exe';
 const 面板记录 = '程序/bin/panel-build.json';
+// 开发（主）工作树里不该有面板构建产物（`程序/bin/` 是冻结树专属的输出目录）—— 留在那儿的 exe
+// 正是「下次构建捡到旧 exe」的入口（设计档 A3）：闸门见到就拒绝（不是静默忽略）。
+// 判「这棵树是哪种树」由 release/git-tree.mjs 统一回答。
+const 面板产物目录 = '程序/bin';
+const 开发目录里的产物 = () => {
+  const dir = path.join(ROOT, ...面板产物目录.split('/'));
+  return fs.existsSync(dir) ? fs.readdirSync(dir).sort().map(n => `${面板产物目录}/${n}`) : [];
+};
 
-function inspectPanel() {
-  const 先跑 = '先跑 node release/build-panel.mjs（必须在冻结构建树里跑）；确实要发不含面板的包就加 --no-panel';
+function inspectPanel({ dry = false } = {}) {
+  const 先跑 = '要出包就 node release/prepare.mjs（它在冻结提交的独立构建树里编面板、出候选版）';
+  if (树类型(ROOT) !== 'worktree') {
+    const 残留 = 开发目录里的产物();
+    if (残留.length) {
+      return { files: [], problems: [`开发目录里出现了面板构建产物（${残留.join('、')}）—— 按 A3 编译只在冻结提交上进行、开发目录不留 exe：删掉它们；${先跑}`] };
+    }
+    // 开发目录里没有面板产物是**正常状态**（A3）：预演照常过；要在这里正式打包就得显式声明不带面板
+    if (dry) return { files: [], problems: [], 跳过: '开发目录里没有面板 exe（A3：exe 只在冻结树里编）—— 预审不含面板，它的来源核对由 prepare 在冻结树里做' };
+    return { files: [], problems: [`开发目录里没有面板 exe（A3：面板只从冻结构建树出包）—— ${先跑}；确实要在这里打不含面板的包就加 --no-panel`] };
+  }
   const exeAbs = path.join(ROOT, ...面板exe.split('/'));
   const recAbs = path.join(ROOT, ...面板记录.split('/'));
   if (!fs.existsSync(exeAbs)) return { files: [], problems: [`没有 ${面板exe}（悬浮看板不会进包）—— ${先跑}`] };
@@ -486,16 +504,19 @@ function inspectPanel() {
   try { record = JSON.parse(fs.readFileSync(recAbs, 'utf8')); } catch { return { files: [], problems: [`${面板记录} 不是合法 JSON —— ${先跑}`] }; }
   const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
   const problems = [];
+  // 来源的第一条：这份 exe 得是**冻结树**里编的（记录自己写的）；其次才是哈希与提交对得上
+  if (record.tree?.kind !== 'worktree') problems.push(`面板记录说这份 exe 不是在冻结构建树里编的（tree.kind=${record.tree?.kind ?? '（缺）'}）—— 包里的 exe 必须出自冻结提交，${先跑}`);
+  else if (record.tree.clean !== true) problems.push(`面板记录说这次编译时源码不干净（tree.clean=false）—— 来源必须是一个提交，${先跑}`);
   const 实际 = sha(exeAbs);
   const 记录值 = String(record.exeSha256 ?? '').toLowerCase();
   if (!记录值) problems.push(`记录里没有 exeSha256，无从核对面板 exe —— ${先跑}`);
-  else if (记录值 !== 实际) problems.push(`${面板exe} 的 SHA256 与记录不符（记录 ${记录值.slice(0, 12)}… / 实际 ${实际.slice(0, 12)}…）—— 重新跑 node release/build-panel.mjs`);
+  else if (记录值 !== 实际) problems.push(`${面板exe} 的 SHA256 与记录不符（记录 ${记录值.slice(0, 12)}… / 实际 ${实际.slice(0, 12)}…）—— 重新跑 node release/prepare.mjs`);
   const 源 = Array.isArray(record.sources) ? record.sources : [];
   if (!源.length) problems.push(`记录里没有源文件清单，无从核对面板 exe —— ${先跑}`);
   for (const s of 源) {
     const p = path.join(ROOT, ...String(s.path ?? '').split('/'));
     if (!String(s.path ?? '') || !fs.existsSync(p)) { problems.push(`记录里的源文件不在：${s.path}`); continue; }
-    if (sha(p) !== s.sha256) problems.push(`源码在编译之后又改过了（源文件与记录不符）：${s.path} —— 重新跑 node release/build-panel.mjs`);
+    if (sha(p) !== s.sha256) problems.push(`源码在编译之后又改过了（源文件与记录不符）：${s.path} —— 重新跑 node release/prepare.mjs`);
   }
   let head = '';
   try { head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8', windowsHide: true }).trim(); } catch { head = ''; }
@@ -683,9 +704,11 @@ function main() {
 
   blank();
   stepHead('③c', '悬浮看板（构建时产物，不逐行审计，走来源核对）');
-  const panel = opt.panel ? inspectPanel() : { files: [], problems: [], skipped: true };
+  const panel = opt.panel ? inspectPanel({ dry: opt.dry }) : { files: [], problems: [], skipped: true };
   if (opt.panel === false) {
     info('○ --no-panel：本次发布包不带悬浮看板 —— 用户装完没有屏幕边上的那条面板（确认这是有意的）');
+  } else if (panel.跳过) {
+    info(`○ ${panel.跳过}`);
   } else if (panel.problems.length) {
     for (const p of panel.problems) info(`❌ ${p}`);
   } else {
@@ -709,7 +732,7 @@ function main() {
   if (opt.dry) {
     stepHead('④ ⑤', '预演模式：跳过打包与打标签');
     const 运行时数 = runtime.files.length ? ` + 便携运行时 ${runtime.files.length} 个文件（${humanSize(runtime.bytes)}）` : '（不含运行时）';
-    const 面板数 = panel.files.length ? ` + 悬浮看板 exe（${humanSize(panel.exeBytes)}）` : '（不含悬浮看板）';
+    const 面板数 = panel.files.length ? ` + 悬浮看板 exe（${humanSize(panel.exeBytes)}）` : (panel.跳过 ? '（不含悬浮看板：开发目录不产 exe，A3）' : '（不含悬浮看板）');
     info(`正式发布会打包：L2 发布层 ${层次.发布.length} 个文件${运行时数}${面板数} → dist/${ZIP_BASE}-v${version}.zip`);
     blank();
     info(`给用户的包（L2）逐条列出 —— 这就是用户解压/装完看到的东西：`);

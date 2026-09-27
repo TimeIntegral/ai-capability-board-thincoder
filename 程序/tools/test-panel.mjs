@@ -9,8 +9,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { powershell, psQuote } from './windows-integration.mjs';
+import { powershell, psQuote, stopOwned } from './windows-integration.mjs';
 import { 分类, 从stage推导 } from '../../release/publish-files.mjs';
+import { 树类型 } from '../../release/git-tree.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const EXE = path.join(ROOT, '程序', 'bin', 'board.exe');
@@ -18,7 +19,7 @@ const RECORD = path.join(ROOT, '程序', 'bin', 'panel-build.json');
 const 有exe = fs.existsSync(EXE) && fs.existsSync(RECORD);
 const sha = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const 读 = rel => { try { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); } catch { return null; } };
-const skip若未编译 = () => (!有exe ? '还没编译面板（先跑 node release/build-panel.mjs）' : false);
+const skip若未编译 = () => (!有exe ? '还没编译面板（开发目录不产 exe，A3 —— 要编就在冻结树里编：node release/prepare.mjs，或在 private/ 下的链接工作树里编）' : false);
 
 // ── 面板自检（T6–T16）──────────────────────────────────────────────────────
 function 跑自检(extra = []) {
@@ -142,6 +143,20 @@ test('T4 三层分类：exe 归「构建时加入」，面板源码与开关脚�
   assert.ok(安装清单.includes('程序/bin/board.exe'), 'exe 必须进 L3 安装清单');
 });
 
+// ── 开发目录不产 exe（A3 / T5）────────────────────────────────────────────
+// 冻结树里这条不适用（那里的 exe 正是要有的）；它管**开发（主）工作树**：
+// 开发目录里落下构建产物 = 下次构建捡到旧 exe 的入口 —— 这里既查现状，也查「编译当场拒绝」这个机制本身。
+test('T5 开发目录不产 exe：程序/bin 下没有构建产物，且编译脚本在开发目录里当场拒绝', () => {
+  if (树类型(ROOT) !== 'primary') return;                 // 冻结树 / 非 git 目录：这条不适用
+  const bin = path.join(ROOT, '程序', 'bin');
+  const 残留 = fs.existsSync(bin) ? fs.readdirSync(bin) : [];
+  assert.deepEqual(残留, [], `开发目录里不该有面板构建产物（设计档 A3），实际有：${残留.join('、')} —— 删掉它们；要看面板请在 private/ 下建冻结工作树来编（设计档 2.2.10）`);
+  const r = spawnSync(process.execPath, ['release/build-panel.mjs'], { cwd: ROOT, encoding: 'utf8', windowsHide: true });
+  assert.notEqual(r.status, 0, '在开发目录里编面板必须被拒绝（exe 只能出自冻结提交）');
+  assert.match(`${r.stdout}${r.stderr}`, /冻结/, '拒绝理由里应当说清「只在冻结提交上编」');
+  assert.ok(!fs.existsSync(EXE) && !fs.existsSync(RECORD), '被拒绝的编译不许留下任何产物');
+});
+
 // ── 单实例（T17）────────────────────────────────────────────────────────
 test('T17 单实例：连起两次只留一个面板窗口，第二次唤出已有并退出码 0', { skip: skip若未编译() }, () => {
   const 数据 = path.join(ROOT, 'data');
@@ -171,7 +186,8 @@ test('T17 单实例：连起两次只留一个面板窗口，第二次唤出已�
 test('T18 升级针：按 exe 路径匹配，绝不按名字裸杀', () => {
   const 文本 = 读('程序/tools/windows-integration.mjs') ?? '';
   assert.match(文本, /board\.exe/, 'stopOwned 里没有面板进程的规则');
-  assert.match(文本, /ExecutablePath -ieq \(Join-Path \$root '程序\\bin\\board\.exe'\)/, '规则必须按**可执行文件路径**匹配');
+  assert.match(文本, /ExecutablePath -ieq \(Join-Path \$root '程序\\\\bin\\\\board\.exe'\)/,
+    '规则必须按**可执行文件路径**匹配，而且路径里的反斜杠要写成两条（模板字符串里写一条会被 JS 当转义吃掉）');
   assert.ok(!/Stop-Process[^\n]*-Name\s+'?board\.exe/.test(文本), '不许按名字裸杀 board.exe');
   assert.ok(!/Get-Process\s+board/.test(文本));
   for (const rel of ['程序/tools/uninstall.mjs', '程序/tools/upgrade-lifecycle.mjs']) {
@@ -181,6 +197,25 @@ test('T18 升级针：按 exe 路径匹配，绝不按名字裸杀', () => {
   // 装完拉起：同样按路径先停旧的再起新的
   assert.match(读('程序/tools/install.mjs') ?? '', /board\.exe[^\n]*ExecutablePath|ExecutablePath -ieq '\$\{exe\}'/, 'install.mjs 装完拉起前应当按 exe 路径停旧的');
   assert.match(读('程序/tools/panel.mjs') ?? '', /ExecutablePath -ieq/, '开关执行端同样按路径匹配');
+});
+
+// ── 升级针的**行为**判据（T18b）────────────────────────────────────────────
+// 契约文本对了不等于针是通的：2026-09-27 的演练实测过这个坑 —— 模板字符串里写 '程序\bin\board.exe'，
+// \b 被 JS 吃成退格符，针的路径与真实 exe 路径永远不相等（T18 只看源码文本，看不出来）。
+// 这里真起一个面板，再调本树里的 stopOwned（isolated:false、remove 默认 false = 只停进程），必须真的停掉。
+test('T18b 升级针行为：面板在跑时 stopOwned 真的把它停掉（不是只对得上文本）', { skip: skip若未编译() }, () => {
+  const 状态 = path.join(process.env.TEMP, `panel-state-needle-${Date.now()}.json`);
+  const 个数 = () => Number(String(powershell(`@(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq ${psQuote(EXE)} }).Count`)).trim());
+  try {
+    powershell(`Start-Process -FilePath ${psQuote(EXE)} -ArgumentList @('--data', ${psQuote(ROOT)}, '--state', ${psQuote(状态)}, '--form', 'micro', '--seconds', '900') -WindowStyle Hidden`);
+    for (let i = 0; i < 20 && 个数() === 0; i++) powershell('Start-Sleep -Milliseconds 250');
+    assert.equal(个数(), 1, '面板没起来（是不是有别的 board.exe 占着单实例锁？）—— 行为判据没法判');
+    stopOwned(ROOT);          // 真实安装/卸载走的同一条路（remove 默认 false：只停进程，不碰用户数据）
+    assert.equal(个数(), 0, 'stopOwned 没停掉面板 —— 针的路径与真实 exe 路径对不上（转义或拼写）');
+  } finally {
+    powershell(`Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq ${psQuote(EXE)} } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
+    try { fs.unlinkSync(状态); } catch { }
+  }
 });
 
 test('T19 入口与纪律：.vbs 纯 ASCII、指向正确；先看我.txt 有入口；面板不读密钥', () => {

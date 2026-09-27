@@ -40,6 +40,8 @@
 
 公开发布时应将候选记录中的完整 commit 标为 `v<版本>`，不要把后来开发的 HEAD 当成候选版。日常版安装在安装程序默认目录，开发目录禁止注册后台任务和安装更新。
 
+悬浮看板 exe（`程序/bin/board.exe`）只在**冻结构建树**里编：开发目录里不产它，落了会被闸门拒绝（设计档 A3，判据在 `release/git-tree.mjs`）。要在本机看面板：`git worktree add --detach private/panel-run HEAD`，在那棵树里跑 `node release/build-panel.mjs`，起它的 `程序/bin/board.exe`（`private/` 被 gitignore，也永远不进包）。
+
 下面的 `publish.mjs` 是底层审计与打包工具；直接打包同样要求干净提交。推荐用 `prepare.mjs` 完成安装包构建。
 
 ## 底层工作流
@@ -50,6 +52,8 @@
         ② git add -A && git commit -m "release: v<版本>"     ← 先提交：标签必须落在已提交的内容上
         ③ node release/publish.mjs --dry      ← 预演：只看会拦下什么，不动任何东西
         ④ node release/publish.mjs --tag      ← 过闸：审计 → 版本 → 打包 → 打标签
+                                                （开发目录不产面板 exe：带面板的包走 prepare.mjs；
+                                                 在这里打不含面板的包加 --no-panel）
         ↓
    ① 文件清单：L1 开发层 = git 将跟踪的全部文件（= 下一次 push 会公开的范围）
         ↓ 分类（release/publish-files.mjs 白名单）
@@ -76,6 +80,7 @@
 | `node release/publish.mjs --tag` | 同上，最后 `git tag v<版本>`（工作区必须干净，否则拒绝） |
 | `node release/publish.mjs --version 1.2.3` | 声明"这次发的是 1.2.3"，与 `VERSION` 不一致就拒绝 |
 | `node release/publish.mjs --no-runtime` | 本次发布包不带便携 Node 运行时（没装 Node 的用户无法"解压即用"） |
+| `node release/publish.mjs --no-panel` | 本次发布包不带悬浮看板 exe（开发目录里本来就没有面板 exe，要在开发目录打正式包就得显式加它） |
 | `node release/publish.mjs --help` | 帮助 |
 
 **退出码**：`0` = 过闸；`1` = 被拒绝（审计命中 / 版本不一致 / 运行时缺失或对不上 / 工作区不干净 /

@@ -53,7 +53,9 @@ Get-CimInstance Win32_Process | Where-Object {
     ($_.Name -eq 'powershell.exe' -and $_.CommandLine -and (Test-AnyHit $_.CommandLine $trayPaths)) -or
     ($_.Name -eq 'node.exe' -and $_.ExecutablePath -eq $runtime) -or
     # 悬浮看板：**按可执行文件路径**匹配 —— 不按名字裸杀 board.exe（那样会误伤别人的同名程序）
-    ($_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq (Join-Path $root '程序\bin\board.exe'))
+    # 注意：这是 JS 模板字符串里的字面量，路径反斜杠必须写成「两条」——写一条会被 JS 当转义吃掉
+    # （程序+退格+in+退格+oard.exe），针的路径就与真实 exe 路径永不相等：2026-09-27 演练实测踩过这个坑。
+    ($_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq (Join-Path $root '程序\\bin\\board.exe'))
   )
 } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction Stop }
 ${remove ? `

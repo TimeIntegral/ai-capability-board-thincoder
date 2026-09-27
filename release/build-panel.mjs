@@ -3,14 +3,21 @@
 // 为什么在 release/ 下：这一层已经是「只有构建机需要」的发布工具（与 make-portable.mjs 同族），
 //   新增一个文件不用碰三层清单；源码放 程序/panel/（「仅供开发」条目），exe 落 程序/bin/（构建时加入）。
 // 依赖：系统自带的 .NET Framework 4 编译器 + WPF 运行时程序集，零第三方依赖、不联网、不安装任何东西。
-// 纪律（设计档 2.1.2）：编译只在 release/prepare.mjs 建出的**冻结工作树**里发生 ——
+// 纪律（设计档 2.1.2 / A3）：编译只在 release/prepare.mjs 建出的**冻结工作树**里发生 ——
 //   包里的 exe 必须能追到「这个提交」，绝不允许把开发目录里编好的 exe 打进包。
+//   这条纪律由三层机器闸门守着（不靠「人记得把开发目录里那份删掉」）：
+//     ① 本脚本：树不是链接工作树（开发主工作树）→ 当场拒绝；程序/panel/ 有未提交改动 → 拒绝；
+//     ② release/publish.mjs：记录 tree.kind 不是冻结树 → 拒绝；开发目录里出现构建产物 → 拒绝；
+//     ③ 程序/tools/test-panel.mjs 的 T5：开发目录里有产物、或编译没被拒绝 → 测试红。
+//   要在本机看面板效果（不发布）：git worktree add --detach private/panel-run HEAD，
+//   在那棵树里跑本脚本，起 private/panel-run/程序/bin/board.exe —— private/ 被 gitignore、也永远不进包。
 // 用法：node release/build-panel.mjs [--verify]
 //   --verify：只核对（记录里的源文件 SHA256 与当前树一致、exe 与记录一致），不重新编译。
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { 树类型, gitOut } from './git-tree.mjs';
 
 const root = path.dirname(import.meta.dirname);
 const PANEL_DIR = path.join(root, '程序', 'panel');
@@ -25,6 +32,24 @@ const CSC = path.join(NET_DIR, 'csc.exe');
 const sha256 = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const rel = p => path.relative(root, p).split(path.sep).join('/');
 const die = msg => { console.error(`\n❌ 编译悬浮看板失败：${msg}`); process.exit(1); };
+
+// ── 纪律闸门（A3）：编译只在冻结（链接）工作树里发生 ──────────────────────────
+const tree = 树类型(root);
+if (tree !== 'worktree') {
+  die([
+    `这里是${tree === 'primary' ? '开发（主）工作树' : '一个不是 git 仓库的目录'}：面板 exe 只在冻结提交上编（设计档 A3），开发目录不产 exe`,
+    '   · 要出包：node release/prepare.mjs（它自己建冻结树并在里面编）',
+    '   · 要看面板效果：git worktree add --detach private/panel-run HEAD，在那棵树里跑本脚本，起它的 程序/bin/board.exe',
+  ].join('\n'));
+}
+// 源码必须是某个提交里的那份：有未提交改动时编出来的 exe 追不到提交（来源就断了）
+const 脏源码 = (gitOut(root, ['status', '--porcelain', '--', '程序/panel']) ?? '').trim();
+if (脏源码) {
+  die([
+    '程序/panel/ 下的源码有未提交改动，不能编进发布产物（来源必须是一个提交）：',
+    ...脏源码.split('\n').slice(0, 6).map(l => `   ${l}`),
+  ].join('\n'));
+}
 
 if (!fs.existsSync(CSC)) die(`找不到系统自带的编译器 ${CSC}（需要 Windows 10/11 + .NET Framework 4.x）`);
 if (!fs.existsSync(PANEL_DIR)) die(`找不到面板源码目录 ${PANEL_DIR}`);
@@ -47,6 +72,9 @@ for (const r of refs) if (!fs.existsSync(r)) die(`缺少 .NET Framework 自带�
 const record = () => ({
   schema: 1,
   commit: git(['rev-parse', 'HEAD']),
+  // 这份 exe 是从哪种树里编出来的：发布闸门按它复核（不是冻结树 → 拒绝打包）。
+  // clean 恒为真（上面有闸门拦着），写进记录是为了让闸门能独立复核一份**拿到的**记录。
+  tree: { kind: tree, clean: !脏源码 },
   sources: sources.map(name => ({ path: `程序/panel/${name}`, sha256: sha256(path.join(PANEL_DIR, name)) })),
   compiler: { path: CSC, version: compilerVersion() },
   exe: '程序/bin/board.exe',
@@ -75,6 +103,8 @@ if (process.argv.includes('--verify')) {
   if (!fs.existsSync(RECORD)) die('没有 程序/bin/panel-build.json —— 还没编译过');
   const rec = JSON.parse(fs.readFileSync(RECORD, 'utf8'));
   const problems = [];
+  if (rec.tree?.kind !== 'worktree') problems.push(`这份记录不是在冻结构建树里编出来的（tree.kind=${rec.tree?.kind ?? '（缺）'}）—— 发布产物只能出自冻结提交`);
+  else if (rec.tree.clean !== true) problems.push('这份记录说编译时源码不干净 —— 来源必须是一个提交');
   if (!fs.existsSync(EXE)) problems.push('exe 不在（记录说编过）');
   else if (rec.exeSha256 !== sha256(EXE)) problems.push(`exe 的 SHA256 与记录不符（记录 ${String(rec.exeSha256).slice(0, 12)}… / 实际 ${sha256(EXE).slice(0, 12)}…）`);
   for (const s of rec.sources ?? []) {

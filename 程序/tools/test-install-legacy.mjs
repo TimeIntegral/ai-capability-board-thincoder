@@ -90,7 +90,10 @@ test('读取安装清单：没有清单时返回空数组（便携解压/开发�
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   assert.deepEqual(读取安装清单(root), []);
   fs.mkdirSync(path.join(root, '程序'), { recursive: true });
-  fs.writeFileSync(path.join(root, '程序/installed-files.json'), JSON.stringify({ version: '1.4.1', files: ['VERSION', '程序/x.mjs'] }));
+  // 夹具里这个 version 字段是装饰性的（读取安装清单() 只取 files），故意写成非发布号形式：
+  // 「version: 'x.y.z'」这种字面量会被发布闸门的「代码里的版本常量」扫描当成发布版本号并与 VERSION 比对，
+  // 每涨一次版本号就会拦下一次发布 —— 它不是发布版本号，就不该长得像。
+  fs.writeFileSync(path.join(root, '程序/installed-files.json'), JSON.stringify({ version: '0.0.0-fixture', files: ['VERSION', '程序/x.mjs'] }));
   assert.deepEqual(读取安装清单(root), ['VERSION', '程序/x.mjs']);
   fs.writeFileSync(path.join(root, '程序/installed-files.json'), '{ 坏 JSON');
   assert.deepEqual(读取安装清单(root), []);
