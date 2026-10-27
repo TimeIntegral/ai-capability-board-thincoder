@@ -162,11 +162,20 @@ namespace Board {
     internal static readonly FontFamily UiFont = new FontFamily("Segoe UI, Microsoft YaHei UI");
     internal static readonly FontFamily MonoFont = new FontFamily("Consolas, Microsoft YaHei UI");
     internal static readonly FontFamily MonoUiFont = new FontFamily("Consolas, Microsoft YaHei UI");
-    // 新增两行的槽宽（唯一出处：排版用它，自检 T34 用同一组数测「最长的文案装不装得下」）
+    // 新增两行的槽宽与字号（唯一出处：排版用它，自检 T34 用同一组数测「最长的文案装不装得下」）
+    // 2026-10-27 用户反馈「看不清」：字号 8→10.5 / 7.5→9，颜色从 #6E7581 / #8A909C 提到 #A8AFBA
+    //   （黑底上的对比度 4.4:1 → 9.2:1）；高度与宽度都在 T34 里用真字体度量钉住（面板高不变）。
     internal const double CAD_W = 200.0;    // 余额节奏行（中型面板每家一行）
-    internal const double CHILD_W = 121.0;  // 子代理行（中型面板 D 段右侧）
+    internal const double CHILD_W = 126.0;  // 子代理行（中型面板 D 段右侧；9 DIP 时最长文案 123.4）
     internal const double TURNS_W = 50.0;   // 卡片第三行右侧的「N 轮」
     internal const double TIMER_W = 82.0;   // 卡片第三行的计时
+    internal const double CAD_DY = 14.0;    // 节奏行相对名称行的下移
+    internal const double CAD_SIZE = 10.5, CHILD_SIZE = 9.0;
+    internal const string CAD_COLOR = "#A8AFBA", CHILD_COLOR = "#A8AFBA";
+    // 卡片第三行：小字标签「模型」+ 大字时长 + 右侧轮次
+    internal const double CARD_COL2 = 62.0, CARD_EDGE_PAD = 14.0;
+    internal const double CARD_LABEL_W = 18.0, CARD_LABEL_SIZE = 8.5;
+    internal const string CARD_LABEL_TEXT = "模型";
 
     private static TextBlock Txt(double x, double y, double w, string text, double size, string color) {
       return Txt(x, y, w, text, size, color, "Left", "Normal", UiFont, null);
@@ -326,7 +335,7 @@ namespace Board {
           balNameTxt[g.key] = nm; balMarkTxt[g.key] = mk; balAmtTxt[g.key] = am;
           // 余额节奏（只放中型面板、mini 不放）：「最近 ¥10 用了多久」。
           // 位置在名称行下面、右对齐（向右不长，长文本往左的空地耗，压不到上面那行金额）
-          var cd = Txt(PAD, yC + 14, CAD_W, "", 8, "#6E7581", "Right", "Normal", UiFont, null);
+          var cd = Txt(PAD, yC + CAD_DY, CAD_W, "", CAD_SIZE, CAD_COLOR, "Right", "Normal", UiFont, null);
           panelBox.Children.Add(cd); balCadTxt[g.key] = cd;
           bi++;
         }
@@ -350,7 +359,7 @@ namespace Board {
       statusWord = Txt(PAD + 13, L.Y_D_TEXT, 140, "—", 10.5, "#6E7581");
       panelBox.Children.Add(statusWord);
       // 子代理：只在「确实有在跑的」时候占位（0 个 / 推不出来 → 空串，不上屏）
-      childLine = Txt(W - PAD - CHILD_W, L.Y_D_TEXT + 2.5, CHILD_W, "", 7.5, "#8A909C", "Right", "Normal", UiFont, null);
+      childLine = Txt(W - PAD - CHILD_W, L.Y_D_TEXT + 2.5, CHILD_W, "", CHILD_SIZE, CHILD_COLOR, "Right", "Normal", UiFont, null);
       panelBox.Children.Add(childLine);
     }
     private TextBlock childLine;   // 中型面板：子代理 N 个在跑 · 最长 X
@@ -395,7 +404,7 @@ namespace Board {
       cardBranch.Children.Add(ringArcTxt);
       cardBranch.Children.Add(ringLabel);
 
-      double COL2 = 62.0, EDGE_PAD = 14.0;
+      double COL2 = CARD_COL2, EDGE_PAD = CARD_EDGE_PAD;
       cardDot = new Ellipse(); cardDot.Width = 7; cardDot.Height = 7;
       Canvas.SetLeft(cardDot, B + COL2 + 2); Canvas.SetTop(cardDot, B + 11);
       cardBranch.Children.Add(cardDot);
@@ -405,9 +414,10 @@ namespace Board {
       cardBranch.Children.Add(ageText);
       cardProjName = Txt(B + COL2, B + 21.5, W - COL2 - EDGE_PAD, "—", 12.5, "#12151A", "Left", "SemiBold", UiFont, "ellipsis");
       cardBranch.Children.Add(cardProjName);
-      cardLabel = Txt(B + COL2, B + 47.0, 14, "已", 9.5, "#8A909C");
+      // 第三行大字 = 本会话模型累计运行时长（不是「上一个事件到现在」，也不是进程年龄）
+      cardLabel = Txt(B + COL2, B + 47.0, CARD_LABEL_W, CARD_LABEL_TEXT, CARD_LABEL_SIZE, "#8A909C");
       cardBranch.Children.Add(cardLabel);
-      timer = Txt(B + COL2 + 14, B + 38.5, TIMER_W, "", 16.5, "#12151A", "Left", "SemiBold", MonoFont, null);
+      timer = Txt(B + COL2 + CARD_LABEL_W, B + 38.5, TIMER_W, "", 16.5, "#12151A", "Left", "SemiBold", MonoFont, null);
       cardBranch.Children.Add(timer);
       // 本会话轮次（新一轮：从会话 manifest 的 turnCount 来；读不到就不显示）
       cardTurns = Txt(B + W - EDGE_PAD - TURNS_W, B + 46.0, TURNS_W, "", 9, "#8A909C", "Right", "Normal", UiFont, null);
@@ -795,7 +805,7 @@ namespace Board {
     }
 
     // 当前进展（每秒走；状态永远实时——陈旧只压读数，不压这里）
-    // 日志读不到时：计时与轮次**整行不显示**（不是 0、也不是「—」）
+    // 日志读不到时：计时与轮次**整行不显示**（不是 0、也不是「—」）；日志可读但没有模型时间 → 只隐藏计时，轮次保留
     public void UpdateClock() {
       if (model == null) return;
       var pg = model.progress;
@@ -804,8 +814,9 @@ namespace Board {
       if (timer != null) { timer.Text = el; timer.Visibility = show ? Visibility.Visible : Visibility.Collapsed; }
       if (cardLabel != null) cardLabel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
       if (cardTurns != null) {
+        bool showTurns = pg.haveTurns && (pg.logOk || pg.haveModel);
         cardTurns.Text = pg.haveTurns ? pg.turns + " 轮" : "";
-        cardTurns.Visibility = show && pg.haveTurns ? Visibility.Visible : Visibility.Collapsed;
+        cardTurns.Visibility = showTurns ? Visibility.Visible : Visibility.Collapsed;
       }
       if (ageText != null) ageText.Text = "写入 " + MicroAge() + " 前";
     }

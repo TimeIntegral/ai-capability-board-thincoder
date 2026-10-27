@@ -38,6 +38,7 @@ namespace Board {
         Section("T13", delegate { T13(); });
         Section("T31", delegate { T31(); });
         Section("T32", delegate { T32(); });
+        Section("T36", delegate { T36(); });
         Section("T33", delegate { T33(); });
         Section("T34", delegate { T34(); });
         Section("T14", delegate { T14(dir); });
@@ -247,6 +248,12 @@ namespace Board {
       Check("T12-week", sess.weekTurns == 15 && sess.weekSessions == 3,
         "近 7 天 = " + sess.weekTurns + " 轮 / " + sess.weekSessions + " 个会话（8 天前那条不算）");
       var proj = sess.projects[0];
+      // 会话起点 = 最新槽位 sessionId 里的铸造时刻（模型累计只用它之后的事件）；解不出就退回按天窗口
+      var badSlots = new List<SlotRec>();
+      badSlots.Add(Slot("proj/Alpha", now, 1, "not-a-session-id"));
+      var badSess = Sessions.FromSlots(badSlots, now);
+      Check("T12-session-start", sess.newestSessionStartMs == now - 60 * 1000 && badSess.newestSessionStartMs == 0,
+        "最新槽位 sessionId 里的铸造时刻 = " + sess.newestSessionStartMs + "（期望 " + (now - 60 * 1000) + "）；解不出的 id → " + badSess.newestSessionStartMs + "（退回按天窗口）");
       Check("T12-proj", proj.todayTurns == 12 && proj.todaySessions == 2 && proj.name == "Alpha",
         "项目 " + proj.name + "：今天 " + proj.todayTurns + " 轮 / " + proj.todaySessions + " 个会话");
       // 7 天来源：attribution.json 有行 = 取自看板数据；没有行 = 现算并标注
@@ -316,8 +323,8 @@ namespace Board {
         Ctx.LogDir = dir;
         WriteLog(dir, "work", now);
         var pg = Progress.Read(now, false, 151, dir);
-        Check("T31-line", pg.ShowTiming && Regex.IsMatch(pg.ElapsedText(), "^已 \\d{2}:\\d{2}$") && pg.haveTurns && pg.turns == 151,
-          "日志可读 → 上屏「" + pg.ElapsedText() + "」+「" + pg.turns + " 轮」");
+        Check("T31-line", pg.ShowTiming && pg.ElapsedText() == "模型 00:02" && pg.haveTurns && pg.turns == 151,
+          "日志可读 → 上屏「" + pg.ElapsedText() + "」（夹具里只有一条 llm:done ms=2000）+「" + pg.turns + " 轮」");
         Check("T31-no-dash", pg.ElapsedText().IndexOf("—") < 0 && pg.ElapsedText().IndexOf("0:00") < 0,
           "计时行不许出现「—」、也不许恒为 0:00（现在的值是「" + pg.ElapsedText() + "」）");
         string none = Path.Combine(Path.GetTempPath(), "board-nolog-" + Guid.NewGuid().ToString("N"));
@@ -349,6 +356,79 @@ namespace Board {
           "日志里一条子代理事件都没有 → 这一行不显示（推不出来就不瞎猜；Text=\"" + none.ChildText() + "\"）");
       } finally { Ctx.LogDir = ""; try { Directory.Delete(dir, true); } catch { } }
     }
+
+    // ==================== T36 本会话模型累计运行（2026-10-27 用户口径）====================
+    // 口径：日志里 llm:done 的 ms 累加 + 在飞的 llm:start 至今；今天 + 昨天（跨零点回看）。
+    // 反例：一条 llm:* 都没有 → 计时不上屏（不是 0、也不是「—」）；在飞超过 30 分钟 → 当残留、不累加。
+    private static void T36() {
+      long now = Fmt.NowMs();
+      string dir = MakeLogDir();
+      try {
+        Ctx.LogDir = dir;
+        // ① 两条 done（31326 / 2000）+ 一个子代理在飞 5 秒 → 38326 ms = 00:38
+        var sb = new StringBuilder();
+        int seq = 1;
+        sb.Append(LogLine(now - 90000, "turn:start", seq++, "\"kind\":\"user\""));
+        sb.Append(LogLine(now - 80000, "llm:start", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"stage\":\"turn\",\"turn\":1,\"auto\":false"));
+        sb.Append(LogLine(now - 48674, "llm:done", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":31326,\"stage\":\"turn\",\"turn\":1,\"auto\":false,\"finish\":\"tool_calls\",\"tools\":1"));
+        sb.Append(LogLine(now - 30000, "llm:start", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"stage\":\"turn\",\"turn\":1,\"auto\":false"));
+        sb.Append(LogLine(now - 25000, "llm:done", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":2000,\"stage\":\"turn\",\"turn\":1,\"auto\":false,\"finish\":\"stop\",\"tools\":0"));
+        sb.Append(LogLine(now - 5000, "llm:start", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"stage\":\"turn\",\"turn\":14,\"auto\":false,\"child\":\"coder#1\""));
+        File.WriteAllText(LogPathFor(dir, 0), sb.ToString(), PanelControl.Utf8NoBom);
+        var pg = Progress.Read(now, false, 151, dir);
+        Check("T36-sum", pg.haveModel && pg.modelCalls == 2 && pg.ElapsedText() == "模型 00:38",
+          "两条 llm:done（31326 + 2000 ms）+ 在飞 5 秒 → 上屏「" + pg.ElapsedText() + "」（" + pg.modelCalls + " 条 done，在飞 " + pg.modelOpenStarts.Length + " 条）");
+
+        // ② 一条 llm:done 都没有、也没有在飞 → 不显示（不是 0、不是「—」）
+        sb = new StringBuilder();
+        sb.Append(LogLine(now - 60000, "turn:start", seq++, "\"kind\":\"user\""));
+        sb.Append(LogLine(now - 30000, "tool:call", seq++, "\"tool\":\"read\""));
+        File.WriteAllText(LogPathFor(dir, 0), sb.ToString(), PanelControl.Utf8NoBom);
+        var none = Progress.Read(now, false, 151, dir);
+        Check("T36-no-done", !none.haveModel && !none.ShowTiming && none.ElapsedText() == "",
+          "日志里没有任何 llm:* → 计时不上屏（ElapsedText=\"" + none.ElapsedText() + "\"、ShowTiming=" + none.ShowTiming + "）");
+
+        // ③ 在飞超过 30 分钟 → 当残留（不拿一条死掉的 start 虚增）
+        sb = new StringBuilder();
+        sb.Append(LogLine(now - 40 * 60000, "llm:start", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"stage\":\"turn\",\"turn\":1,\"auto\":false"));
+        File.WriteAllText(LogPathFor(dir, 0), sb.ToString(), PanelControl.Utf8NoBom);
+        var stale = Progress.Read(now, false, 151, dir);
+        Check("T36-stale-open", stale.haveModel && !stale.ShowTiming && stale.ElapsedText() == "",
+          "只有一条 40 分钟前的 llm:start（超过 " + (Progress.MODEL_OPEN_CAP_MS / 60000) + " 分钟）→ 不计，计时不上屏（ElapsedText=\"" + stale.ElapsedText() + "\"）");
+
+        // ④ 跨零点：昨天 60000 ms + 今天 30000 ms = 90 秒 → 01:30
+        File.WriteAllText(LogPathFor(dir, -1),
+          LogLine(now - 26 * 3600000, "llm:done", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":60000,\"stage\":\"turn\",\"turn\":1,\"auto\":false,\"finish\":\"stop\",\"tools\":0"),
+          PanelControl.Utf8NoBom);
+        File.WriteAllText(LogPathFor(dir, 0),
+          LogLine(now - 30000, "llm:done", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":30000,\"stage\":\"turn\",\"turn\":2,\"auto\":false,\"finish\":\"stop\",\"tools\":0"),
+          PanelControl.Utf8NoBom);
+        var cross = Progress.Read(now, false, 151, dir);
+        Check("T36-cross-midnight", cross.modelCalls == 2 && cross.ElapsedText() == "模型 01:30",
+          "昨天 60000 ms + 今天 30000 ms = 90 秒 → 上屏「" + cross.ElapsedText() + "」（跨零点回看前一天）");
+
+        // ⑤ 子代理的模型时间也算（同一个模型在替这次会话干活）：主 2000 + 子代理 5000 = 00:07
+        sb = new StringBuilder();
+        sb.Append(LogLine(now - 20000, "llm:done", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":2000,\"stage\":\"turn\",\"turn\":1,\"auto\":false,\"finish\":\"stop\",\"tools\":0"));
+        sb.Append(LogLine(now - 10000, "llm:done", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":5000,\"stage\":\"turn\",\"turn\":3,\"auto\":false,\"finish\":\"stop\",\"tools\":0,\"child\":\"coder#2\""));
+        File.WriteAllText(LogPathFor(dir, 0), sb.ToString(), PanelControl.Utf8NoBom);
+        File.Delete(LogPathFor(dir, -1));
+        var child = Progress.Read(now, false, 151, dir);
+        Check("T36-child-sum", child.modelCalls == 2 && child.ElapsedText() == "模型 00:07",
+          "主 agent 2000 ms + 子代理 5000 ms → 上屏「" + child.ElapsedText() + "」（llm:done 的 ms 都算）");
+
+        // ⑥ 会话边界：本会话 = 最新槽位的铸造时刻起；旧会话的 llm:done 不算
+        //    （真机 2026-10-26 / 10-27 两份日志就是两个会话：整日相加会把昨天另一次会话的 5 分 28 秒也算进来）
+        sb = new StringBuilder();
+        sb.Append(LogLine(now - 2 * 3600000, "llm:done", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":60000,\"stage\":\"turn\",\"turn\":9,\"auto\":false,\"finish\":\"stop\",\"tools\":0"));
+        sb.Append(LogLine(now - 60000, "llm:done", seq++, "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":30000,\"stage\":\"turn\",\"turn\":1,\"auto\":false,\"finish\":\"stop\",\"tools\":0"));
+        File.WriteAllText(LogPathFor(dir, 0), sb.ToString(), PanelControl.Utf8NoBom);
+        var scoped = Progress.Read(now, false, 151, now - 30 * 60000, dir);
+        Check("T36-session", scoped.modelCalls == 1 && scoped.ElapsedText() == "模型 00:30",
+          "会话起点在 30 分钟前 → 2 小时前那条旧会话的 60000 ms 不算，只上屏「" + scoped.ElapsedText() + "」");
+      } finally { Ctx.LogDir = ""; try { Directory.Delete(dir, true); } catch { } }
+    }
+
 
     // ==================== T33 余额节奏（最近 ¥10 用了多久）====================
     private static void T33() {
@@ -387,23 +467,46 @@ namespace Board {
       } finally { try { Directory.Delete(dir, true); } catch { } }
     }
 
-    // ==================== T34 新加的两行字装不装得下（真字体度量，不是拍脑袋）====================
-    // 排版与自检用同一组槽宽（Panel.CAD_W / CHILD_W / TURNS_W / TIMER_W）：
-    //   最长的那串文案排版宽度超了槽 → 会溢出到尾随元素上（叠字），所以先用真字体量一遍。
+    // ==================== T34 两行字与新计时行的排版容得下（真字体度量，不是拍脑袋）====================
+    // 2026-10-27 用户反馈「看不清」：节奏行 8→10.5 DIP、子代理行 7.5→9 DIP，颜色从 #6E7581 / #8A909C 提到 #A8AFBA。
+    // 放大之后必须仍装得进既有的宽度槽与高度带（面板高 328/410/466 一个都不许变）。
     private static void T34() {
-      double cadW = Measured("充值后花了 ¥8,888.88 · 用时 3d05h", 8.0, PanelWindow.UiFont);
-      double cadW2 = Measured("最近 ¥10 用了 12h59m", 8.0, PanelWindow.UiFont);
+      var L = PanelLayout.ForCount(2);
+      double cadW = Measured("充值后花了 ¥8,888.88 · 用时 3d05h", PanelWindow.CAD_SIZE, PanelWindow.UiFont);
+      double cadW2 = Measured("最近 ¥10 用了 12h59m", PanelWindow.CAD_SIZE, PanelWindow.UiFont);
+      double cadH = MeasuredH("充值后花了 ¥8,888.88 · 用时 3d05h", PanelWindow.CAD_SIZE, PanelWindow.UiFont);
       Check("T34-cadence", cadW <= PanelWindow.CAD_W && cadW2 <= PanelWindow.CAD_W,
-        "节奏行最长文案宽 " + Fmt.Num(Math.Round(cadW, 1)) + " / " + Fmt.Num(Math.Round(cadW2, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.CAD_W));
-      double chW = Measured("子代理 3 个在跑 · 最长 12h59m", 7.5, PanelWindow.UiFont);
+        "节奏行 " + Fmt.Num(PanelWindow.CAD_SIZE) + " DIP 最长文案宽 " + Fmt.Num(Math.Round(cadW, 1)) + " / " + Fmt.Num(Math.Round(cadW2, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.CAD_W));
+      // 高度带 = 这一行下移到下一块上沿之间的空地（B_BLOCK_H + GAP − (B_CAP_DY + CAD_DY) = 14.5 DIP）
+      double band = (L.B_BLOCK_H + L.B_BLOCK_GAP) - (L.B_CAP_DY + PanelWindow.CAD_DY);
+      Check("T34-cadence-height", cadH <= band,
+        "节奏行字高 " + Fmt.Num(Math.Round(cadH, 2)) + " DIP ≤ 带宽 " + Fmt.Num(band) + " DIP（不压下一块；面板高不变）");
+      double chW = Measured("子代理 3 个在跑 · 最长 12h59m", PanelWindow.CHILD_SIZE, PanelWindow.UiFont);
+      double chH = MeasuredH("子代理 3 个在跑 · 最长 12h59m", PanelWindow.CHILD_SIZE, PanelWindow.UiFont);
       Check("T34-child", chW <= PanelWindow.CHILD_W,
-        "子代理行最长文案宽 " + Fmt.Num(Math.Round(chW, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.CHILD_W));
+        "子代理行 " + Fmt.Num(PanelWindow.CHILD_SIZE) + " DIP 最长文案宽 " + Fmt.Num(Math.Round(chW, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.CHILD_W));
+      Check("T34-child-height", chH <= 31.0 - 2.5,
+        "子代理行字高 " + Fmt.Num(Math.Round(chH, 2)) + " DIP ≤ 行带 " + Fmt.Num(31.0 - 2.5) + " DIP");
+      // 对比度：旧值 vs 新值（面板体 ≈ #050505 —— 98% 黑压在浅色桌面上也不算亮）
+      double oldCad = Contrast("#6E7581", "#050505"), newCad = Contrast(PanelWindow.CAD_COLOR, "#050505");
+      double oldChild = Contrast("#8A909C", "#050505"), newChild = Contrast(PanelWindow.CHILD_COLOR, "#050505");
+      Check("T34-contrast", newCad >= 7.0 && newChild >= 7.0 && newCad >= oldCad * 1.5 && newChild >= oldChild * 1.3,
+        "对比度（底 #050505）：节奏行 " + Fmt.Num(Math.Round(oldCad, 2)) + " → " + Fmt.Num(Math.Round(newCad, 2))
+        + "，子代理行 " + Fmt.Num(Math.Round(oldChild, 2)) + " → " + Fmt.Num(Math.Round(newChild, 2)));
       double tuW = Measured("9999 轮", 9.0, PanelWindow.UiFont);
       Check("T34-turns", tuW <= PanelWindow.TURNS_W,
         "轮次「9999 轮」宽 " + Fmt.Num(Math.Round(tuW, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.TURNS_W));
+      double labelW = Measured(PanelWindow.CARD_LABEL_TEXT, PanelWindow.CARD_LABEL_SIZE, PanelWindow.UiFont);
+      Check("T34-timer-label", labelW <= PanelWindow.CARD_LABEL_W,
+        "计时标签「" + PanelWindow.CARD_LABEL_TEXT + "」宽 " + Fmt.Num(Math.Round(labelW, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.CARD_LABEL_W));
       double tiW = Measured("11:08:40", 16.5, PanelWindow.MonoFont);
       Check("T34-timer", tiW <= PanelWindow.TIMER_W,
         "计时「11:08:40」宽 " + Fmt.Num(Math.Round(tiW, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.TIMER_W));
+      // 卡片第三行：标签 + 大字 + 右侧轮次不许叠
+      double rowRight = Geo.CARD_BLEED + Geo.CARD_W - PanelWindow.CARD_EDGE_PAD - PanelWindow.TURNS_W;
+      double timerLeft = Geo.CARD_BLEED + PanelWindow.CARD_COL2 + PanelWindow.CARD_LABEL_W;
+      Check("T34-card-row", timerLeft + tiW <= rowRight,
+        "计时右端 " + Fmt.Num(Math.Round(timerLeft + tiW, 1)) + " DIP ≤ 轮次左端 " + Fmt.Num(rowRight) + " DIP（不叠字）");
       // 子代理行与状态词横向不能重叠（同一行左右两侧）
       double wordW = Measured("等你回答", 10.5, PanelWindow.UiFont);
       Check("T34-noclash", 16 + 13 + wordW < 232 - 16 - PanelWindow.CHILD_W + 2,
@@ -414,6 +517,27 @@ namespace Board {
       var tf = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
       var ft = new FormattedText(text, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, tf, size, Brushes.Black, 1.0);
       return ft.WidthIncludingTrailingWhitespace;
+    }
+    private static double MeasuredH(string text, double size, FontFamily family) {
+      var tf = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+      var ft = new FormattedText(text, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, tf, size, Brushes.Black, 1.0);
+      return ft.Height;
+    }
+    // WCAG 相对亮度对比度：用来把「提亮了多少」算成一个数（不是拍脑袋说「更亮了」）
+    private static double Contrast(string fg, string bg) {
+      double a = Luminance(fg), b = Luminance(bg);
+      if (a < b) { double t = a; a = b; b = t; }
+      return (a + 0.05) / (b + 0.05);
+    }
+    private static double Luminance(string color) {
+      string c = (color ?? "").TrimStart('#');
+      if (c.Length == 8) c = c.Substring(2);
+      double[] v = new double[3];
+      for (int i = 0; i < 3; i++) {
+        double f = int.Parse(c.Substring(i * 2, 2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture) / 255.0;
+        v[i] = f <= 0.04045 ? f / 12.92 : Math.Pow((f + 0.055) / 1.055, 2.4);
+      }
+      return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
     }
     // ==================== T14 陈旧两档 ====================
     private static void T14(string dir) {
@@ -766,7 +890,10 @@ namespace Board {
         + (string.IsNullOrEmpty(extra) ? "" : "," + extra) + "}\n";
     }
     private static string LogPath(string dir) {
-      return Path.Combine(dir, "agent-" + DateTime.Today.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + ".log");
+      return LogPathFor(dir, 0);
+    }
+    private static string LogPathFor(string dir, int dayOffset) {
+      return Path.Combine(dir, "agent-" + DateTime.Today.AddDays(dayOffset).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + ".log");
     }
     private static void WriteLog(string dir, string kind, long now) {
       var sb = new StringBuilder();

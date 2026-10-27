@@ -54,9 +54,10 @@ test('T6–T16 面板自检全部通过（几何 / 拖动阈值 / 位置记忆 /
   const r = 跑自检();
   const 失败 = r.checks.filter(c => !c.ok);
   assert.equal(失败.length, 0, `自检有失败项：\n${失败.map(c => `  ${c.id} ${c.detail}`).join('\n')}`);
-  assert.ok(r.checks.length >= 60, `自检项太少（${r.checks.length} 条）—— 用例可能没跑全`);
-  for (const id of ['T6-panelH', 'T7-detach', 'T8-clamp', 'T9-remain', 'T10-shared-unit', 'T11-hidden', 'T12-today', 'T13-running', 'T14-quota', 'T15-change', 'T16-list',
-    'T28-read-balance', 'T28-hidden', 'T28-shown-again', 'T29-retain', 'T29-firstfail', 'T30-fillet', 'T30-hairline']) {
+  assert.ok(r.checks.length >= 93, `自检项太少（${r.checks.length} 条）—— 用例可能没跑全（2026-10-27 基线 93：原 81 + T34 字高/对比度/标签/卡片行 5 条 + T36 模型累计 6 条 + T12 会话起点 1 条）`);
+  for (const id of ['T6-panelH', 'T7-detach', 'T8-clamp', 'T9-remain', 'T10-shared-unit', 'T11-hidden', 'T12-today', 'T12-session-start', 'T13-running', 'T14-quota', 'T15-change', 'T16-list',
+    'T28-read-balance', 'T28-hidden', 'T28-shown-again', 'T29-retain', 'T29-firstfail', 'T30-fillet', 'T30-hairline',
+    'T31-line', 'T31-hidden', 'T34-contrast', 'T34-cadence-height', 'T34-child', 'T34-card-row', 'T36-sum', 'T36-no-done', 'T36-stale-open', 'T36-cross-midnight', 'T36-child-sum', 'T36-session']) {
     assert.ok(r.checks.some(c => c.id === id), `自检缺少用例 ${id}`);
   }
   assert.match(r.summary, /fail=0/, `自检汇总不是全绿：${r.summary}`);
@@ -115,8 +116,8 @@ test('T16 上屏文本 ⊆ 固定词表（无解释性句子）', { skip: skip�
     /^近 7 天 —$/,
     /^(正在干活|等你回答|空闲)$/,
     /^写入 (\d+[smhd]|\d+h\d{2}m|—) 前$/,
-    // 2026-10-27：「会话 H:MM:SS」（其实是进程年龄，误导）换成从日志推的当前进展
-    /^已 (\d+:)?\d{2}:\d{2}$/,
+    // 2026-10-27：卡片第三行的「已 X」换成「模型 X」= 本会话模型累计运行（不是上一条事件到现在）
+    /^模型 (\d+:)?\d{2}:\d{2}$/,
     /^\d+ 轮$/,
     /^子代理 \d+ 个在跑 · 最长 .+$/,
     // 余额节奏（充值不算消耗；24 小时没花钱；两种花钱说法）
@@ -125,8 +126,8 @@ test('T16 上屏文本 ⊆ 固定词表（无解释性句子）', { skip: skip�
     /^花了 ¥[\d,]+\.\d{2} · 用时 .+$/,
     /^最近 24 小时没花钱$/,
   ];
-  // 旧四态与「会话」「裸计时」现已不上屏：它们还在词表里就等于给过期文案留了后门
-  const 已废弃 = [/^会话$/, /^(正在运行|已完成|今天没用过)$/, /^(\d+:)?\d{2}:\d{2}$/];
+  // 旧四态、「会话」、裸计时与旧的「已 X」现已不上屏：它们还在词表里就等于给过期文案留了后门
+  const 已废弃 = [/^会话$/, /^(正在运行|已完成|今天没用过)$/, /^(\d+:)?\d{2}:\d{2}$/, /^已 (\d+:)?\d{2}:\d{2}$/];
   const 遗留 = r.screens.filter(t => 已废弃.some(re => re.test(t.trim())));
   assert.deepEqual(遗留, [], `旧文案又冒出来了：\n  ${遗留.join('\n  ')}`);
   const 越界 = r.screens.filter(t => t.trim() && !词表.some(re => re.test(t.trim())));
@@ -265,7 +266,7 @@ test('T18b 升级针行为：面板在跑时 stopOwned 真的把它停掉（不�
   }
 });
 
-test('T35 开机自启：悬浮看板的 lnk 真进启动文件夹，卸载时真能清掉', { skip: skip若未编译() }, () => {
+test('T35 开机自启：悬浮看板的 lnk 真进启动文件夹，卸载时真能清掉', { skip: skip若未编译() }, (t) => {
   // 2026-10-27 真机根因：install.mjs 模板字符串里 `\$` 写成了单反斜杠 —— lnk 落到 Programs 目录、
   //   名叫「Startup 悬浮看板.lnk」，开机永远不执行（真机上那个文件就是证据）。
   // 这条用例不只看源码：真建一次、读回三项、再让卸载路径真删一次。
@@ -285,6 +286,16 @@ Write-Output $l.WorkingDirectory
 `).replace(/\r/g, '').split('\n');
     return { TargetPath: out[0] ?? '', Arguments: out[1] ?? '', WorkingDirectory: out[2] ?? '' };
   };
+  // 本机可能已有一份**别处安装**的日常版占着同一个 lnk 名（用户真机就是这样）：与「外来面板在跑」同一纪律 ——
+  //   不碰别人的开机自启，本条登记为跳过（换一台干净机器跑就是全绿）。它指向本构建树（上次跑挂的残留）则照旧报红。
+  if (fs.existsSync(lnk)) {
+    const 已有 = 读快捷方式(lnk);
+    if (path.resolve(已有.WorkingDirectory || '.').toLowerCase() !== path.resolve(tmpRoot).toLowerCase()) {
+      t.skip(`启动文件夹里已有一份别处安装的开机自启（工作目录 ${已有.WorkingDirectory}）—— 不碰它，本用例跳过`);
+      return;
+    }
+    assert.fail(`启动文件夹里已有一条指向本构建树的 lnk（${lnk}）—— 上次跑挂的残留，先人工清掉再跑`);
+  }
   const 错名 = path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup 悬浮看板.lnk');
   const 错名本来就有 = fs.existsSync(错名);
   try {
@@ -292,7 +303,6 @@ Write-Output $l.WorkingDirectory
     fs.copyFileSync(path.join(ROOT, '快捷操作', '悬浮看板.vbs'), path.join(tmpRoot, '快捷操作', '悬浮看板.vbs'));
     fs.mkdirSync(path.join(tmpRoot, '程序', 'bin'), { recursive: true });
     fs.copyFileSync(EXE, path.join(tmpRoot, '程序', 'bin', 'board.exe'));
-    assert.ok(!fs.existsSync(lnk), `测试前启动文件夹里就有 ${lnk}，不碰它 —— 先人工清掉再跑`);
 
     // ① 建：真落到启动文件夹，且三项都对
     const 建 = 写面板自启快捷方式(tmpRoot);

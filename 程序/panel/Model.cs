@@ -212,6 +212,7 @@ namespace Board {
     public long newestWriteMs;
     public long newestSlotMs; public string newestSlotId = "", newestSlotNo = "";
     public int newestSlotTurns;                 // 本会话轮次（最新槽位的 turnCount）
+    public long newestSessionStartMs;           // 本会话的铸造时刻（sessionId 里的 ms；解不出 = 0）
 
     public static string HomeDir() {
       string h = Environment.GetEnvironmentVariable("USERPROFILE");
@@ -271,6 +272,7 @@ namespace Board {
             if (ts > o.newestSlotMs) {
               o.newestSlotMs = ts; o.newestSlotId = sid ?? ""; o.newestSlotNo = slotNo;
               o.newestSlotTurns = turns;
+              o.newestSessionStartMs = MintMsOf(sid, nowMs);
             }
             string key = cwd.ToLowerInvariant();
             ProjRec r;
@@ -317,7 +319,10 @@ namespace Board {
         if (s.ms > r.lastMs) r.lastMs = s.ms;
         if (s.ms >= todayStart) { r.todayTurns += s.turns; r.todaySessions++; }
         if (s.ms >= weekStart) { r.weekTurns += s.turns; r.weekSessions++; }
-        if (s.ms > o.newestSlotMs) { o.newestSlotMs = s.ms; o.newestSlotId = s.sessionId ?? ""; o.newestSlotNo = "1"; o.newestSlotTurns = s.turns; }
+        if (s.ms > o.newestSlotMs) {
+          o.newestSlotMs = s.ms; o.newestSlotId = s.sessionId ?? ""; o.newestSlotNo = "1"; o.newestSlotTurns = s.turns;
+          o.newestSessionStartMs = MintMsOf(s.sessionId, nowMs);
+        }
       }
       foreach (var r in acc.Values) o.projects.Add(r);
       o.projects.Sort(delegate (ProjRec a, ProjRec b) { return b.lastMs.CompareTo(a.lastMs); });
@@ -326,6 +331,19 @@ namespace Board {
         o.weekTurns += r.weekTurns; o.weekSessions += r.weekSessions;
       }
       return o;
+    }
+
+    // 会话起点：槽位 sessionId 的形状是 <pid>-<铸造时刻 ms>-<随机>（真机 49 份 manifest 同一个形状）。
+    //   解析不出返回 0：上层退回「按天窗口」口径，不编一个假起点。
+    private static long MintMsOf(string sid, long nowMs) {
+      if (string.IsNullOrEmpty(sid)) return 0L;
+      var m = Regex.Match(sid, "^\\d+-(\\d{12,})-[A-Za-z0-9]+$");
+      if (!m.Success) return 0L;
+      long v;
+      if (!long.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out v)) return 0L;
+      long lo = new DateTimeOffset(new DateTime(2020, 1, 1)).ToUnixTimeMilliseconds();
+      if (v < lo || v > nowMs + 86400000L) return 0L;   // 不像个铸造时刻就别拿它切
+      return v;
     }
 
     private static string ReadAllTextSafe(string path) {
@@ -349,36 +367,63 @@ namespace Board {
   // 判据（全部来自 ~/.thincoder/logs/agent-<本地日期>.log 的 JSONL，一次一行，字段 ts/ev 打头）：
   //   最后一条事件是 turn:end        → 这一轮已交付，等你回答（有活进程）/ 空闲（没有）
   //   最后一条事件是别的（turn:start / llm:start / llm:done / tool:call / tool:done / child:* / susp:*）
-  //                                 → 正在干活；「已 X」= 距今 − 那条事件的时刻（这就是当前这一步的时长）
+  //                                 → 正在干活（「这一步多久」不再上屏，见下）
   //   最后一条事件已经超过 PROGRESS_STALE_MIN 分钟 → 不再算「正在干活」（进程可能已经没了或卡死）
   //   日志读不到（不存在 / 读不动 / 一行事件都解不出）→ 词条只按活进程判，**计时那一整行不显示**
   //     （用户原话：不显示 0、也不显示「—」）
   //
   // 本会话轮次：取 ~/.thincoder/sessions/<hash>.json.manifest 里最新槽位的 turnCount（真数据实测 151/152 轮）。
   //
+  // 本会话模型累计运行（2026-10-27 用户拍板）：卡片上那个大字要回答的是「大模型真正在跑的时间」——
+  //   不是「上一个事件到现在」（那是等待时长），更不是进程开了多久。
+  //   口径 = agent 日志里每一条 llm:done 的 ms 累加 + 还没收到 llm:done 的 llm:start 距今（在飞）。
+  //   只看本会话：起点 = 最新槽位 sessionId 里的铸造时刻（解不出则退回「今天 + 昨天」整天）。
+  //   日志按天分文件（agent-YYYY-MM-DD.log）：先读昨天、再读今天，跨零点的同一次调用也能配对
+  //   （配对 = 同一条 stream（child id；主 agent 为空）内后进先出：done 收掉最近一条 start）。
+  //   子代理的 llm:* 也算：那是同一个模型在替这次会话干活。
+  //   一条 llm:* 都没有（或日志读不到）→ 这个数推不出来 → 计时不上屏（不是 0、也不是「—」）。
+  //   超过 MODEL_OPEN_CAP_MS 还没收到 done 的 start 视为残留（可能崩了/日志截断），不再累加。
+  //
   // 子代理：日志里**有专门的事件**（child:spawn / child:start，带 id="coder#1"）——
   //   同一 id 只要出现任意一条非 spawn/start 的 child:*（结束事件，名字随宿主版本），就算它收了；
   //   剩下的就是「在跑」。一条都没有（或读不到日志）→ 这个数推不出来 → 那一行不显示。
   internal sealed class Progress {
     public const int PROGRESS_STALE_MIN = 30;   // 一步超过它还没有任何日志 = 不再算「正在干活」
+    public const long MODEL_OPEN_CAP_MS = 30L * 60000L;   // 在飞的 llm:start 超过它 = 残留，不再累加
     public string state = "idle";               // work / wait / idle
     public string word = "空闲", color = "#8A909C";
     public bool logOk;                          // 日志读到并至少解出一条事件
-    public bool haveSince;                      // 「已 X」能算出来（= logOk）
-    public long sinceMs;                        // 当前这一步 / 这次等待的起点
+    public bool haveSince;                      // 最后一条事件时刻可用（三态判据用）
+    public long sinceMs;                        // 最后一条事件的时刻
     public int turns; public bool haveTurns;    // 本会话轮次（0/缺 = 不显示）
     public int children;                        // 在跑的子代理数
     public long longestChildMs;                 // 最长的那个跑了多久
     public bool haveChildren;                   // 子代理数推得出来（今天至少出现过一条 child:*）
     public string lastEvent = "", logPath = "", why = "";
     public long lastEventMs;
+    // 本会话模型累计运行（口径见上）
+    public long modelDoneMs;                    // llm:done 的 ms 累加（本会话）
+    public long[] modelOpenStarts = new long[0];// 还没收到 done 的 llm:start（在飞）
+    public int modelCalls;                      // 参与累加的 llm:done 条数（读数/自检用）
+    public bool haveModel;                      // 日志里至少有 llm:* 事件（推得出来）
 
-    public string ElapsedText() {
-      if (!logOk || sinceMs <= 0) return "";
-      return "已 " + Fmt.Duration((Fmt.NowMs() - sinceMs) / 1000.0);
+    // 在飞按「读的这一刻」算：缓存没变时也每秒走（ElapsedText 每秒被调一次）
+    public long ModelElapsedMs(long nowMs) {
+      long total = modelDoneMs;
+      for (int i = 0; i < modelOpenStarts.Length; i++) {
+        long d = nowMs - modelOpenStarts[i];
+        if (d > 0 && d <= MODEL_OPEN_CAP_MS) total += d;
+      }
+      return total;
     }
-    // 计时 + 轮次那一行到底上不上屏（日志读不到 → 整行不显示；不是 0、也不是「—」）
-    public bool ShowTiming { get { return logOk && haveSince && sinceMs > 0; } }
+    public string ElapsedText() {
+      if (!haveModel) return "";
+      long ms = ModelElapsedMs(Fmt.NowMs());
+      if (ms <= 0) return "";
+      return "模型 " + Fmt.Duration(ms / 1000.0);
+    }
+    // 计时行到底上不上屏（推不出来 → 不显示；不是 0、也不是「—」）
+    public bool ShowTiming { get { return haveModel && ModelElapsedMs(Fmt.NowMs()) > 0; } }
     // 子代理行：0 个就不显示（能少写字就少写字；推不出来也不许瞎猜）
     public string ChildText() {
       if (!haveChildren || children <= 0) return "";
@@ -393,12 +438,21 @@ namespace Board {
 
     // logDir：留空 = ~/.thincoder/logs（自检夹具会把它指到临时目录）
     public static Progress Read(long nowMs, bool processAlive, int turns, string logDir) {
+      return Read(nowMs, processAlive, turns, 0L, logDir);
+    }
+    // sessionStartMs：本会话的铸造时刻（0 = 不知道 → 退回「今天 + 昨天」按天窗口）
+    public static Progress Read(long nowMs, bool processAlive, int turns, long sessionStartMs, string logDir) {
       var o = new Progress();
       o.turns = turns; o.haveTurns = turns > 0;
       string path, why;
       ParseLog(logDir, out path, out why);
+      ParseModelTime(logDir);
       o.logPath = path; o.why = why;
       o.logOk = ProgressCache.ok;
+      o.modelDoneMs = ModelCache.DoneSince(sessionStartMs);
+      o.modelOpenStarts = ModelCache.OpenSince(sessionStartMs);
+      o.modelCalls = ModelCache.CallsSince(sessionStartMs);
+      o.haveModel = ModelCache.ok && (o.modelCalls > 0 || o.modelOpenStarts.Length > 0);
       if (!o.logOk) {
         // 日志读不到：词条只按「有没有活着的 ThinCoder 进程」判；计时与轮次那一行整行不显示
         o.state = processAlive ? "wait" : "idle";
@@ -483,6 +537,69 @@ namespace Board {
       } catch (Exception ex) { why = ex.Message; ProgressCache.Reset(); }
     }
 
+    // 模型累计运行：今天 + 昨天两份 agent 日志（跨零点回看前一天）。
+    //   缓存键 = 两份文件各自的「路径/长度/修改时刻」；没变就不重解（面板 5 秒问一次）。
+    //   先昨天、后今天：同一次调用跨零点也能配上对（同一条 stream 内后进先出）。
+    private static void ParseModelTime(string logDir) {
+      string dir = logDir;
+      if (string.IsNullOrEmpty(dir)) dir = Path.Combine(Sessions.BaseDir(), "logs");
+      string today = PickLogByDay(dir, 0), yest = PickLogByDay(dir, -1);
+      string key = StampOf(yest) + "|" + StampOf(today);
+      if (ModelCache.Same(key)) return;
+      ModelCache.Reset(); ModelCache.key = key;
+      var open = new Dictionary<string, List<long>>();
+      var dts = new List<long>(); var dms = new List<long>();
+      bool saw = false;
+      for (int pass = 0; pass < 2; pass++) {
+        string p = pass == 0 ? yest : today;
+        if (string.IsNullOrEmpty(p) || !File.Exists(p)) continue;
+        string text;
+        try { text = Io.ReadAllTextShared(p); } catch { continue; }
+        var lines = text.Split('\n');
+        for (int i = 0; i < lines.Length; i++) {
+          string line = lines[i];
+          if (line.Length < 12 || line[0] != '{') continue;
+          long ts; string ev;
+          if (!Head(line, out ts, out ev)) continue;
+          if (ev != "llm:start" && ev != "llm:done") continue;
+          saw = true;
+          string stream = Field(line, "\"child\":\"") ?? "";
+          List<long> st;
+          if (!open.TryGetValue(stream, out st)) { st = new List<long>(); open[stream] = st; }
+          if (ev == "llm:start") { st.Add(ts); continue; }
+          long start = 0;
+          if (st.Count > 0) { start = st[st.Count - 1]; st.RemoveAt(st.Count - 1); }
+          long ms = LongField(line, "\"ms\":");
+          if (ms <= 0 && start > 0 && ts > start) ms = ts - start;   // 缺 ms 的旧行：用起止时刻兜底
+          dts.Add(ts); dms.Add(ms > 0 ? ms : 0);
+        }
+      }
+      ModelCache.doneTs = dts.ToArray(); ModelCache.doneMsArr = dms.ToArray(); ModelCache.ok = saw;
+      var left = new List<long>();
+      foreach (var kv in open) foreach (long t in kv.Value) left.Add(t);
+      left.Sort();
+      ModelCache.open = left.ToArray();
+    }
+
+    private static string PickLogByDay(string dir, int dayOffset) {
+      return Path.Combine(dir, "agent-" + DateTime.Today.AddDays(dayOffset).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".log");
+    }
+    private static string StampOf(string p) {
+      try {
+        if (string.IsNullOrEmpty(p) || !File.Exists(p)) return "-";
+        var fi = new FileInfo(p);
+        return fi.Length.ToString(CultureInfo.InvariantCulture) + ":" + fi.LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture);
+      } catch { return "?"; }
+    }
+    private static long LongField(string line, string key) {
+      int i = line.IndexOf(key, StringComparison.Ordinal);
+      if (i < 0) return 0;
+      int b = i + key.Length, e = b;
+      while (e < line.Length && line[e] >= '0' && line[e] <= '9') e++;
+      long v;
+      return e > b && long.TryParse(line.Substring(b, e - b), NumberStyles.Integer, CultureInfo.InvariantCulture, out v) ? v : 0;
+    }
+
     // 每行头两个字段就是 ts 与 ev（`{"ts":"…","ev":"…"`）—— 按行首剥，别被 head 里的正文带跑偏
     private static bool Head(string line, out long ts, out string ev) {
       ts = 0; ev = null;
@@ -498,6 +615,32 @@ namespace Board {
       if (i < 0) return null;
       int b = i + key.Length, e = line.IndexOf('"', b);
       return e > b ? line.Substring(b, e - b) : null;
+    }
+
+    // 模型累计的解析缓存（键 = 昨天 + 今天两份文件的 路径/长度/修改时刻）
+    //   存逐条 (ts, ms)：会话边界一变就能现算，不用重解日志。
+    private static class ModelCache {
+      public static string key = "";
+      public static long[] doneTs = new long[0], doneMsArr = new long[0];
+      public static long[] open = new long[0];
+      public static bool ok;
+      public static void Reset() { key = ""; doneTs = new long[0]; doneMsArr = new long[0]; open = new long[0]; ok = false; }
+      public static bool Same(string k) { return key.Length > 0 && key == k; }
+      public static int CallsSince(long sinceMs) {
+        int n = 0;
+        for (int i = 0; i < doneTs.Length; i++) if (sinceMs <= 0 || doneTs[i] >= sinceMs) n++;
+        return n;
+      }
+      public static long DoneSince(long sinceMs) {
+        long t = 0;
+        for (int i = 0; i < doneTs.Length; i++) if (sinceMs <= 0 || doneTs[i] >= sinceMs) t += doneMsArr[i];
+        return t;
+      }
+      public static long[] OpenSince(long sinceMs) {
+        var l = new List<long>();
+        for (int i = 0; i < open.Length; i++) if (sinceMs <= 0 || open[i] >= sinceMs) l.Add(open[i]);
+        return l.ToArray();
+      }
     }
 
     // 解析结果缓存（键 = 文件 + 长度 + 修改时刻）：面板每 5 秒问一次，日志没变就别重解
@@ -938,7 +1081,7 @@ namespace Board {
     // 进展 / 余额节奏的重读入口（面板每 5 秒走一次，不必重读余额与额度）
     public void RefreshLive(bool processAlive) {
       nowMs = Fmt.NowMs();
-      progress = Progress.Read(nowMs, processAlive, sess != null ? sess.newestSlotTurns : 0, Ctx.LogDir);
+      progress = Progress.Read(nowMs, processAlive, sess != null ? sess.newestSlotTurns : 0, sess != null ? sess.newestSessionStartMs : 0L, Ctx.LogDir);
     }
 
     private void Finish(Activity act, bool processAlive) {
@@ -997,7 +1140,7 @@ namespace Board {
       balPick = balView.tightest;
       if (balPick == null && balView.groupCount > 0) balPick = balView.groups[0];
       // 当前进展（三态 + 已 X + 本会话轮次 + 在跑的子代理）与余额节奏（每家的「最近 ¥10 用了多久」）
-      progress = Progress.Read(nowMs, processAlive, sess != null ? sess.newestSlotTurns : 0, Ctx.LogDir);
+      progress = Progress.Read(nowMs, processAlive, sess != null ? sess.newestSlotTurns : 0, sess != null ? sess.newestSessionStartMs : 0L, Ctx.LogDir);
       cadence.Clear();
       foreach (var g in balView.groups) cadence[g.key] = Cadence.Read(Ctx.DataRoot, g.key, nowMs);
     }
