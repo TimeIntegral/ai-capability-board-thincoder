@@ -7,6 +7,8 @@ import { execFileSync } from 'node:child_process';
 import { loadConfig, ROOT_DIR } from '../lib/common.mjs';
 import { runFirstRunCheck } from './first-run-check.mjs';
 import { 清理旧版遗留, 读取安装清单 } from './install-legacy.mjs';
+// 开机自启快捷方式的建/删唯一出处在 windows-integration.mjs（与卸载走同一份实现）
+import { 写面板自启快捷方式 } from './windows-integration.mjs';
 
 const ROOT = ROOT_DIR;                       // 项目根（config.json / dashboard.html / data 那一层）
 const PROG = path.join(ROOT, '程序');         // 程序代码（本文件就在它的 tools\ 下）
@@ -152,26 +154,26 @@ step('悬浮看板已就绪', () => {
   const vbs = path.join(QUICK, '悬浮看板.vbs');
   const exe = path.join(PROG, 'bin', 'board.exe');
   if (!fs.existsSync(vbs)) throw new Error(`未找到 ${vbs}`);
-  if (!fs.existsSync(exe)) return `面板 exe 不在（${path.relative(ROOT, exe)}）—— 包还没编出面板，跳过`;
-  const icon = path.join(ROOT, 'icon.ico');
+  // 业务门（不能静默跳过）：这份包里**就应该**有面板 exe（installed-files.json 列着它），
+  //   列着却没装上 = 装坏了，得报错；只有真的不带面板的开发树才允许跳过。
+  if (!fs.existsSync(exe)) {
+    const 工单 = path.join(ROOT, '程序', 'installed-files.json');
+    let 应该有 = false;
+    try { 应该有 = JSON.stringify(JSON.parse(fs.readFileSync(工单, 'utf8'))).includes('程序/bin/board.exe'); } catch { }
+    if (应该有) throw new Error(`安装清单里列了 ${path.relative(ROOT, exe)}，但盘上没有 —— 包不完整（开机会没有悬浮看板）`);
+    return `面板 exe 不在（${path.relative(ROOT, exe)}）—— 这份不带面板，跳过`;
+  }
   const 关闭着 = cfg.panel?.enabled === false;
-  const out = ps(`
-$ws = New-Object -ComObject WScript.Shell
-$startup = [Environment]::GetFolderPath('Startup')
-$lnk = $ws.CreateShortcut("$startup\${SHORTCUT_NAME} 悬浮看板.lnk")
-$lnk.TargetPath = 'wscript.exe'
-$lnk.Arguments = '"${vbs}"'
-$lnk.WorkingDirectory = '${ROOT}'
-$lnk.IconLocation = '${icon}'
-$lnk.Description = '${SHORTCUT_NAME}悬浮看板（开机自动出现）'
-$lnk.Save()
-# 先停旧的（按 exe 路径），再起新的 —— 与安装器/卸载器同一条路径判据
-Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq '${exe}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Write-Output $startup
-`);
-  if (关闭着) return out.trim() + `\\${SHORTCUT_NAME} 悬浮看板.lnk（开机自启；config.json 里关着，本次不拉起）`;
+  // 开机自启的快捷方式：建/删/读回核对全在写面板自启快捷方式（唯一出处）里。
+  // 2026-10-27 修的真缺陷：以前那段 JS 模板字符串把 `\$` 写成了单反斜杠，lnk 落到 Programs 目录、
+  //   名叫「Startup 悬浮看板.lnk」——开机永远不执行（真机上那个文件就是证据）。
+  const 自启 = 写面板自启快捷方式(ROOT, { 启用: !关闭着 });
+  const 尾巴 = 自启.removedLegacy ? '；顺带清掉了老版本错名的「Startup 悬浮看板.lnk」' : '';
+  if (关闭着) return 自启.file + `（开机自启；config.json 里关着，本次不拉起）` + 尾巴;
+  // 先停旧的（按 exe 路径），再起新的 —— 与安装器/卸载器同一条路径判据
+  ps(`Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq '${exe}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
   ps(`Start-Process 'wscript.exe' -ArgumentList '"${vbs}"' -WorkingDirectory '${ROOT}' -WindowStyle Hidden`);
-  return out.trim() + `\\${SHORTCUT_NAME} 悬浮看板.lnk（开机自启，已启动）`;
+  return 自启.file + '（开机自启，已启动）' + 尾巴;
 });
 
 console.log(failed ? `\n⚠️ ${failed} 个步骤失败（其余已生效）` : '\n全部完成。采集会自动运行，看板双击桌面快捷方式打开，托盘图标常驻在任务栏。');

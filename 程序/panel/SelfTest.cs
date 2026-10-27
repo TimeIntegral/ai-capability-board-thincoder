@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows;
 using System.Windows.Media;
@@ -35,6 +36,10 @@ namespace Board {
         Section("T11", delegate { T11(dir); });
         Section("T12", delegate { T12(dir); });
         Section("T13", delegate { T13(); });
+        Section("T31", delegate { T31(); });
+        Section("T32", delegate { T32(); });
+        Section("T33", delegate { T33(); });
+        Section("T34", delegate { T34(); });
         Section("T14", delegate { T14(dir); });
         Section("T15", delegate { T15(); });
         Section("T16", delegate { T16(dir); });
@@ -265,21 +270,151 @@ namespace Board {
         "没有行 → 「" + m1.weekLine + "」；有行 → 「" + m2.weekLine + "」");
     }
 
-    // ==================== T13 状态四态 ====================
+    // ==================== T13 当前进展三态（2026-10-27 起：四态换成三态）====================
+    // 四态里「正在运行」只看「文件 20 秒内有写入」，把「停在那儿等你」也算成运行；
+    //   mini 卡片上那条「会话 H:MM:SS」就是这么骗人的（它其实是进程开了多久）。三态从 agent 日志推：
+    //   正在干活 / 等你回答 / 空闲。词表唯一出处在 Progress。
     private static void T13() {
       long now = Fmt.NowMs();
-      var r1 = StatusLogic.Compute(now, now - 10 * 1000, 0, 0, 0, 3);
-      var r2 = StatusLogic.Compute(now, now - 3600 * 1000, 0, now - 60 * 1000, 1, 3);
-      var r3 = StatusLogic.Compute(now, now - 3600 * 1000, 0, 0, 0, 2);
-      var r4 = StatusLogic.Compute(now, 0, 0, 0, 0, 0);
-      var r5 = StatusLogic.Compute(now, now - Geo.RUNNING_FRESH_SEC * 1000, 0, 0, 0, 1);
-      Check("T13-running", r1.kind == "running" && r1.word == "正在运行", "20 秒内有写入 → ● 正在运行（ageSec=" + r1.ageSec + "）");
-      Check("T13-waiting", r2.kind == "waiting" && r2.word == "等你回答", "有活 pid 无写入 → ● 等你回答（活进程 " + r2.livePeers + "）");
-      Check("T13-done", r3.kind == "done" && r3.word == "已完成", "今天用过无进程 → ○ 已完成（今天 " + 3 + " 个会话）");
-      Check("T13-none", r4.kind == "none" && r4.word == "今天没用过", "今天无活动 → — 今天没用过");
-      Check("T13-boundary", r5.kind == "running", "边界：正好 " + Geo.RUNNING_FRESH_SEC + " 秒 → 仍算正在运行（超过才算过）");
+      string dir = MakeLogDir();
+      try {
+        Ctx.LogDir = dir;
+        // ① 最后一条事件是 tool:call（还没收）→ 正在干活
+        WriteLog(dir, "work", now);
+        var r1 = Progress.Read(now, false, 151, dir);
+        Check("T13-running", r1.state == "work" && r1.word == "正在干活",
+          "日志最后一条是 tool:call → " + r1.word + "（当前这一步已 " + Fmt.Duration((now - r1.sinceMs) / 1000.0) + "）");
+        // ② turn:end + 有活着的 ThinCoder 进程 → 等你回答
+        WriteLog(dir, "ended", now);
+        var r2 = Progress.Read(now, true, 151, dir);
+        Check("T13-waiting", r2.state == "wait" && r2.word == "等你回答",
+          "日志最后一条是 turn:end + 进程还活着 → " + r2.word);
+        // ③ turn:end + 没有活进程 → 空闲
+        var r3 = Progress.Read(now, false, 151, dir);
+        Check("T13-done", r3.state == "idle" && r3.word == "空闲", "turn:end + 进程没了 → " + r3.word);
+        // ④ 日志读不到 → 词条只按活进程判，计时那一整行不显示（不是 0、也不是「—」）
+        string none = Path.Combine(Path.GetTempPath(), "board-nolog-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(none);
+        try {
+          var r4 = Progress.Read(now, false, 151, none);
+          Check("T13-none", !r4.logOk && r4.state == "idle" && r4.ElapsedText() == "" && !r4.ShowTiming,
+            "日志不存在 → " + r4.word + "（日志：" + r4.why + "）；计时行不显示（ElapsedText=\"" + r4.ElapsedText() + "\"）");
+        } finally { try { Directory.Delete(none, true); } catch { } }
+        // ⑤ 边界：最后一条事件距今超过 PROGRESS_STALE_MIN 分钟 → 不再算正在干活
+        WriteLog(dir, "stale", now);
+        var r5 = Progress.Read(now, false, 151, dir);
+        Check("T13-boundary", r5.state != "work",
+          "最后一条事件已是 " + Progress.PROGRESS_STALE_MIN + " 分钟前（上限 " + Progress.PROGRESS_STALE_MIN + " 分钟）→ " + r5.word + "（不再冒充正在干活）");
+      } finally { Ctx.LogDir = ""; try { Directory.Delete(dir, true); } catch { } }
     }
 
+    // ==================== T31 当前进展那一行（已 X + 本会话轮次）====================
+    private static void T31() {
+      long now = Fmt.NowMs();
+      string dir = MakeLogDir();
+      try {
+        Ctx.LogDir = dir;
+        WriteLog(dir, "work", now);
+        var pg = Progress.Read(now, false, 151, dir);
+        Check("T31-line", pg.ShowTiming && Regex.IsMatch(pg.ElapsedText(), "^已 \\d{2}:\\d{2}$") && pg.haveTurns && pg.turns == 151,
+          "日志可读 → 上屏「" + pg.ElapsedText() + "」+「" + pg.turns + " 轮」");
+        Check("T31-no-dash", pg.ElapsedText().IndexOf("—") < 0 && pg.ElapsedText().IndexOf("0:00") < 0,
+          "计时行不许出现「—」、也不许恒为 0:00（现在的值是「" + pg.ElapsedText() + "」）");
+        string none = Path.Combine(Path.GetTempPath(), "board-nolog-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(none);
+        try {
+          var bad = Progress.Read(now, false, 151, none);
+          Check("T31-hidden", !bad.ShowTiming && bad.ElapsedText() == "",
+            "日志读不到 → 计时 + 轮次那一整行不显示（ShowTiming=" + bad.ShowTiming + "、ElapsedText=\"" + bad.ElapsedText() + "\"）");
+        } finally { try { Directory.Delete(none, true); } catch { } }
+        Read("T31.since", pg.lastEvent + " @" + pg.lastEventMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+      } finally { Ctx.LogDir = ""; try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    // ==================== T32 子代理（只认日志里的 child:* 事件）====================
+    private static void T32() {
+      long now = Fmt.NowMs();
+      string dir = MakeLogDir();
+      try {
+        Ctx.LogDir = dir;
+        WriteLog(dir, "children", now);
+        var pg = Progress.Read(now, false, 151, dir);
+        string ct = pg.ChildText();
+        string head = "子代理 1 个在跑 · 最长 ";
+        Check("T32-running", pg.haveChildren && pg.children == 1 && ct.StartsWith(head) && ct.Length > head.Length,
+          "两个起过、一个已收工 → 上屏「" + ct + "」");
+        WriteLog(dir, "nochild", now);
+        var none = Progress.Read(now, false, 151, dir);
+        Check("T32-none", none.ChildText() == "",
+          "日志里一条子代理事件都没有 → 这一行不显示（推不出来就不瞎猜；Text=\"" + none.ChildText() + "\"）");
+      } finally { Ctx.LogDir = ""; try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    // ==================== T33 余额节奏（最近 ¥10 用了多久）====================
+    private static void T33() {
+      long now = Fmt.NowMs();
+      string dir = Path.Combine(Path.GetTempPath(), "board-cadence-" + Guid.NewGuid().ToString("N"));
+      Directory.CreateDirectory(Path.Combine(dir, "data", "history"));
+      try {
+        long t0 = now - 60 * 60000;
+        // ① 充过值、之后花够 ¥10：最近那块 ¥10 用了多久
+        WriteHistory(dir, "deepseek", new long[] { t0 - 30 * 60000, t0, t0 + 30 * 60000, t0 + 60 * 60000 },
+          new double[] { 10.0, 100.0, 90.0, 80.0 });
+        var a = Cadence.Read(dir, "deepseek", now);
+        Check("T33-block", a.ok && a.topups == 1 && a.blocks == 2 && a.text == "最近 ¥10 用了 30m",
+          "充值后花了两块 ¥10（30 分钟一块）→ 上屏「" + a.text + "」（充值那一步不算消耗）");
+        // ② 充过值、还没花够 ¥10 → 「充值后花了 ¥X · 用时 Y」
+        WriteHistory(dir, "deepseek", new long[] { t0 - 30 * 60000, t0, t0 + 20 * 60000 },
+          new double[] { 10.0, 100.0, 96.8 });
+        var b = Cadence.Read(dir, "deepseek", now);
+        Check("T33-aftertopup", b.ok && b.text.StartsWith("充值后花了 ¥3.20 · 用时 ") && b.text.IndexOf("Infinity") < 0,
+          "充值后只花了 ¥3.20 → 上屏「" + b.text + "」");
+        // ③ 近 24 小时没花钱
+        WriteHistory(dir, "deepseek", new long[] { now - 40 * 3600000, now - 30 * 3600000 },
+          new double[] { 50.0, 45.0 });
+        var c = Cadence.Read(dir, "deepseek", now);
+        Check("T33-idle", c.ok && c.text == "最近 24 小时没花钱",
+          "最后一次花钱是 30 小时前 → 上屏「" + c.text + "」");
+        // ④ 没有历史文件 → 一个字都不显示（不是 0，也不是 Infinity）
+        var d = Cadence.Read(dir, "glm", now);
+        Check("T33-nofile", !d.ok && d.text == "",
+          "没有 glm 的历史 → 这一行不显示（" + d.why + "）");
+        // ⑤ 一条样本都没有消耗（刚充值）→ 也只能是固定话，不许出现 Infinity
+        WriteHistory(dir, "glm", new long[] { now - 20 * 60000, now - 10 * 60000 }, new double[] { 0.0, 20.0 });
+        var e = Cadence.Read(dir, "glm", now);
+        Check("T33-infinity", e.text.IndexOf("Infinity") < 0 && e.text.IndexOf("NaN") < 0 && e.text.Length > 0,
+          "刚充值（还没有消耗）→ 上屏「" + e.text + "」（绝不许出现 Infinity/NaN）");
+      } finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    // ==================== T34 新加的两行字装不装得下（真字体度量，不是拍脑袋）====================
+    // 排版与自检用同一组槽宽（Panel.CAD_W / CHILD_W / TURNS_W / TIMER_W）：
+    //   最长的那串文案排版宽度超了槽 → 会溢出到尾随元素上（叠字），所以先用真字体量一遍。
+    private static void T34() {
+      double cadW = Measured("充值后花了 ¥8,888.88 · 用时 3d05h", 8.0, PanelWindow.UiFont);
+      double cadW2 = Measured("最近 ¥10 用了 12h59m", 8.0, PanelWindow.UiFont);
+      Check("T34-cadence", cadW <= PanelWindow.CAD_W && cadW2 <= PanelWindow.CAD_W,
+        "节奏行最长文案宽 " + Fmt.Num(Math.Round(cadW, 1)) + " / " + Fmt.Num(Math.Round(cadW2, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.CAD_W));
+      double chW = Measured("子代理 3 个在跑 · 最长 12h59m", 7.5, PanelWindow.UiFont);
+      Check("T34-child", chW <= PanelWindow.CHILD_W,
+        "子代理行最长文案宽 " + Fmt.Num(Math.Round(chW, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.CHILD_W));
+      double tuW = Measured("9999 轮", 9.0, PanelWindow.UiFont);
+      Check("T34-turns", tuW <= PanelWindow.TURNS_W,
+        "轮次「9999 轮」宽 " + Fmt.Num(Math.Round(tuW, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.TURNS_W));
+      double tiW = Measured("11:08:40", 16.5, PanelWindow.MonoFont);
+      Check("T34-timer", tiW <= PanelWindow.TIMER_W,
+        "计时「11:08:40」宽 " + Fmt.Num(Math.Round(tiW, 1)) + " DIP ≤ 槽宽 " + Fmt.Num(PanelWindow.TIMER_W));
+      // 子代理行与状态词横向不能重叠（同一行左右两侧）
+      double wordW = Measured("等你回答", 10.5, PanelWindow.UiFont);
+      Check("T34-noclash", 16 + 13 + wordW < 232 - 16 - PanelWindow.CHILD_W + 2,
+        "状态词「等你回答」右端 " + Fmt.Num(Math.Round(29 + wordW, 1)) + " DIP < 子代理行左端 " + Fmt.Num(232 - 16 - PanelWindow.CHILD_W) + " DIP（不叠字）");
+    }
+
+    private static double Measured(string text, double size, FontFamily family) {
+      var tf = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+      var ft = new FormattedText(text, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, tf, size, Brushes.Black, 1.0);
+      return ft.WidthIncludingTrailingWhitespace;
+    }
     // ==================== T14 陈旧两档 ====================
     private static void T14(string dir) {
       long now = Fmt.NowMs();
@@ -341,46 +476,65 @@ namespace Board {
     private static void T16(string dir) {
       long now = Fmt.NowMs();
       WriteFixture(dir, "two");
-      var codex = QuotaSnap.Read(Path.Combine(dir, "dashboard-data.js"));
-      var bal = BalSnapshot.Read(dir);
-      var slots = new List<SlotRec>();
-      slots.Add(Slot("proj/Alpha", now - 60 * 1000, 5, "4242-" + (now - 60 * 1000) + "-abcd"));
-      var sess = Sessions.FromSlots(slots, now);
-      var att = new Att7();
-      var act = new Activity(); act.sessionMs = now - 3 * 1000; act.maxMs = now - 3 * 1000; act.maxWhat = "会话正文";
-      var m = Model.BuildFor(codex, sess, att, bal, now, act);
-      var texts = new List<string>();
-      texts.Add("Codex");
-      texts.Add("数据 " + m.snapText);
-      texts.Add("5h 还剩");
-      texts.Add("7 天 还剩");
-      texts.Add(m.fiveSub); texts.Add(m.weekSub);
-      texts.Add(m.resetLine);
-      texts.Add("余额");
-      texts.Add(m.balView.unitText);
-      texts.Add(m.balView.dataText);
-      foreach (var g in m.balView.groups) { texts.Add(g.name); texts.Add(g.amountText); texts.Add(g.marks); }
-      texts.Add("今天 · 这个项目");
-      texts.Add("最近 " + m.lastText);
-      texts.Add(m.todayLine);
-      texts.Add(m.weekLine);
-      texts.Add(m.status.word);
-      texts.Add(m.quotaLabel);
-      texts.Add("写入 " + Fmt.AgeShort(3) + " 前");
-      texts.Add("会话");
-      texts.Add(Fmt.Duration(7543));
-      texts.Add("—");
-      // 项目名是目录名（开放集）：单独用 SCREENPROJ 一行给出来 —— 词表比对只管固定字面
-      W.WriteLine("SCREENPROJ " + m.projName);
-      int bad = 0; string badList = "";
-      foreach (string t in texts) {
-        Screen(t);
-        if (string.IsNullOrEmpty(t)) continue;
-        if (t == "—") continue;
-        if (t.IndexOf('\uFFFD') >= 0) { bad++; badList += "[" + t + "]"; }
+      // 新增的「当前进展」与「余额节奏」两条也走真实的生成函数（不是手写字符串），
+      //   否则词表只能验到旧文案，新文案漏出词表也没人抦。
+      string logDir = MakeLogDir();
+      string savedData = Ctx.DataRoot, savedLog = Ctx.LogDir;
+      try {
+        Ctx.DataRoot = dir; Ctx.LogDir = logDir;
+        WriteLog(logDir, "children", now);
+        WriteHistory(dir, "deepseek", new long[] { now - 90 * 60000, now - 60 * 60000, now - 30 * 60000, now - 2 * 60000 },
+          new double[] { 20.0, 100.0, 90.0, 80.0 });
+        WriteHistory(dir, "glm", new long[] { now - 40 * 60000, now - 20 * 60000 }, new double[] { 8888.12, 8885.0 });
+        var codex = QuotaSnap.Read(Path.Combine(dir, "dashboard-data.js"));
+        var bal = BalSnapshot.Read(dir);
+        var slots = new List<SlotRec>();
+        slots.Add(Slot("proj/Alpha", now - 60 * 1000, 5, "4242-" + (now - 60 * 1000) + "-abcd"));
+        var sess = Sessions.FromSlots(slots, now);
+        var att = new Att7();
+        var act = new Activity(); act.sessionMs = now - 3 * 1000; act.maxMs = now - 3 * 1000; act.maxWhat = "会话正文";
+        var m = Model.BuildFor(codex, sess, att, bal, now, act);
+        var texts = new List<string>();
+        texts.Add("Codex");
+        texts.Add("数据 " + m.snapText);
+        texts.Add("5h 还剩");
+        texts.Add("7 天 还剩");
+        texts.Add(m.fiveSub); texts.Add(m.weekSub);
+        texts.Add(m.resetLine);
+        texts.Add("余额");
+        texts.Add(m.balView.unitText);
+        texts.Add(m.balView.dataText);
+        foreach (var g in m.balView.groups) {
+          texts.Add(g.name); texts.Add(g.amountText); texts.Add(g.marks);
+          var cad = m.CadenceOf(g.key);
+          if (cad.ok) texts.Add(cad.text);
+        }
+        texts.Add("今天 · 这个项目");
+        texts.Add("最近 " + m.lastText);
+        texts.Add(m.todayLine);
+        texts.Add(m.weekLine);
+        // 当前进展（三态 + 已 X + 轮次）与子代理行
+        texts.Add(m.progress.word);
+        if (m.progress.ShowTiming) { texts.Add(m.progress.ElapsedText()); texts.Add(m.progress.turns + " 轮"); }
+        texts.Add(m.progress.ChildText());
+        texts.Add(m.quotaLabel);
+        texts.Add("写入 " + Fmt.AgeShort(3) + " 前");
+        texts.Add("—");
+        // 项目名是目录名（开放集）：单独用 SCREENPROJ 一行给出来 —— 词表比对只管固定字面
+        W.WriteLine("SCREENPROJ " + m.projName);
+        int bad = 0; string badList = "";
+        foreach (string t in texts) {
+          Screen(t);
+          if (string.IsNullOrEmpty(t)) continue;
+          if (t == "—") continue;
+          if (t.IndexOf('\uFFFD') >= 0) { bad++; badList += "[" + t + "]"; }
+        }
+        Check("T16-list", bad == 0, "上屏文本清单已输出 " + texts.Count + " 条（SCREEN 行；词表比对由 程序/tools/test-panel.mjs 做，解释性句子零命中）" + badList);
+        Check("T16-nolines", m.resetLine.IndexOf("读不到") < 0, "数据可读时刷新行不含解释性文字：" + m.resetLine);
+      } finally {
+        Ctx.DataRoot = savedData; Ctx.LogDir = savedLog;
+        try { Directory.Delete(logDir, true); } catch { }
       }
-      Check("T16-list", bad == 0, "上屏文本清单已输出 " + texts.Count + " 条（SCREEN 行；词表比对由 程序/tools/test-panel.mjs 做，解释性句子零命中）" + badList);
-      Check("T16-nolines", m.resetLine.IndexOf("读不到") < 0, "数据可读时刷新行不含解释性文字：" + m.resetLine);
     }
 
     // ==================== UI 自检（真机窗口：A4 / A10 / T14 的元素实测）====================
@@ -592,6 +746,74 @@ namespace Board {
       long now = Fmt.NowMs();
       File.WriteAllText(Path.Combine(dir, "dashboard-data.js"), FixtureText("two", now, now - 2 * 60000, now - 2 * 60000, dsAt, glmAt), PanelControl.Utf8NoBom);
       return BalSnapshot.Read(dir);
+    }
+
+    // ---- agent 日志夹具：字段名与层级照真日志（每行 `{"ts":"<ISO8601Z>","ev":"…","seq":…,…}`）----
+    // 2026-10-27 实读真日志得出的形状；值全是假的，但行头顺序、子代理事件的 id/role/taskSeal 都照真的写。
+    // 子代理的**结束事件名字随宿主机版本**（本仓只实读过 child:spawn / child:start），所以代码不认名字：
+    //   任何非 spawn/start 的 child:* 都算收工；夹具这里用 child:end 仅作代表。
+    private static string MakeLogDir() {
+      string d = Path.Combine(Path.GetTempPath(), "board-log-" + Guid.NewGuid().ToString("N"));
+      Directory.CreateDirectory(d);
+      return d;
+    }
+    private static string Iso(long ms) {
+      return DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime
+        .ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+    }
+    private static string LogLine(long ms, string ev, int seq, string extra) {
+      return "{\"ts\":\"" + Iso(ms) + "\",\"ev\":\"" + ev + "\",\"seq\":" + seq
+        + (string.IsNullOrEmpty(extra) ? "" : "," + extra) + "}\n";
+    }
+    private static string LogPath(string dir) {
+      return Path.Combine(dir, "agent-" + DateTime.Today.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + ".log");
+    }
+    private static void WriteLog(string dir, string kind, long now) {
+      var sb = new StringBuilder();
+      int seq = 1;
+      long head = kind == "stale" ? now - 40 * 60000 : now - 5 * 60000;
+      sb.Append(LogLine(head, "turn:start", seq++, "\"kind\":\"user\""));
+      sb.Append(LogLine(head + 1000, "llm:start", seq++,
+        "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"stage\":\"turn\",\"turn\":1,\"auto\":false"));
+      sb.Append(LogLine(head + 3000, "llm:done", seq++,
+        "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":2000,\"stage\":\"turn\",\"turn\":1,\"auto\":false,\"head\":\"\",\"len\":0,\"finish\":\"tool_calls\",\"tools\":1"));
+      if (kind == "children") {
+        sb.Append(LogLine(head + 4000, "child:spawn", seq++,
+          "\"role\":\"coder\",\"id\":\"coder#1\",\"kind\":\"async\",\"status\":\"running\",\"ms\":0,\"taskSeal\":\"cef5c2e66b4e\""));
+        sb.Append(LogLine(head + 4001, "child:start", seq++, "\"role\":\"coder\",\"id\":\"coder#1\",\"taskSeal\":\"cef5c2e66b4e\""));
+        sb.Append(LogLine(head + 5000, "tool:call", seq++, "\"tool\":\"subagent\""));
+        sb.Append(LogLine(now - 20 * 1000, "child:spawn", seq++,
+          "\"role\":\"coder\",\"id\":\"coder#2\",\"kind\":\"async\",\"status\":\"running\",\"ms\":0,\"taskSeal\":\"77aa0133be21\""));
+        sb.Append(LogLine(now - 20 * 1000 + 1, "child:start", seq++, "\"role\":\"coder\",\"id\":\"coder#2\",\"taskSeal\":\"77aa0133be21\""));
+        sb.Append(LogLine(now - 10 * 1000, "child:end", seq++, "\"role\":\"coder\",\"id\":\"coder#1\",\"status\":\"done\""));
+        sb.Append(LogLine(now - 5 * 1000, "tool:call", seq++, "\"tool\":\"read\""));
+        File.WriteAllText(LogPath(dir), sb.ToString(), PanelControl.Utf8NoBom);
+        return;
+      }
+      long last = kind == "stale" ? now - 40 * 60000 : now - 30 * 1000;
+      if (kind == "ended") sb.Append(LogLine(last, "turn:end", seq++, "\"kind\":\"user\",\"ms\":98000,\"result\":\"ok\""));
+      else sb.Append(LogLine(last, "tool:call", seq++, "\"tool\":\"read\""));
+      File.WriteAllText(LogPath(dir), sb.ToString(), PanelControl.Utf8NoBom);
+    }
+
+    // ---- 余额历史夹具：字段名与层级照真文件（data/history/<平台>.jsonl）----
+    private static void WriteHistory(string dir, string key, long[] ts, double[] val) {
+      string hd = Path.Combine(Path.Combine(dir, "data"), "history");
+      Directory.CreateDirectory(hd);
+      var inv = System.Globalization.CultureInfo.InvariantCulture;
+      var sb = new StringBuilder();
+      for (int i = 0; i < ts.Length; i++) {
+        string v = val[i].ToString("0.########", inv);
+        if (key == "glm") {
+          sb.Append("{\"ts\":").Append(ts[i]).Append(",\"ok\":true,\"keySource\":\"ThinCoder 配置\",\"customerName\":null,\"balance\":").Append(v)
+            .Append(",\"availableBalance\":").Append(v)
+            .Append(",\"rechargeAmount\":0,\"giveAmount\":0,\"totalSpendAmount\":0,\"frozenBalance\":0,\"creditStatus\":\"NOT_OPEN\",\"packs\":[]}\n");
+        } else {
+          sb.Append("{\"ts\":").Append(ts[i]).Append(",\"ok\":true,\"isAvailable\":true,\"currency\":\"CNY\",\"totalBalance\":").Append(v)
+            .Append(",\"grantedBalance\":0,\"toppedUpBalance\":").Append(v).Append("}\n");
+        }
+      }
+      File.WriteAllText(Path.Combine(hd, key + ".jsonl"), sb.ToString(), PanelControl.Utf8NoBom);
     }
 
     private static string MakeFixtureDir() {

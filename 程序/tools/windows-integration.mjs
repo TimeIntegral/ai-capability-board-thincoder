@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -15,6 +16,71 @@ export function powershell(script) {
 const QUICK_OLD = ['快捷操作\\立即采集一次.vbs', '运行采集.vbs'];
 const TRAY_OLD = ['程序\\tools\\tray.ps1', 'tools\\tray.ps1'];
 const PROTOCOL_OLD = ['程序\\运行协议.vbs', '运行协议.vbs'];
+
+// ── 悬浮看板的开机自启快捷方式：建与删都住在这里（唯一出处）──────────────────
+// 2026-10-27 真机实查的根因：install.mjs 那段 JS 模板字符串把路径分隔符写成了单反斜杠——
+//   `"$startup\${SHORTCUT_NAME} 悬浮看板.lnk"` 里的 `\$` 被 JS 解释成「字面量 $」：
+//   ① 分隔符没了；② `${SHORTCUT_NAME}` 原样丢给 PowerShell，而它是个未定义变量（= 空）。
+//   于是 lnk 落到 **Programs 目录**、名叫「Startup 悬浮看板.lnk」——开机永远不执行。
+//   真机上它就在那儿（Start Menu\\Programs\\Startup 悬浮看板.lnk，09/27 22:31:09，比托盘那个晚 4 秒），
+//   而 Startup 目录里只有托盘。所以这里用 \\ 出真反斜杠，并且**建成后读回来逐项核对**：
+//   WScript.Shell 的 Save 是静默失败的（路径不对、名字不对都只当没发生），不核对就等于没验证。
+export const PANEL_SHORTCUT = 'AI 能力看板 悬浮看板';
+// 上面那个 bug 造出来的错名文件：它在 Programs 里、名字却以 Startup 开头；怎么都不会被执行，见到就清。
+export const PANEL_SHORTCUT_BAD = 'Startup 悬浮看板';
+
+export function 写面板自启快捷方式(root, { 启用 = true, 启动目录 = '' } = {}) {
+  const abs = path.resolve(root);
+  const vbs = path.join(abs, '快捷操作', '悬浮看板.vbs');
+  const icon = path.join(abs, 'icon.ico');
+  const startup = 启动目录 ? `'${path.resolve(启动目录).replace(/'/g, "''")}'` : "[Environment]::GetFolderPath('Startup')";
+  const out = powershell(`
+# stdout 用 UTF-8：路径里有中文，按控制台默认代码页（936）回传就会变成乱码，
+#   回执里的路径 JS 侧对不上盘（真机上表现为「建成了却说没建成」）
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$root = '${abs.replace(/'/g, "''")}'
+$vbs = '${vbs.replace(/'/g, "''")}'
+$icon = '${icon.replace(/'/g, "''")}'
+$enabled = ${启用 ? '$true' : '$false'}
+$startup = ${startup}
+$wscript = Join-Path $env:SystemRoot 'system32\\wscript.exe'
+$ws = New-Object -ComObject WScript.Shell
+$file = Join-Path $startup '${PANEL_SHORTCUT}.lnk'
+# 错名文件：无论开关都先清（它本身永远不会被执行；这也是它存在过的证据）
+$bad = Join-Path ([Environment]::GetFolderPath('Programs')) '${PANEL_SHORTCUT_BAD}.lnk'
+$badGone = $false
+if (Test-Path -LiteralPath $bad) {
+  $l = $ws.CreateShortcut($bad)
+  if ($l.WorkingDirectory -eq $root) { Remove-Item -LiteralPath $bad -Force; $badGone = $true }
+}
+if (-not $enabled) {
+  if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
+  Write-Output ('off|' + $file + '|' + $badGone)
+  exit 0
+}
+if (-not (Test-Path -LiteralPath $vbs)) { throw "找不到 $vbs（悬浮看板的启动脚本不在，不能建开机自启）" }
+if (-not (Test-Path -LiteralPath $wscript)) { throw "找不到 $wscript" }
+$lnk = $ws.CreateShortcut($file)
+$lnk.TargetPath = $wscript
+$lnk.Arguments = '"' + $vbs + '"'
+$lnk.WorkingDirectory = $root
+if (Test-Path -LiteralPath $icon) { $lnk.IconLocation = $icon }
+$lnk.Description = '${PANEL_SHORTCUT}（开机自动出现）'
+$lnk.Save()
+# 读回来核对：建错位置/建错名字/没写成，全在这里暴露
+if (-not (Test-Path -LiteralPath $file)) { throw "快捷方式没建成：$file" }
+$back = $ws.CreateShortcut($file)
+if ($back.TargetPath -ne $wscript) { throw "快捷方式指向不对：$($back.TargetPath)（期望 $wscript）" }
+if ($back.Arguments -notlike ('*' + $vbs + '*')) { throw "快捷方式参数不对：$($back.Arguments)" }
+if ($back.WorkingDirectory -ne $root) { throw "快捷方式工作目录不对：$($back.WorkingDirectory)" }
+Write-Output ('on|' + $file + '|' + $badGone)
+`);
+  const line = out.trim().split(/\r?\n/).filter(l => l.startsWith('on|') || l.startsWith('off|')).pop() ?? '';
+  const [state, file, badGone] = line.split('|');
+  if (!state) throw new Error(`自启快捷方式没有回执：${out}`);
+  if (state === 'on' && !fs.existsSync(file)) throw new Error(`自启快捷方式没建成：${file}`);
+  return { enabled: state === 'on', file, removedLegacy: badGone === 'True' };
+}
 
 // Only touch registrations belonging to this installation. A developer checkout can coexist.
 export function stopOwned(root, { remove = false, isolated = false } = {}) {
@@ -61,13 +127,21 @@ Get-CimInstance Win32_Process | Where-Object {
 ${remove ? `
 $ws = New-Object -ComObject WScript.Shell
 foreach ($folder in @([Environment]::GetFolderPath('Desktop'),[Environment]::GetFolderPath('Startup'))) {
-  foreach ($name in @('AI 能力看板','AI 额度看板','AI 能力看板 托盘','AI 额度看板 托盘')) {
+  # 2026-10-27 补上「悬浮看板」那一个：以前卸载只删托盘，悬浮看板的 lnk 留在启动文件夹里，
+  #   卸载完下次开机又把面板拉起来（与删除套件自相矛盾）。
+  foreach ($name in @('AI 能力看板','AI 额度看板','AI 能力看板 托盘','AI 额度看板 托盘','${PANEL_SHORTCUT}','AI 额度看板 悬浮看板')) {
     $file = Join-Path $folder ($name + '.lnk')
     if (Test-Path -LiteralPath $file) {
       $link = $ws.CreateShortcut($file)
       if ($link.WorkingDirectory -eq $root) { Remove-Item -LiteralPath $file -Force }
     }
   }
+}
+# 老版本 bug 造出来的错名文件（落在 Programs 里，名叫「Startup 悬浮看板」）：卸载时一并清
+$badPanel = Join-Path ([Environment]::GetFolderPath('Programs')) '${PANEL_SHORTCUT_BAD}.lnk'
+if (Test-Path -LiteralPath $badPanel) {
+  $link = $ws.CreateShortcut($badPanel)
+  if ($link.WorkingDirectory -eq $root) { Remove-Item -LiteralPath $badPanel -Force }
 }
 $key = 'HKCU:\\Software\\Classes\\aiquotaboard'
 $commandKey = Join-Path $key 'shell\\open\\command'

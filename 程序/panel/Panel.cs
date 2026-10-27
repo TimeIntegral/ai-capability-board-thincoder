@@ -66,6 +66,7 @@ namespace Board {
     private readonly Dictionary<string, TextBlock> balAmtTxt = new Dictionary<string, TextBlock>();
     private readonly Dictionary<string, TextBlock> balNameTxt = new Dictionary<string, TextBlock>();
     private readonly Dictionary<string, TextBlock> balMarkTxt = new Dictionary<string, TextBlock>();
+    private readonly Dictionary<string, TextBlock> balCadTxt = new Dictionary<string, TextBlock>();
     private readonly Dictionary<string, TextBlock> balDashTxt = new Dictionary<string, TextBlock>();
     private int builtBalN = -1;
 
@@ -158,9 +159,14 @@ namespace Board {
       BrushCache[color] = b;
       return b;
     }
-    private static readonly FontFamily UiFont = new FontFamily("Segoe UI, Microsoft YaHei UI");
-    private static readonly FontFamily MonoFont = new FontFamily("Consolas, Microsoft YaHei UI");
-    private static readonly FontFamily MonoUiFont = new FontFamily("Consolas, Microsoft YaHei UI");
+    internal static readonly FontFamily UiFont = new FontFamily("Segoe UI, Microsoft YaHei UI");
+    internal static readonly FontFamily MonoFont = new FontFamily("Consolas, Microsoft YaHei UI");
+    internal static readonly FontFamily MonoUiFont = new FontFamily("Consolas, Microsoft YaHei UI");
+    // 新增两行的槽宽（唯一出处：排版用它，自检 T34 用同一组数测「最长的文案装不装得下」）
+    internal const double CAD_W = 200.0;    // 余额节奏行（中型面板每家一行）
+    internal const double CHILD_W = 121.0;  // 子代理行（中型面板 D 段右侧）
+    internal const double TURNS_W = 50.0;   // 卡片第三行右侧的「N 轮」
+    internal const double TIMER_W = 82.0;   // 卡片第三行的计时
 
     private static TextBlock Txt(double x, double y, double w, string text, double size, string color) {
       return Txt(x, y, w, text, size, color, "Left", "Normal", UiFont, null);
@@ -318,6 +324,10 @@ namespace Board {
           var am = Txt(PAD, yC - 1, W - PAD * 2, g.amountText, 12, g.amountColor, "Right", "SemiBold", MonoUiFont, null);
           panelBox.Children.Add(nm); panelBox.Children.Add(mk); panelBox.Children.Add(am);
           balNameTxt[g.key] = nm; balMarkTxt[g.key] = mk; balAmtTxt[g.key] = am;
+          // 余额节奏（只放中型面板、mini 不放）：「最近 ¥10 用了多久」。
+          // 位置在名称行下面、右对齐（向右不长，长文本往左的空地耗，压不到上面那行金额）
+          var cd = Txt(PAD, yC + 14, CAD_W, "", 8, "#6E7581", "Right", "Normal", UiFont, null);
+          panelBox.Children.Add(cd); balCadTxt[g.key] = cd;
           bi++;
         }
       }
@@ -339,7 +349,11 @@ namespace Board {
       panelBox.Children.Add(dot);
       statusWord = Txt(PAD + 13, L.Y_D_TEXT, 140, "—", 10.5, "#6E7581");
       panelBox.Children.Add(statusWord);
+      // 子代理：只在「确实有在跑的」时候占位（0 个 / 推不出来 → 空串，不上屏）
+      childLine = Txt(W - PAD - CHILD_W, L.Y_D_TEXT + 2.5, CHILD_W, "", 7.5, "#8A909C", "Right", "Normal", UiFont, null);
+      panelBox.Children.Add(childLine);
     }
+    private TextBlock childLine;   // 中型面板：子代理 N 个在跑 · 最长 X
 
     private UIElement BuildRing(double cx, double cy, double r, double t, string label, out Path arc, out TextBlock txt) {
       var box = new Canvas();
@@ -391,9 +405,13 @@ namespace Board {
       cardBranch.Children.Add(ageText);
       cardProjName = Txt(B + COL2, B + 21.5, W - COL2 - EDGE_PAD, "—", 12.5, "#12151A", "Left", "SemiBold", UiFont, "ellipsis");
       cardBranch.Children.Add(cardProjName);
-      cardBranch.Children.Add(Txt(B + COL2, B + 47.0, 24, "会话", 9.5, "#8A909C"));
-      timer = Txt(B + COL2 + 26, B + 38.5, W - COL2 - 26 - EDGE_PAD, "—", 16.5, "#12151A", "Left", "SemiBold", MonoFont, null);
+      cardLabel = Txt(B + COL2, B + 47.0, 14, "已", 9.5, "#8A909C");
+      cardBranch.Children.Add(cardLabel);
+      timer = Txt(B + COL2 + 14, B + 38.5, TIMER_W, "", 16.5, "#12151A", "Left", "SemiBold", MonoFont, null);
       cardBranch.Children.Add(timer);
+      // 本会话轮次（新一轮：从会话 manifest 的 turnCount 来；读不到就不显示）
+      cardTurns = Txt(B + W - EDGE_PAD - TURNS_W, B + 46.0, TURNS_W, "", 9, "#8A909C", "Right", "Normal", UiFont, null);
+      cardBranch.Children.Add(cardTurns);
       var balRingBox = new Canvas();
       Canvas.SetLeft(balRingBox, B + 12); Canvas.SetTop(balRingBox, B + 61.0);
       balRingBox.Width = W - 24; balRingBox.Height = 2 * 6.25 + 3.0;
@@ -405,7 +423,7 @@ namespace Board {
       cardBranch.Children.Add(balAmt);
     }
     private Ellipse cardDot;
-    private TextBlock cardStatusWord, cardProjName;
+    private TextBlock cardStatusWord, cardProjName, cardTurns, cardLabel;
     private Canvas cardBalBox;
 
     // ==================== 排版 / 形态 ====================
@@ -428,7 +446,7 @@ namespace Board {
       if (model == null) return false;
       if (model.balN == builtBalN) return false;
       panelBox.Children.Clear();
-      balBox.Clear(); balAmtTxt.Clear(); balNameTxt.Clear(); balMarkTxt.Clear(); balDashTxt.Clear();
+      balBox.Clear(); balAmtTxt.Clear(); balNameTxt.Clear(); balMarkTxt.Clear(); balDashTxt.Clear(); balCadTxt.Clear();
       BuildPanelContent();
       builtBalN = model.balN;
       return true;
@@ -639,6 +657,14 @@ namespace Board {
       var bc = MicroBalText(model);
       if (balCap != null) { balCap.Text = bc.cap; balCap.Foreground = Brush(bc.capColor); }
       if (balAmt != null) { balAmt.Text = bc.amt; balAmt.Foreground = Brush(bc.amtColor); }
+      // 余额节奏：每家一行「最近 ¥10 用了多久」（只在能算出来时有字；算不出 = 空串，不上屏）
+      foreach (var g in model.balView.groups) {
+        TextBlock t;
+        if (!balCadTxt.TryGetValue(g.key, out t) || t == null) continue;
+        var cad = model.CadenceOf(g.key);
+        t.Text = cad.ok ? cad.text : "";
+        SetDim(t, fr.StaleOf(g.key));
+      }
 
       var sigParts = new List<string>();
       foreach (var g in model.balView.groups) sigParts.Add(g.key + "|" + g.sig);
@@ -650,18 +676,20 @@ namespace Board {
     private string balSigAll = "";
 
     private void StyleStatus(Fresh fr, bool first) {
-      string word = model.status.word, color = model.status.color;
+      string word = model.progress.word, color = model.progress.color;
       if (statusWord != null) { statusWord.Text = word; statusWord.Foreground = Brush(color); statusWord.Opacity = 1.0; }
+      if (childLine != null) childLine.Text = model.progress.ChildText();
       if (cardStatusWord != null) { cardStatusWord.Text = word; cardStatusWord.Foreground = Brush(color); cardStatusWord.Opacity = 1.0; }
       if (cardDot != null) { cardDot.Fill = Brush(color); cardDot.Opacity = 1.0; }
       if (dot != null) {
         dot.Opacity = 1.0;
-        if (model.status.kind == "done" || model.status.kind == "none") { dot.Stroke = Brush(color); dot.Fill = null; dot.StrokeThickness = 1.4; }
+        if (model.progress.state == "idle") { dot.Stroke = Brush(color); dot.Fill = null; dot.StrokeThickness = 1.4; }
         else { dot.Fill = Brush(color); dot.Stroke = null; }
       }
       if (projName != null) projName.Opacity = 1.0;
       if (ageText != null) { ageText.Text = "写入 " + MicroAge() + " 前"; ageText.Opacity = 1.0; }
       if (timer != null) timer.Opacity = 1.0;
+      if (cardTurns != null) cardTurns.Opacity = 1.0;
       if (cardProjName != null) cardProjName.Text = model.projName;
     }
 
@@ -766,12 +794,18 @@ namespace Board {
       }
     }
 
-    // 会话计时 / 写入龄期（每秒走；状态永远实时）
+    // 当前进展（每秒走；状态永远实时——陈旧只压读数，不压这里）
+    // 日志读不到时：计时与轮次**整行不显示**（不是 0、也不是「—」）
     public void UpdateClock() {
       if (model == null) return;
-      if (timer != null) {
-        double el = model.SessionElapsedSec();
-        timer.Text = el < 0 ? "—" : Fmt.Duration(el);
+      var pg = model.progress;
+      string el = pg.ElapsedText();
+      bool show = pg.ShowTiming;
+      if (timer != null) { timer.Text = el; timer.Visibility = show ? Visibility.Visible : Visibility.Collapsed; }
+      if (cardLabel != null) cardLabel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+      if (cardTurns != null) {
+        cardTurns.Text = pg.haveTurns ? pg.turns + " 轮" : "";
+        cardTurns.Visibility = show && pg.haveTurns ? Visibility.Visible : Visibility.Collapsed;
       }
       if (ageText != null) ageText.Text = "写入 " + MicroAge() + " 前";
     }
@@ -838,7 +872,7 @@ namespace Board {
       try {
         var act = Activity.Read();
         lastActivityMax = act.maxMs;
-        model.status = StatusLogic.Compute(Fmt.NowMs(), act.sessionMs, act.logMs, act.peerMs, act.livePeers, model.sess.todaySessions);
+        model.RefreshLive(act.livePeers > 0);
         StyleStatus(model.Freshness(), false);
         UpdateClock();
       } catch (Exception ex) { stepErrors.Add("ReloadStatus: " + ex.Message); }
@@ -1342,6 +1376,12 @@ namespace Board {
       d["statusWord"] = cardStatusWord.Text + "@" + Fmt.Num(Math.Round(cardStatusWord.Opacity, 2));
       d["panelStatusWord"] = statusWord.Text + "@" + Fmt.Num(Math.Round(statusWord.Opacity, 2));
       d["timer"] = timer.Text + "@" + Fmt.Num(Math.Round(timer.Opacity, 2));
+      d["timerVisible"] = timer.Visibility == Visibility.Visible ? "1" : "0";
+      d["cardTurns"] = cardTurns == null ? "—" : (cardTurns.Text + (cardTurns.Visibility == Visibility.Visible ? "" : "(隐藏)"));
+      d["childLine"] = childLine == null ? "—" : childLine.Text;
+      var cads = new List<string>();
+      foreach (var kv in balCadTxt) cads.Add(kv.Key + "=" + (kv.Value == null ? "" : kv.Value.Text));
+      d["cadence"] = cads.Count == 0 ? "—" : string.Join(" / ", cads.ToArray());
       d["ageText"] = ageText.Text + "@" + Fmt.Num(Math.Round(ageText.Opacity, 2));
       d["dot"] = Fmt.Num(Math.Round(cardDot.Opacity, 2));
       int arcs = 0, dim = 0;

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { powershell, psQuote, stopOwned } from './windows-integration.mjs';
+import { powershell, psQuote, stopOwned, 写面板自启快捷方式, PANEL_SHORTCUT } from './windows-integration.mjs';
 import { 分类, 从stage推导 } from '../../release/publish-files.mjs';
 import { 树类型 } from '../../release/git-tree.mjs';
 
@@ -113,11 +113,22 @@ test('T16 上屏文本 ⊆ 固定词表（无解释性句子）', { skip: skip�
     /^今天 0 轮 · 读不到会话记录$/,
     /^近 7 天 \d+ 轮 · \d+ 个会话（(attribution\.json|现算)）$/,
     /^近 7 天 —$/,
-    /^(正在运行|等你回答|已完成|今天没用过)$/,
+    /^(正在干活|等你回答|空闲)$/,
     /^写入 (\d+[smhd]|\d+h\d{2}m|—) 前$/,
-    /^会话$/,
-    /^(\d+:)?\d{2}:\d{2}$/,
+    // 2026-10-27：「会话 H:MM:SS」（其实是进程年龄，误导）换成从日志推的当前进展
+    /^已 (\d+:)?\d{2}:\d{2}$/,
+    /^\d+ 轮$/,
+    /^子代理 \d+ 个在跑 · 最长 .+$/,
+    // 余额节奏（充值不算消耗；24 小时没花钱；两种花钱说法）
+    /^最近 ¥10 用了 .+$/,
+    /^充值后花了 ¥[\d,]+\.\d{2} · 用时 .+$/,
+    /^花了 ¥[\d,]+\.\d{2} · 用时 .+$/,
+    /^最近 24 小时没花钱$/,
   ];
+  // 旧四态与「会话」「裸计时」现已不上屏：它们还在词表里就等于给过期文案留了后门
+  const 已废弃 = [/^会话$/, /^(正在运行|已完成|今天没用过)$/, /^(\d+:)?\d{2}:\d{2}$/];
+  const 遗留 = r.screens.filter(t => 已废弃.some(re => re.test(t.trim())));
+  assert.deepEqual(遗留, [], `旧文案又冒出来了：\n  ${遗留.join('\n  ')}`);
   const 越界 = r.screens.filter(t => t.trim() && !词表.some(re => re.test(t.trim())));
   assert.deepEqual(越界, [], `这些上屏文本不在词表里（可能是解释性文字）：\n  ${越界.join('\n  ')}`);
   // 项目名是目录名（开放集）：不当词表比对，但要像目录名（不是一句话）
@@ -252,6 +263,75 @@ test('T18b 升级针行为：面板在跑时 stopOwned 真的把它停掉（不�
     powershell(`Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'board.exe' -and $_.ExecutablePath -ieq ${psQuote(EXE)} } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
     try { fs.unlinkSync(状态); } catch { }
   }
+});
+
+test('T35 开机自启：悬浮看板的 lnk 真进启动文件夹，卸载时真能清掉', { skip: skip若未编译() }, () => {
+  // 2026-10-27 真机根因：install.mjs 模板字符串里 `\$` 写成了单反斜杠 —— lnk 落到 Programs 目录、
+  //   名叫「Startup 悬浮看板.lnk」，开机永远不执行（真机上那个文件就是证据）。
+  // 这条用例不只看源码：真建一次、读回三项、再让卸载路径真删一次。
+  const 启动目录 = path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+  const lnk = path.join(启动目录, PANEL_SHORTCUT + '.lnk');
+  const 状态 = path.join(process.env.LOCALAPPDATA ?? '', 'AICapabilityBoard', 'panel-state.json');
+  const 状态备份 = fs.existsSync(状态) ? fs.readFileSync(状态) : null;
+  const tmpRoot = fs.mkdtempSync(path.join(process.env.TEMP, 'board-auto-'));
+  const 读快捷方式 = file => {
+    const out = powershell(`
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$ws = New-Object -ComObject WScript.Shell
+$l = $ws.CreateShortcut(${psQuote(file)})
+Write-Output $l.TargetPath
+Write-Output $l.Arguments
+Write-Output $l.WorkingDirectory
+`).replace(/\r/g, '').split('\n');
+    return { TargetPath: out[0] ?? '', Arguments: out[1] ?? '', WorkingDirectory: out[2] ?? '' };
+  };
+  const 错名 = path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup 悬浮看板.lnk');
+  const 错名本来就有 = fs.existsSync(错名);
+  try {
+    fs.mkdirSync(path.join(tmpRoot, '快捷操作'), { recursive: true });
+    fs.copyFileSync(path.join(ROOT, '快捷操作', '悬浮看板.vbs'), path.join(tmpRoot, '快捷操作', '悬浮看板.vbs'));
+    fs.mkdirSync(path.join(tmpRoot, '程序', 'bin'), { recursive: true });
+    fs.copyFileSync(EXE, path.join(tmpRoot, '程序', 'bin', 'board.exe'));
+    assert.ok(!fs.existsSync(lnk), `测试前启动文件夹里就有 ${lnk}，不碰它 —— 先人工清掉再跑`);
+
+    // ① 建：真落到启动文件夹，且三项都对
+    const 建 = 写面板自启快捷方式(tmpRoot);
+    assert.equal(建.enabled, true, '自启没有建成');
+    assert.equal(path.resolve(建.file).toLowerCase(), path.resolve(lnk).toLowerCase(), `自启 lnk 落题位置不对：${建.file}`);
+    assert.ok(fs.existsSync(lnk), `启动文件夹里没有 ${PANEL_SHORTCUT}.lnk —— 开机不会自启`);
+    const 指向 = 读快捷方式(lnk);
+    assert.equal(指向.TargetPath.toLowerCase(), path.join(process.env.SystemRoot, 'system32', 'wscript.exe').toLowerCase(), `lnk 指向不对：${指向.TargetPath}`);
+    assert.ok(指向.Arguments.includes('悬浮看板.vbs'), `lnk 参数不对：${指向.Arguments}`);
+    assert.equal(path.resolve(指向.WorkingDirectory).toLowerCase(), path.resolve(tmpRoot).toLowerCase(), `lnk 工作目录不对：${指向.WorkingDirectory}`);
+    // 旧 bug 造出来的错名文件：我们这一次不许**再新造**一个。
+    // （真机上它还在 —— 那是历史遗留，归它自己那个安装目录去清；测试不碰别人的 lnk）
+    assert.equal(fs.existsSync(错名), 错名本来就有, `错名文件的存在状态被改变了：${错名}`);
+
+    // ② 关开关：启动文件夹里的 lnk 必须消失
+    const 关 = 写面板自启快捷方式(tmpRoot, { 启用: false });
+    assert.equal(关.enabled, false);
+    assert.ok(!fs.existsSync(lnk), '关掉自启之后 lnk 还在（下次开机还会把面板拉起来）');
+
+    // ③ 再建一次，交给卸载那条路清（真实卸载就是调 stopOwned(remove)）
+    写面板自启快捷方式(tmpRoot);
+    assert.ok(fs.existsSync(lnk));
+    stopOwned(tmpRoot, { remove: true });
+    assert.ok(!fs.existsSync(lnk), '卸载后悬浮看板的 lnk 还留在启动文件夹里（与「删套件」自相矛盾）');
+  } finally {
+    try { if (fs.existsSync(lnk)) fs.unlinkSync(lnk); } catch { }
+    try { if (状态备份 === null) { if (fs.existsSync(状态)) fs.unlinkSync(状态); } else fs.writeFileSync(状态, 状态备份); } catch { }
+    try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { }
+  }
+});
+
+// 源码级回归针：install.mjs 里再出现 `\${...`（JS 模板字符串把 ${...} 转义成字面量）
+//   就说明路径又会拼错 —— 历史缺陷就是这个形状，不靠人眼盯。
+test('T35b install.mjs 不再把 ${...} 在模板字符串里转义（路径拼错的老毛病）', () => {
+  const t = 读('程序/tools/install.mjs') ?? '';
+  // 只认「落单的反斜杠 + ${」（`\\${` 是真反斜杠 + 插值，是对的；奇偶要看前一个字符）
+  assert.ok(!/(?<!\\)\\\$\{/.test(t), 'install.mjs 里又出现了 `\\${...}`：JS 会把它当字面量丢给 PowerShell（变量未定义 = 空，且分隔符丢失）');
+  assert.ok(t.includes('写面板自启快捷方式'), 'install.mjs 的悬浮看板自启应当走 windows-integration.mjs 里的唯一实现');
+  assert.ok((读('程序/tools/windows-integration.mjs') ?? '').includes("'${PANEL_SHORTCUT}'"), '卸载侧也要认悬浮看板那个 lnk 名');
 });
 
 test('T19 入口与纪律：.vbs 纯 ASCII、指向正确；先看我.txt 有入口；面板不读密钥', () => {
