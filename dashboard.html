@@ -1263,7 +1263,8 @@ function renderRangeStats() {
       const perDay = spend / days;
       const avgGap = (rows[rows.length - 1][0] - rows[0][0]) / (rows.length - 1);
       const stall = stallMs(rows.map(p => p[0]), gapMsFor('balance'));
-      parts.push(['余额变化', `¥${first.toFixed(2)} → ¥${last.toFixed(2)}`, spend > 0 ? `（净消耗 ¥${spend.toFixed(2)}）` : '（无下降段）']);
+      // 净消耗在前、区间在后：先说结论（花了多少），括号里才是区间（从多少到多少）
+      parts.push(['净消耗', `¥${spend.toFixed(2)}`, `（¥${first.toFixed(2)} → ¥${last.toFixed(2)}）`]);
       parts.push(['日均消耗', `¥${perDay.toFixed(2)}`, '']);
       parts.push(['按此速率可用', last > 0 ? `${Math.max(0, Math.floor(last / perDay))} 天` : '已耗尽', '']);
       parts.push(['采样点', `${rows.length}`, `（平均间隔 ${(avgGap / 60000).toFixed(1)} 分钟）`]);
