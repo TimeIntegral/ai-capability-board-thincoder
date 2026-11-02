@@ -158,12 +158,20 @@ function secretsFile() {
   } catch { throw credentialError('secrets.json 解析失败：不是合法 JSON，请检查文件格式'); }
 }
 
+// ThinCoder 配置里的密钥可能是 ${env:NAME} 引用（凭据外置后）；解析为用户环境变量，解析不到交给下一路
+function resolveEnvRef(v) {
+  if (typeof v !== 'string') return null;
+  const m = v.match(/^\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/);
+  if (!m) return v;
+  return process.env[m[1]] || null;
+}
+
 // ThinCoder 配置（向后兼容：装了 ThinCoder 的用户继续免配置）；读不到 / 没有该 provider → null，交给下一路
 function thinCoderApiKey(platform, cfgPath) {
   if (!cfgPath || !fs.existsSync(cfgPath)) return null;
   let cfg;
   try { cfg = thinCoderConfig(cfgPath); } catch { return null; }
-  return validKey(cfg?.providers?.find(x => x?.name === platform)?.apiKey);
+  return validKey(resolveEnvRef(cfg?.providers?.find(x => x?.name === platform)?.apiKey));
 }
 
 // API Key 解析（按优先级）：① 项目根 secrets.json ② ThinCoder 配置 ③ 环境变量 DEEPSEEK_API_KEY / GLM_API_KEY
