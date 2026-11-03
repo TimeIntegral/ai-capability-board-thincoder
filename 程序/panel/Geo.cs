@@ -62,7 +62,9 @@ namespace Board {
   }
 
   internal static class Geo {
-    public const double CARD_W = 228.0, CARD_H = 90.0, CARD_R = 14.0, CARD_BLEED = 22.0;
+    // 2026-11-03 方案 ①：卡片加高 90 → 100 DIP，换「Codex 5h」下面那行「下次重置 HH:MM」；宽度 228 不变。
+    //   窗口矩形 = 卡片 + 出血 22×2（下面 Micro() 直接由这两个常量算出来，所以它跟着变成 272 × 144）。
+    public const double CARD_W = 228.0, CARD_H = 100.0, CARD_R = 14.0, CARD_BLEED = 22.0;
     public const double CARD_RING_CX = 34.0, CARD_RING_CY = 27.0, CARD_RING_R = 19.0;
     public const double SLIVER_W = 8.0, SLIVER_R = 4.0, SLIVER_RF = 6.0;
     public const double PANEL_W = 232.0, PANEL_R = 16.0, PANEL_RF = 14.0;

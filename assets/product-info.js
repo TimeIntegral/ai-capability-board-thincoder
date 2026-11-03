@@ -1,1 +1,1 @@
-window.BOARD_PRODUCT={"version":"1.6.6","channels":{"github":"https://github.com/TimeIntegral/ai-capability-board-thincoder","gitee":"","community":"https://github.com/TimeIntegral/ai-capability-board-thincoder/blob/main/docs/community.md"}};
+window.BOARD_PRODUCT={"version":"1.6.7","channels":{"github":"https://github.com/TimeIntegral/ai-capability-board-thincoder","gitee":"","community":"https://github.com/TimeIntegral/ai-capability-board-thincoder/blob/main/docs/community.md"}};

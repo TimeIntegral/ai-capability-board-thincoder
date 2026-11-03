@@ -1099,6 +1099,10 @@ namespace Board {
     public bool codexOk;
     public string fiveSub = "—", weekSub = "—", fiveSubColor = "#6E7581", weekSubColor = "#6E7581";
     public string resetLine = "—", resetColor = "#D9A05B";
+    // 卡片那行「下次重置 HH:MM」（2026-11-03 方案 ①）：cardResetAt = 0 表示**这一行整行不显示**
+    //   （读不到 / 已经过去都是 0，不写占位符、不猜、不写「—」）；cardResetWhy 只进布局树读数，不上屏。
+    public long cardResetAt;
+    public string cardResetWhy = "";
     public string snapText = "";
     public string lastText = "—", todayLine = "今天 0 轮 · 读不到会话记录", weekLine = "近 7 天 —";
     public int todayTurns;
@@ -1180,6 +1184,14 @@ namespace Board {
         fiveSub = "—"; weekSub = "—"; fiveSubColor = "#6E7581"; weekSubColor = "#6E7581";
         resetLine = "读不到 dashboard-data.js：" + cx.err; resetColor = "#D9A05B";
       }
+      // 卡片那行「下次重置 HH:MM」（2026-11-03 方案 ①）：只写本地时刻（Fmt.HM 走本地时区）。
+      //   读不到（额度整块读不到 / 缺 resetAt）或**已经过去**（≤ 现在）→ 这一行整行不显示 ——
+      //   不写占位符、不猜、不写「—」；「已过去」也不印，否则会把 4 天前的重置说成「下次」。
+      cardResetAt = 0;
+      if (!cx.ok) cardResetWhy = "不显示：额度整块读不到";
+      else if (cx.fiveResetAt <= 0) cardResetWhy = "不显示：fiveHour.resetAt 缺失";
+      else if (cx.fiveResetAt <= now) cardResetWhy = "不显示：resetAt 已过去（" + Fmt.HM(cx.fiveResetAt) + "）";
+      else { cardResetAt = cx.fiveResetAt; cardResetWhy = "显示：" + Fmt.HM(cardResetAt); }
       // C 段：今天 · 这个项目
       if (proj != null) {
         lastText = Fmt.MD(proj.lastMs);

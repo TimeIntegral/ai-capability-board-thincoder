@@ -44,6 +44,7 @@ namespace Board {
         Section("T37", delegate { T37(); });
         Section("T38", delegate { T38(); });
         Section("T39", delegate { T39(); });
+        Section("T40", delegate { T40(); });
         Section("T14", delegate { T14(dir); });
         Section("T15", delegate { T15(); });
         Section("T16", delegate { T16(dir); });
@@ -89,7 +90,7 @@ namespace Board {
       }
       Check("T6-medium-4edges", allOk, "四条边：收起条长边 = 面板沿边那一维；窗口 " + allDetail);
       var mg = Geo.Micro(100, 100, M);
-      Check("T6-micro", mg.card.w == 228.0 && mg.card.h == 90.0 && mg.win.w == 272.0 && mg.win.h == 134.0,
+      Check("T6-micro", mg.card.w == 228.0 && mg.card.h == 100.0 && mg.win.w == 272.0 && mg.win.h == 144.0,
         "卡片 " + Fmt.Num(mg.card.w) + "x" + Fmt.Num(mg.card.h) + "，窗口 " + Fmt.Num(mg.win.w) + "x" + Fmt.Num(mg.win.h));
       // 不穿透的窗口矩形（黑洞）：贴边那侧不留血
       var gr = Geo.Medium("right", 540.0, h1, M);
@@ -657,11 +658,11 @@ namespace Board {
       double capBottom = PanelWindow.CARD_BAL_CAP_Y + capH;
       double valH = Math.Max(nameH, amtH);
       double valBottom = PanelWindow.CARD_BAL_AMT_Y + valH;
-      Check("T38-card-rows", row3Bottom + 1.0 <= PanelWindow.CARD_BAL_CAP_Y && capBottom + 1.0 <= PanelWindow.CARD_BAL_AMT_Y && valBottom <= 90.0,
+      Check("T38-card-rows", row3Bottom + 1.0 <= PanelWindow.CARD_BAL_CAP_Y && capBottom + 1.0 <= PanelWindow.CARD_BAL_AMT_Y && valBottom <= 100.0,
         "第三行底 " + Fmt.Num(Math.Round(row3Bottom, 2)) + " → 标签行顶 " + Fmt.Num(PanelWindow.CARD_BAL_CAP_Y)
         + "（距 " + Fmt.Num(Math.Round(PanelWindow.CARD_BAL_CAP_Y - row3Bottom, 2)) + "）；标签行底 " + Fmt.Num(Math.Round(capBottom, 2))
         + " → 数字行顶 " + Fmt.Num(PanelWindow.CARD_BAL_AMT_Y) + "（距 " + Fmt.Num(Math.Round(PanelWindow.CARD_BAL_AMT_Y - capBottom, 2)) + "）；数字行底 "
-        + Fmt.Num(Math.Round(valBottom, 2)) + " ≤ 卡片高 90（余 " + Fmt.Num(Math.Round(90.0 - valBottom, 2)) + "）；字高：标签 "
+        + Fmt.Num(Math.Round(valBottom, 2)) + " ≤ 卡片高 100（余 " + Fmt.Num(Math.Round(100.0 - valBottom, 2)) + "）；字高：标签 "
         + Fmt.Num(Math.Round(capH, 2)) + " / 家名 " + Fmt.Num(Math.Round(nameH, 2)) + " / 金额 " + Fmt.Num(Math.Round(amtH, 2)));
 
       // ⑩ 上面三行一个都没动：状态行 → 项目名行 → 第三行（那处只有 0.3 DIP 的余地，没被压成负数）
@@ -753,6 +754,60 @@ namespace Board {
           "夹具f：进程活着 + 事件 " + Trace(onlyOffTurn) + "（一条轮次内事件都没有）→ 「" + f.word
           + "」（logOk=" + f.logOk + "：轮次与计时不当「读不到」；判据不落到正在干活）");
       } finally { Ctx.LogDir = ""; try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    // ==================== T40 卡片「下次重置」（2026-11-03 方案 ①：卡片加高 10 DIP 换这一行）====================
+    // 口径：只写本地 HH:MM，取 codex.fiveHour.resetAt；**读不到**（额度整块读不到 / 缺 resetAt）与**已经过去**（≤ 现在）
+    //   → 这一行整行不显示（不写占位符、不猜、不写「—」）。版面：卡片 228 × 100（宽 228 不变、高 90 → 100），
+    //   新行落在「Codex 5h」行（底 59.14）与余额标签行（73.6）之间；上面三行一个都没动（状态行→项目名行仍是 0.37）。
+    private static void T40() {
+      long now = Fmt.NowMs();
+      var sess = Sessions.FromSlots(new List<SlotRec>(), now);
+      var att = new Att7();
+      var bal = new BalSnapshot();
+      long future = now + 2 * 3600000L + 37 * 60000L;   // 分钟位取 37：一眼能看出上屏的是不是真时刻
+
+      // ① 还没到点 → 显示；文字 = 「下次重置 」+ 该毫秒的本地 HH:MM
+      var c1 = new QuotaSnap(); c1.ok = true; c1.fivePct = 42.0; c1.weekPct = 10.0; c1.atMs = now; c1.fiveResetAt = future;
+      var m1 = Model.BuildFor(c1, sess, att, bal, now, new Activity());
+      string line1 = PanelWindow.CARD_RESET_LABEL + Fmt.HM(future);
+      Check("T40-reset-future", m1.cardResetAt == future && m1.cardResetWhy.StartsWith("显示")
+        && Regex.IsMatch(line1, @"^下次重置 \d{2}:\d{2}$"),
+        "resetAt=" + Fmt.HM(future) + "（本地，还没到）→ 卡片写「" + line1 + "」");
+
+      // ② 已经过去（≤ 现在）→ 整行不显示（照原话印会把 4 天前的重置说成「下次」）
+      long old = now - 4L * 86400000L;
+      var c2 = new QuotaSnap(); c2.ok = true; c2.fivePct = 42.0; c2.weekPct = 10.0; c2.atMs = now; c2.fiveResetAt = old;
+      var m2 = Model.BuildFor(c2, sess, att, bal, now, new Activity());
+      Check("T40-reset-past", m2.cardResetAt == 0 && m2.cardResetWhy.StartsWith("不显示"),
+        "resetAt=" + Fmt.HM(old) + "（4 天前）→ 这一行不显示（" + m2.cardResetWhy + "）");
+
+      // ③ 缺 resetAt → 不显示
+      var c3 = new QuotaSnap(); c3.ok = true; c3.fivePct = 42.0; c3.weekPct = 10.0; c3.atMs = now;
+      var m3 = Model.BuildFor(c3, sess, att, bal, now, new Activity());
+      Check("T40-reset-missing", m3.cardResetAt == 0 && m3.cardResetWhy.StartsWith("不显示"),
+        "fiveHour 里没有 resetAt → 这一行不显示（" + m3.cardResetWhy + "）");
+
+      // ④ 额度整块读不到 → 不显示（不猜）
+      var m4 = Model.BuildFor(new QuotaSnap(), sess, att, bal, now, new Activity());
+      Check("T40-reset-nodata", m4.cardResetAt == 0 && m4.cardResetWhy.StartsWith("不显示"),
+        "dashboard-data.js 读不到 → 这一行不显示（" + m4.cardResetWhy + "）");
+
+      // ⑤ 版面（真字体度量）：新行装得进「Codex 5h」与标签行之间；最底一行仍在卡片内
+      double codexH = MeasuredH("Codex 5h", 8.0, PanelWindow.UiFont);
+      double codexBottom = PanelWindow.CARD_RING_LABEL_Y + codexH;
+      double resetH = MeasuredH("下次重置 14:30", PanelWindow.CARD_RESET_SIZE, PanelWindow.UiFont);
+      double resetBottom = PanelWindow.CARD_RESET_Y + resetH;
+      double resetW = Measured("下次重置 14:30", PanelWindow.CARD_RESET_SIZE, PanelWindow.UiFont);
+      double bottomMost = PanelWindow.CARD_BAL_AMT_Y + MeasuredH("¥8,888.12", PanelWindow.CARD_BAL_SIZE, PanelWindow.MonoFont);
+      Check("T40-reset-fit", PanelWindow.CARD_RESET_Y - codexBottom >= 1.0
+        && PanelWindow.CARD_BAL_CAP_Y - resetBottom >= 1.0
+        && resetW <= PanelWindow.CARD_RING_LABEL_W && bottomMost <= 100.0,
+        "「Codex 5h」行底 " + Fmt.Num(Math.Round(codexBottom, 2)) + " → 新行顶 " + Fmt.Num(PanelWindow.CARD_RESET_Y)
+        + "（距 " + Fmt.Num(Math.Round(PanelWindow.CARD_RESET_Y - codexBottom, 2)) + "）；新行底 " + Fmt.Num(Math.Round(resetBottom, 2))
+        + " → 标签行顶 " + Fmt.Num(PanelWindow.CARD_BAL_CAP_Y) + "（距 " + Fmt.Num(Math.Round(PanelWindow.CARD_BAL_CAP_Y - resetBottom, 2)) + "）；"
+        + "宽 " + Fmt.Num(Math.Round(resetW, 2)) + " ≤ 槽宽 " + Fmt.Num(PanelWindow.CARD_RING_LABEL_W)
+        + "；最底一行底 " + Fmt.Num(Math.Round(bottomMost, 2)) + " ≤ 卡片高 100（余 " + Fmt.Num(Math.Round(100.0 - bottomMost, 2)) + "）");
     }
 
     private static string Trace(string[] evs) { return string.Join(" → ", evs); }
@@ -912,6 +967,8 @@ namespace Board {
         texts.Add(PanelWindow.CARD_LABEL_TEXT);
         texts.Add(m.progress.ChildText());
         texts.Add(m.quotaLabel);
+        // 2026-11-03 方案 ①：卡片上那行「下次重置 HH:MM」也是上屏文案；不显示时不上屏，自然不进清单
+        if (m.cardResetAt > 0) texts.Add(PanelWindow.CARD_RESET_LABEL + Fmt.HM(m.cardResetAt));
         texts.Add("写入 " + Fmt.AgeShort(3) + " 前");
         texts.Add("—");
         // 项目名是目录名（开放集）：单独用 SCREENPROJ 一行给出来 —— 词表比对只管固定字面
@@ -972,14 +1029,20 @@ namespace Board {
         double capTop = RowVal(s0["cardTodayCapRow"], "top"), capBot = RowVal(s0["cardTodayCapRow"], "bottom");
         double valTop = RowVal(s0["cardTodayAmtRow"], "top");
         double valBot = Math.Max(RowVal(s0["cardBalNameRow"], "bottom"), RowVal(s0["cardBalAmtRow"], "bottom"));
-        Check("UI-card-bal-rows", modelBottom > 0 && capTop - modelBottom >= 1.0 && valTop - capBot >= 1.0 && valBot <= 90.5,
+        Check("UI-card-bal-rows", modelBottom > 0 && capTop - modelBottom >= 1.0 && valTop - capBot >= 1.0 && valBot <= 100.5,
           "第三行底 " + Fmt.Num(Math.Round(modelBottom, 2)) + " → 标签行 " + Fmt.Num(Math.Round(capTop, 2)) + "–" + Fmt.Num(Math.Round(capBot, 2))
-          + " → 数字行顶 " + Fmt.Num(Math.Round(valTop, 2)) + "，数字行底 " + Fmt.Num(Math.Round(valBot, 2)) + " ≤ 90（卡片高）");
+          + " → 数字行顶 " + Fmt.Num(Math.Round(valTop, 2)) + "，数字行底 " + Fmt.Num(Math.Round(valBot, 2)) + " ≤ 100（卡片高）");
         double projBottom = RowVal(s0["cardProjRow"], "bottom");
         double modelTop = RowVal(s0["cardModelRow"], "top");
         Check("UI-card-rows", projBottom > 0 && modelTop - projBottom >= 2.0,
           "项目名行底 " + Fmt.Num(projBottom) + " → 模型行顶 " + Fmt.Num(modelTop)
           + "：间隔 " + Fmt.Num(Math.Round(modelTop - projBottom, 2)) + " DIP（两行分开、≥2）");
+        // 状态行 ↔ 项目名行（加高前只剩 0.37 DIP 的那处）：加高后必须还是正的、且没被挤动
+        double statusBottom = RowVal(s0["cardStatusRow"], "bottom");
+        double projTop2 = RowVal(s0["cardProjRow"], "top");
+        Check("UI-card-status-proj", statusBottom > 0 && projTop2 - statusBottom >= 0.3,
+          "状态行底 " + Fmt.Num(statusBottom) + " → 项目名行顶 " + Fmt.Num(projTop2)
+          + "：间隔 " + Fmt.Num(Math.Round(projTop2 - statusBottom, 2)) + " DIP（加高前同一处是 0.37）");
         win.TestExpand();
         Pump(500);
         var s1 = win.UiSnapshot();
@@ -1000,6 +1063,33 @@ namespace Board {
         Check("UI-dim", true, "陈旧读数与状态类的实测透明度见上（ring5Txt / ringArcTxt 该暗、statusWord / timer / dot 永远 1.00）");
         w.WriteLine("READ ui.morph " + wr.MorphText());
         w.WriteLine("READ ui.sweep " + wr.SweepText());
+        // 微型形态的真窗口（卡片只在这个形态可见）：窗口矩形 + 「下次重置」两种情形的实测读数
+        win.TestSetMicro(1200, 700);
+        Pump(300);
+        long now2 = Fmt.NowMs();
+        var sess0 = Sessions.FromSlots(new List<SlotRec>(), now2);
+        var qs = new QuotaSnap(); qs.ok = true; qs.fivePct = 20.0; qs.weekPct = 5.0; qs.atMs = now2; qs.fiveResetAt = now2 + 96L * 60000L;
+        win.ApplyModel(Model.BuildFor(qs, sess0, new Att7(), new BalSnapshot(), now2, new Activity()));
+        Pump(250);
+        var sm1 = win.UiSnapshot();
+        Dump("micro", sm1);
+        Check("UI-card-window", (sm1["window"] ?? "").EndsWith("272x144"),
+          "微型卡片窗口 " + sm1["window"] + "（卡片 228 × 100 + 出血 22×2 = 272 × 144）");
+        Check("UI-card-reset", Regex.IsMatch(sm1["cardReset"] ?? "", @"^下次重置 \d{2}:\d{2}$"),
+          "真窗口上这一行写的是「" + sm1["cardReset"] + "」（数据源 resetAt = " + Fmt.HM(qs.fiveResetAt) + " 本地）");
+        double rlBottom = RowVal(sm1["cardRingLabelRow"], "bottom");
+        double rsTop = RowVal(sm1["cardResetRow"], "top"), rsBottom = RowVal(sm1["cardResetRow"], "bottom");
+        double rsLeft = RowVal(sm1["cardResetRow"], "left"), rsRight = RowVal(sm1["cardResetRow"], "right");
+        Check("UI-card-reset-fit", rsTop - rlBottom >= 1.0 && rsBottom <= 100.5 && rsLeft >= 0 && rsRight <= 228,
+          "「Codex 5h」行底 " + Fmt.Num(rlBottom) + " → 「下次重置」行 " + Fmt.Num(rsTop) + "–" + Fmt.Num(rsBottom)
+          + "（距 " + Fmt.Num(Math.Round(rsTop - rlBottom, 2)) + " DIP）；横向 " + Fmt.Num(rsLeft) + "–" + Fmt.Num(rsRight) + "（卡宽 228）");
+        // 已过去 → 整行不显示（真窗口上读到的是隐藏 + 理由，不是占位符）
+        var qp = new QuotaSnap(); qp.ok = true; qp.fivePct = 20.0; qp.weekPct = 5.0; qp.atMs = now2; qp.fiveResetAt = now2 - 60000L;
+        win.ApplyModel(Model.BuildFor(qp, sess0, new Att7(), new BalSnapshot(), now2, new Activity()));
+        Pump(250);
+        var sm2 = win.UiSnapshot();
+        Check("UI-card-reset-hidden", (sm2["cardReset"] ?? "").EndsWith("(隐藏)") && (sm2["cardResetWhy"] ?? "").StartsWith("不显示"),
+          "resetAt 已过去 → 真窗口上这一行 " + sm2["cardReset"] + "（" + sm2["cardResetWhy"] + "）");
       } catch (Exception ex) {
         ok = false;
         Check("UI-exception", false, ex.GetType().Name + ": " + ex.Message);

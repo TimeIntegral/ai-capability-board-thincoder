@@ -176,19 +176,24 @@ namespace Board {
     internal const double CARD_COL2 = 62.0, CARD_EDGE_PAD = 14.0;
     internal const double CARD_LABEL_W = 18.0, CARD_LABEL_SIZE = 8.5;
     internal const string CARD_LABEL_TEXT = "模型";
-    // 微型卡片各行顶（DIP，相对卡片左上角；唯一出处：排版与自检 T37 共用）
+    // 微型卡片各行顶（DIP，相对卡片左上角；唯一出处：排版与自检 T37 / T38 / T40 共用）
     // 2026-11-03：项目名行（12.5 DIP，真字体字高 16.6）与「模型」行原来只隔 0.37 DIP —— 真机上就是字压字；
     //   第三行 38.5 → 43.0（余额圈已从卡片撤掉，下面空出来了），行间 4.9 DIP。
     internal const double CARD_STATUS_Y = 6.5, CARD_PROJ_Y = 21.5;
     internal const double CARD_PROJ_SIZE = 12.5, CARD_TIMER_SIZE = 16.5;
     internal const double CARD_ROW3_Y = 43.0, CARD_LABEL_Y = 49.0, CARD_TURNS_Y = 50.5;
+    // 环下那一列（卡内 x 6..62，与右侧状态列左右分开、互不重叠）：「Codex 5h」48.5，新行「下次重置 HH:MM」60.2
+    //   （8 DIP，真字体字高 10.64 → 底 70.84）。新行只写本地时刻；读不到 / 已过去 → 整行不显示（判据在 T40）。
+    internal const double CARD_RING_LABEL_X = Geo.CARD_RING_CX - 28.0, CARD_RING_LABEL_Y = 48.5, CARD_RING_LABEL_W = 56.0;
+    internal const double CARD_RESET_Y = 60.2, CARD_RESET_SIZE = 8.0;
+    internal const string CARD_RESET_LABEL = "下次重置 ";
     // 卡片底部：两组「标签 + 数字」（2026-11-03 用户口径 —— 余额与今日已消耗是两件事，拆成各自独立的一组，不混排）：
     //   上排两个小灰标签（余额 / 今日已消耗，8.5 DIP）、下排两个数字（家名 + 金额 / 今日金额，10 DIP，数字同号字）。
-    //   高度来源：第三行（模型 16:02，16.5 DIP 真字体字高 19.32 → 底 62.32）与卡片下沿之间原有 14.68 DIP 空地，
-    //   两行合计 11.31 + 13.30 = 24.61（含行间 1.09）= 用这块空地，**状态行 / 项目名行 / 第三行一个都不动**
-    //   （状态行与项目名行之间只有 0.3 DIP，动不得）。真字体度量与四道间距在自检 T38。
-    internal const double CARD_BAL_CAP_Y = 63.6;    // 标签行顶（卡内 y）
-    internal const double CARD_BAL_AMT_Y = 76.0;    // 数字行顶（卡内 y）
+    //   高度来源（2026-11-03 方案 ①）：卡片 90 → 100 DIP，长高的 10 DIP 全给这两行（63.6 → 73.6、76.0 → 86.0），
+    //   所以上面三行一个都没动、这两行之间的间距也一个字没改；新行「下次重置」落在「Codex 5h」行（底 59.14）
+    //   与标签行（73.6）之间那块空地里，数字行底 99.30 ≤ 100。真字体度量与间距在自检 T38 / T40。
+    internal const double CARD_BAL_CAP_Y = 73.6;    // 标签行顶（卡内 y）
+    internal const double CARD_BAL_AMT_Y = 86.0;    // 数字行顶（卡内 y）
     internal const double CARD_BAL_CAP_X = 12.0;    // 左组起点（卡内 x）
     internal const double CARD_BAL_RIGHT = 216.0;   // 右组右端（卡宽 228 − 12）
     internal const double CARD_TODAY_CAP_W = 100.0; // 「今日已消耗」右对齐槽宽（真字体宽 42.5）
@@ -421,9 +426,12 @@ namespace Board {
       ring.Children.Add(ringArc);
       cardBranch.Children.Add(ring);
       ringArcTxt = Txt(B + CX - 19, B + CY - 9, 38, "—", 11.5, "#8A909C", "Center", "SemiBold", MonoFont, null);
-      ringLabel = Txt(B + CX - 28, B + 48.5, 56, "Codex", 8, "#8A909C", "Center", "Normal", UiFont, null);
+      ringLabel = Txt(B + CARD_RING_LABEL_X, B + CARD_RING_LABEL_Y, CARD_RING_LABEL_W, "Codex", 8, "#8A909C", "Center", "Normal", UiFont, null);
+      // 「Codex 5h」下面那行「下次重置 HH:MM」：元素先建好（刷新与布局树读数才找得到它），文字由 UpdateAll 写
+      cardReset = Txt(B + CARD_RING_LABEL_X, B + CARD_RESET_Y, CARD_RING_LABEL_W, "", CARD_RESET_SIZE, "#8A909C", "Center", "Normal", UiFont, null);
       cardBranch.Children.Add(ringArcTxt);
       cardBranch.Children.Add(ringLabel);
+      cardBranch.Children.Add(cardReset);
 
       double COL2 = CARD_COL2, EDGE_PAD = CARD_EDGE_PAD;
       cardDot = new Ellipse(); cardDot.Width = 7; cardDot.Height = 7;
@@ -456,7 +464,7 @@ namespace Board {
       cardBranch.Children.Add(cardTodayAmt);
     }
     private Ellipse cardDot;
-    private TextBlock cardStatusWord, cardProjName, cardTurns, cardLabel;
+    private TextBlock cardStatusWord, cardProjName, cardTurns, cardLabel, cardReset;
     private string cardTodayWhy = "";   // 「今日已消耗」那一组为什么显示 / 不显示（布局树读数用，不上屏）
 
     // ==================== 排版 / 形态 ====================
@@ -695,6 +703,13 @@ namespace Board {
       if (balAmt != null) {
         double nx = CARD_BAL_CAP_X + (balName != null && !string.IsNullOrEmpty(bc.name) ? TextWidth(balName) + CARD_BAL_NAME_GAP : 0.0);
         Canvas.SetLeft(balAmt, Geo.CARD_BLEED + nx);
+      }
+      // 「Codex 5h」下面那行「下次重置 HH:MM」：读不到 / 已过去 → 整行不显示（不写占位符、不写「—」、不猜）
+      if (cardReset != null) {
+        bool rstShow = model.cardResetAt > 0;
+        cardReset.Text = rstShow ? CARD_RESET_LABEL + Fmt.HM(model.cardResetAt) : "";
+        cardReset.Visibility = rstShow ? Visibility.Visible : Visibility.Collapsed;
+        SetDim(cardReset, rstShow && fr.quotaStale);   // 陈旧只暗读数（与环内百分比同一条 45 分钟规则）
       }
       // 右下那组「今日已消耗 + 数字」：与余额同一家、同一个「净消耗」口径；
       //   今天没有采样点 / 历史读不到 → 整组（标签 + 数字）不显示 —— 不显示 0、也不显示「—」
@@ -1462,7 +1477,13 @@ namespace Board {
       d["cardTodayCapRow"] = RowRect(cardTodayCap);
       d["cardTodayAmtRow"] = RowRect(cardTodayAmt);
       d["cardProjRow"] = RowRect(cardProjName);
+      d["cardStatusRow"] = RowRect(cardStatusWord);
+      d["cardRingLabelRow"] = RowRect(ringLabel);
       d["cardModelRow"] = RowRect(timer);
+      // 「下次重置」那一行（2026-11-03 方案 ①）：文字 + 为什么显示 / 不显示 + 行盒（卡内坐标）
+      d["cardReset"] = cardReset == null ? "—" : (cardReset.Text + (cardReset.Visibility == Visibility.Visible ? "" : "(隐藏)"));
+      d["cardResetWhy"] = model == null ? "" : model.cardResetWhy;
+      d["cardResetRow"] = RowRect(cardReset);
       d["cardTree"] = CardLayoutText();
       d["sweep"] = SweepText();
       return d;
@@ -1483,7 +1504,7 @@ namespace Board {
       }
       return n;
     }
-    // 一行字的盒子：坐标改用**卡片内部坐标系**（卡片左上角 = 0,0，228×90），宽高用真字体度量
+    // 一行字的盒子：坐标改用**卡片内部坐标系**（卡片左上角 = 0,0，228×100），宽高用真字体度量
     // 2026-11-03：右对齐 / 居中的槽要按「字真正画在哪」算 —— 字画在槽的右端，不是槽的左上角（否则量出来的左端是假的）
     private static string RowRect(TextBlock t) {
       if (t == null) return "—";
