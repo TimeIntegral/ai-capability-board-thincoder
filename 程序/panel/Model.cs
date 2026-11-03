@@ -365,12 +365,20 @@ namespace Board {
   //   不是「现在在干什么」。改成从 agent 日志推出来的真进展：正在干活 / 等你回答 / 空闲 + 当前这一步已多久。
   //
   // 判据（全部来自 ~/.thincoder/logs/agent-<本地日期>.log 的 JSONL，一次一行，字段 ts/ev 打头）：
-  //   最后一条事件是 turn:end        → 这一轮已交付，等你回答（有活进程）/ 空闲（没有）
-  //   最后一条事件是别的（turn:start / llm:start / llm:done / tool:call / tool:done / child:* / susp:*）
-  //                                 → 正在干活（「这一步多久」不再上屏，见下）
-  //   最后一条事件已经超过 PROGRESS_STALE_MIN 分钟 → 不再算「正在干活」（进程可能已经没了或卡死）
-  //   日志读不到（不存在 / 读不动 / 一行事件都解不出）→ 词条只按活进程判，**计时那一整行不显示**
-  //     （用户原话：不显示 0、也不显示「—」）
+  //   ① 先剔掉**非轮次事件**（不属于任何一轮，名单见 IsOffTurn）——它们既不当「最后一条事件」，也不改计时：
+  //      2026-11-03 实测真日志那一串 `turn:end(auto) → digest:end → susp:exit → turn:end(user)` 里，
+  //      后台事件就紧跟在一轮收尾之后；拿它当「最后一条」，明明在等回答会被写成正在干活（用户反馈「正在干活不准」之二）。
+  //   ② 再看最后一条**轮次内**事件：
+  //      turn:end                                   → 这一轮已交付：进程活着 = 等你回答，进程没了 = 空闲
+  //      别的（turn:start / llm:start / llm:done / tool:call / tool:done / child:* / web:*）
+  //                                                 → 正在干活 —— **但必须还有活着的 ThinCoder 进程**
+  //                                                   （2026-11-03 用户口径「应该看 ThinCoder 是否在跑」；
+  //                                                    原来这一支不看进程，ThinCoder 关掉/崩掉之后卡片还写
+  //                                                    「正在干活」直到 30 分钟超时，见 T39 夹具 c）
+  //   ③ 最后一条轮次内事件超过 PROGRESS_STALE_MIN 分钟 → 不再算「正在干活」（进程可能卡死）
+  //   ④ 日志读不到（不存在 / 读不动 / 一条可解析的事件都没有）→ 词条只按活进程判，**计时那一整行不显示**
+  //     （用户原话：不显示 0、也不显示「—」）；日志**读得到但还没有轮次内事件**（只有后台事件 / 新会话刚开）
+  //     → 词条同样按活进程判（等你回答 / 空闲），但计时与轮次照旧可用（不当「读不到」）
   //
   // 本会话轮次：取 ~/.thincoder/sessions/<hash>.json.manifest 里最新槽位的 turnCount（真数据实测 151/152 轮）。
   //
@@ -473,7 +481,8 @@ namespace Board {
       o.haveSince = true;
       bool ended = ProgressCache.lastEv == "turn:end";
       bool stale = (nowMs - ProgressCache.lastTs) > (long)PROGRESS_STALE_MIN * 60000L;
-      if (!ended && !stale) o.state = "work";
+      // 「正在干活」= 进程活着 + 最后一条轮次内事件不是 turn:end + 没超过 30 分钟（三条缺一不可）
+      if (processAlive && !ended && !stale) o.state = "work";
       else o.state = processAlive ? "wait" : "idle";
       Word(o);
       o.children = ProgressCache.children; o.longestChildMs = nowMs - ProgressCache.childOldestMs;
@@ -497,6 +506,21 @@ namespace Board {
       return best;
     }
 
+    // 非轮次事件（不属于任何一轮）：**不许改变三态判据**。
+    //   名单按 2026-11-02 / 11-03 的真日志实测（导出的事件类型全集里逐条看过形状）：
+    //     memory:maintain  后台维护（summary="[maintain] no actions"，一轮开始前就有）
+    //     slot:allocate    开会话槽位（seq=1，一轮都还没开始）
+    //     ev:settled       子代理凭证结算（kind="suspended"）
+    //     digest:start / digest:end  后台摘要信封（里面那一轮自己会发 turn:start / turn:end）
+    //     susp:enter / susp:exit     挂起窗口进出（reason="idle"；实测紧跟在一轮收尾之后）
+    //   为什么不按「白名单」只认轮次内事件：日志里出现新的事件类型时，白名单会把它当后台事件而漏掉真正的
+    //   一轮（错成「等你回答」）；黑名单的代价只是那一条新后台事件最多被多认 30 分钟，且有进程活着这一层兜底。
+    private static bool IsOffTurn(string ev) {
+      return ev == "memory:maintain" || ev == "slot:allocate" || ev == "ev:settled"
+          || ev == "digest:start" || ev == "digest:end"
+          || ev == "susp:enter" || ev == "susp:exit";
+    }
+
     private static void ParseLog(string logDir, out string path, out string why) {
       why = ""; path = PickLog(logDir);
       if (path == null) { why = "没有 agent 日志（" + (string.IsNullOrEmpty(logDir) ? Path.Combine(Sessions.BaseDir(), "logs") : logDir) + "）"; ProgressCache.Reset(); return; }
@@ -514,12 +538,13 @@ namespace Board {
         var open = new Dictionary<string, long>();
         var closed = new Dictionary<string, bool>();
         bool sawLast = false;
+        int offTurn = 0;
         for (int i = 0; i < lines.Length; i++) {
           string line = lines[i];
           if (line.Length < 12 || line[0] != '{') continue;
           long ts; string ev;
           if (!Head(line, out ts, out ev)) continue;
-          if (ev == "memory:maintain") continue;      // 后台维护，不属于任何一轮
+          if (IsOffTurn(ev)) { offTurn++; continue; }   // 不属于任何一轮：不碰 lastEv / lastTs（判据只跟轮次走）
           ProgressCache.lastTs = ts; ProgressCache.lastEv = ev; sawLast = true;
           if (ev.StartsWith("child:", StringComparison.Ordinal)) {
             string id = Field(line, "\"id\":\"");
@@ -533,7 +558,16 @@ namespace Board {
             }
           }
         }
-        if (!sawLast) { why = "日志里没有可解析的事件（" + lines.Length + " 行）"; ProgressCache.Reset(); return; }
+        if (!sawLast) {
+          why = offTurn > 0
+            ? "日志里还没有轮次内的事件（" + lines.Length + " 行，其中 " + offTurn + " 条后台事件）"
+            : "日志里没有可解析的事件（" + lines.Length + " 行）";
+          // 日志本身读得到（只有后台事件 / 新会话刚开）—— 不当「日志读不到」：词条按活进程判（等你回答 / 空闲），
+          //   lastTs 留 0 → 必然算「超过 30 分钟」→ 不会落到「正在干活」那一支；轮次与计时照旧可用。
+          ProgressCache.Reset();
+          ProgressCache.path = path; ProgressCache.len = len; ProgressCache.mtime = mtime; ProgressCache.ok = true;
+          return;
+        }
         long oldest = 0;
         foreach (var kv in open) {
           if (closed.ContainsKey(kv.Key)) continue;

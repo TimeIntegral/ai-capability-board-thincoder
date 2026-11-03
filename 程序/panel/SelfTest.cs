@@ -43,6 +43,7 @@ namespace Board {
         Section("T34", delegate { T34(); });
         Section("T37", delegate { T37(); });
         Section("T38", delegate { T38(); });
+        Section("T39", delegate { T39(); });
         Section("T14", delegate { T14(dir); });
         Section("T15", delegate { T15(); });
         Section("T16", delegate { T16(dir); });
@@ -288,11 +289,11 @@ namespace Board {
       string dir = MakeLogDir();
       try {
         Ctx.LogDir = dir;
-        // ① 最后一条事件是 tool:call（还没收）→ 正在干活
+        // ① 最后一条事件是 tool:call（还没收）+ 进程还活着 → 正在干活
         WriteLog(dir, "work", now);
-        var r1 = Progress.Read(now, false, 151, dir);
+        var r1 = Progress.Read(now, true, 151, dir);
         Check("T13-running", r1.state == "work" && r1.word == "正在干活",
-          "日志最后一条是 tool:call → " + r1.word + "（当前这一步已 " + Fmt.Duration((now - r1.sinceMs) / 1000.0) + "）");
+          "日志最后一条是 tool:call + 进程活着 → " + r1.word + "（当前这一步已 " + Fmt.Duration((now - r1.sinceMs) / 1000.0) + "）");
         // ② turn:end + 有活着的 ThinCoder 进程 → 等你回答
         WriteLog(dir, "ended", now);
         var r2 = Progress.Read(now, true, 151, dir);
@@ -696,6 +697,86 @@ namespace Board {
         + "（留白 " + Fmt.Num(Math.Round(r1 - l1, 1)) + " DIP）");
     }
 
+    // ==================== T39 状态判据：正在干活 = 进程活着 + 最后一条轮次内事件不是 turn:end ====================
+    // 2026-11-03 用户反馈「卡片上的正在干活不准」，要求「应该看 ThinCoder 是否在跑」。两处根因：
+    //   ① 原来「正在干活」那一支**不看进程** —— ThinCoder 关掉/崩掉之后，只要最后一条事件是干活事件，
+    //      卡片会一直写「正在干活」直到 30 分钟超时（夹具 c 钉的就是这一条）；
+    //   ② 非轮次的后台事件盖掉 turn:end —— 真日志实测那一串
+    //      `turn:end(auto) → digest:end → susp:exit → turn:end(user)`（2026-11-03 00:54），
+    //      后台事件紧跟一轮收尾之后；把它当「最后一条」，「等你回答」就被写成「正在干活」（夹具 d / e）。
+    // 四组夹具（a–d）是用户点名的四条，e 是同一根因的真日志形状；输入（事件序列 + 进程存活）与输出逐条贴上。
+    private static void T39() {
+      long now = Fmt.NowMs();
+      string dir = MakeLogDir();
+      try {
+        Ctx.LogDir = dir;
+        string[] working = new string[] { "turn:start", "llm:start", "llm:done", "tool:call" };
+        string[] ended = new string[] { "turn:start", "llm:start", "llm:done", "tool:call", "tool:done", "turn:end" };
+
+        // (a) 进程活着 + 最后一条 turn:end → 等你回答
+        WriteTrace(dir, now, 100, ended);
+        var a = Progress.Read(now, true, 151, dir);
+        Check("T39-alive-ended", a.state == "wait" && a.word == "等你回答",
+          "夹具a：进程活着 + 事件 " + Trace(ended) + " → 「" + a.word + "」");
+
+        // (b) 进程活着 + 最后一条 tool:call → 正在干活
+        WriteTrace(dir, now, 200, working);
+        var b = Progress.Read(now, true, 151, dir);
+        Check("T39-alive-working", b.state == "work" && b.word == "正在干活",
+          "夹具b：进程活着 + 事件 " + Trace(working) + " → 「" + b.word + "」");
+
+        // (c) 进程已死 + 最后一条 tool:call → 空闲（原来这里写「正在干活」，直到 30 分钟超时）
+        WriteTrace(dir, now, 300, working);
+        var c = Progress.Read(now, false, 151, dir);
+        Check("T39-dead-working", c.state == "idle" && c.word == "空闲",
+          "夹具c：进程已死 + 事件 " + Trace(working) + " → 「" + c.word + "」（原来会写「正在干活」）");
+
+        // (d) turn:end 之后紧跟一条 memory:maintain → 仍是等你回答（后台事件不动判据）
+        string[] endedMaint = new string[] { "turn:start", "llm:start", "llm:done", "turn:end", "memory:maintain" };
+        WriteTrace(dir, now, 400, endedMaint);
+        var d = Progress.Read(now, true, 151, dir);
+        Check("T39-ended-then-maint", d.state == "wait" && d.word == "等你回答" && d.lastEvent == "turn:end",
+          "夹具d：进程活着 + 事件 " + Trace(endedMaint) + " → 「" + d.word + "」（最后一条轮次内事件仍是 " + d.lastEvent + "）");
+
+        // (e) 真日志那一串尾巴：turn:end → digest:end → susp:exit → 还是等你回答
+        string[] realTail = new string[] { "turn:start", "llm:start", "llm:done", "turn:end", "digest:end", "susp:exit" };
+        WriteTrace(dir, now, 500, realTail);
+        var e = Progress.Read(now, true, 151, dir);
+        Check("T39-offturn-susp", e.state == "wait" && e.word == "等你回答" && e.lastEvent == "turn:end",
+          "夹具e：进程活着 + 事件 " + Trace(realTail) + "（真日志 2026-11-03 00:54 的尾巴）→ 「" + e.word
+          + "」（后台事件不改判据；最后一条轮次内事件 = " + e.lastEvent + "）");
+        // (f) 日志里只有后台事件（新会话刚开：slot:allocate + memory:maintain）→ 等你回答，且不当「日志读不到」
+        string[] onlyOffTurn = new string[] { "slot:allocate", "memory:maintain" };
+        WriteTrace(dir, now, 600, onlyOffTurn);
+        var f = Progress.Read(now, true, 151, dir);
+        Check("T39-only-offturn", f.state == "wait" && f.word == "等你回答" && f.logOk,
+          "夹具f：进程活着 + 事件 " + Trace(onlyOffTurn) + "（一条轮次内事件都没有）→ 「" + f.word
+          + "」（logOk=" + f.logOk + "：轮次与计时不当「读不到」；判据不落到正在干活）");
+      } finally { Ctx.LogDir = ""; try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    private static string Trace(string[] evs) { return string.Join(" → ", evs); }
+    // 夹具：按给定事件序列写一份日志（首条时刻 = head，每条 +400ms；seq 从 seq0 起，让各份长度互不相同 → 不走解析缓存）
+    private static void WriteTrace(string dir, long head, int seq0, string[] evs) {
+      var sb = new StringBuilder();
+      for (int i = 0; i < evs.Length; i++) sb.Append(LogLine(head + i * 400, evs[i], seq0 + i, TraceExtra(evs[i])));
+      File.WriteAllText(LogPath(dir), sb.ToString(), PanelControl.Utf8NoBom);
+    }
+    // 事件附带的字段照真日志写（只写判据用得到的形状；值全是假的）
+    private static string TraceExtra(string ev) {
+      if (ev == "turn:start") return "\"kind\":\"user\"";
+      if (ev == "turn:end") return "\"kind\":\"user\",\"ms\":90000,\"result\":\"ok\"";
+      if (ev == "llm:start") return "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"stage\":\"turn\",\"turn\":1,\"auto\":false";
+      if (ev == "llm:done") return "\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"ms\":800,\"stage\":\"turn\",\"turn\":1,\"auto\":false,\"finish\":\"stop\",\"tools\":0";
+      if (ev == "tool:call") return "\"tool\":\"read\"";
+      if (ev == "tool:done") return "\"tool\":\"read\",\"ms\":3";
+      if (ev == "memory:maintain") return "\"summary\":\"[maintain] no actions\",\"ms\":41";
+      if (ev == "digest:end") return "\"pendingN\":0,\"ms\":33428";
+      if (ev == "susp:exit") return "\"poolN\":0,\"pendingN\":0,\"runningN\":0,\"ms\":1321696,\"reason\":\"idle\"";
+      return "";
+    }
+
+    // 量具：真字体度量（宽取含尾随空白的宽度，高取字盒高度）—— 与 T34 / T37 / T38 同一把尺子
     private static double Measured(string text, double size, FontFamily family) {
       var tf = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
       var ft = new FormattedText(text, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, tf, size, Brushes.Black, 1.0);
