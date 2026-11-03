@@ -41,6 +41,7 @@ namespace Board {
         Section("T36", delegate { T36(); });
         Section("T33", delegate { T33(); });
         Section("T34", delegate { T34(); });
+        Section("T37", delegate { T37(); });
         Section("T14", delegate { T14(dir); });
         Section("T15", delegate { T15(); });
         Section("T16", delegate { T16(dir); });
@@ -513,6 +514,59 @@ namespace Board {
         "状态词「等你回答」右端 " + Fmt.Num(Math.Round(29 + wordW, 1)) + " DIP < 子代理行左端 " + Fmt.Num(232 - 16 - PanelWindow.CHILD_W) + " DIP（不叠字）");
     }
 
+    // ==================== T37 微型卡片三件（2026-11-03 用户反馈）====================
+    // ① 大环固定 Codex 5h（不再取「两个窗口里更紧的那个」）；② 余额圈从卡片撤掉、只留一行字；
+    // ③ 项目名行与「模型 X」行用真字体度量证明不再相压。
+    private static void T37() {
+      long now = Fmt.NowMs();
+      var sess = Sessions.FromSlots(new List<SlotRec>(), now);
+      var att = new Att7();
+      var bal = new BalSnapshot();
+
+      // ① 5h 剩 78 / 7 天剩 5（7 天更紧）：环必须还是 5h 的 78
+      var c1 = new QuotaSnap(); c1.ok = true; c1.fivePct = 22.0; c1.weekPct = 95.0; c1.atMs = now;
+      var m1 = Model.BuildFor(c1, sess, att, bal, now, new Activity());
+      Check("T37-5h-fixed", m1.ok && m1.fiveRemain == 78.0 && m1.weekRemain == 5.0
+        && m1.quotaLabel == "Codex 5h" && m1.quotaRemain == 78.0,
+        "夹具 5h 剩 " + Fmt.Num(m1.fiveRemain) + "% / 7 天剩 " + Fmt.Num(m1.weekRemain)
+        + "%（7 天更紧）→ 卡片环仍取 5h：" + m1.quotaLabel + " " + Fmt.Num(m1.quotaRemain) + "%");
+
+      // ② 反过来 5h 更紧：仍取 5h（证明不是「取更紧的那个」）
+      var c2 = new QuotaSnap(); c2.ok = true; c2.fivePct = 95.0; c2.weekPct = 22.0; c2.atMs = now;
+      var m2 = Model.BuildFor(c2, sess, att, bal, now, new Activity());
+      Check("T37-5h-tighter", m2.quotaLabel == "Codex 5h" && m2.quotaRemain == 5.0,
+        "夹具 5h 剩 " + Fmt.Num(m2.fiveRemain) + "% / 7 天剩 " + Fmt.Num(m2.weekRemain)
+        + "% → 卡片环仍取 5h：" + Fmt.Num(m2.quotaRemain) + "%");
+
+      // ③ 项目名行与「模型」行：真字体度量（TextBlock 高度 = FormattedText.Height，已用真控件核对）
+      double projTop = PanelWindow.CARD_PROJ_Y;
+      double projH = MeasuredH("中文项目名示例", PanelWindow.CARD_PROJ_SIZE, PanelWindow.UiFont);
+      double modelTop = PanelWindow.CARD_ROW3_Y;
+      double modelH = MeasuredH("11:08:40", PanelWindow.CARD_TIMER_SIZE, PanelWindow.MonoFont);
+      Check("T37-card-gap", projTop + projH + 2.0 <= modelTop,
+        "项目名行（卡内）top=" + Fmt.Num(projTop) + " bottom=" + Fmt.Num(Math.Round(projTop + projH, 2))
+        + " DIP；「模型」行 top=" + Fmt.Num(modelTop) + " bottom=" + Fmt.Num(Math.Round(modelTop + modelH, 2))
+        + " DIP；行间 " + Fmt.Num(Math.Round(modelTop - projTop - projH, 2)) + " DIP（两行分开、≥2）");
+
+      // ④ 第三行三段横向不压：标签右端 ≤ 时长左端；时长右端 ≤ 轮次左端（真字体宽度）
+      double labelLeft = PanelWindow.CARD_COL2;
+      double labelW = Measured(PanelWindow.CARD_LABEL_TEXT, PanelWindow.CARD_LABEL_SIZE, PanelWindow.UiFont);
+      double timerLeft = labelLeft + PanelWindow.CARD_LABEL_W;
+      double timerW = Measured("11:08:40", PanelWindow.CARD_TIMER_SIZE, PanelWindow.MonoFont);
+      double turnsLeft = Geo.CARD_W - PanelWindow.CARD_EDGE_PAD - PanelWindow.TURNS_W;
+      Check("T37-card-row", labelLeft + labelW <= timerLeft && timerLeft + timerW <= turnsLeft,
+        "标签「" + PanelWindow.CARD_LABEL_TEXT + "」右端 " + Fmt.Num(Math.Round(labelLeft + labelW, 1))
+        + " ≤ 时长左端 " + Fmt.Num(timerLeft) + "；时长「11:08:40」右端 " + Fmt.Num(Math.Round(timerLeft + timerW, 1))
+        + " ≤ 轮次左端 " + Fmt.Num(turnsLeft) + " DIP");
+
+      // ⑤ 卡片底部一行字也装得下：说明文字与金额不压（真字体宽度；卡上已无余额圈）
+      double capW = Measured("余额 智谱 GLM · 沿用", 8.5, PanelWindow.UiFont);
+      double amtW = Measured("¥8,888.12", 10, PanelWindow.MonoFont);
+      Check("T37-card-bal-line", capW <= 138.0 && amtW <= 66.0,
+        "余额行「余额 智谱 GLM · 沿用」宽 " + Fmt.Num(Math.Round(capW, 1)) + " DIP ≤ 138（与右侧金额之间留 12）；"
+        + "金额「¥8,888.12」宽 " + Fmt.Num(Math.Round(amtW, 1)) + " DIP ≤ 66");
+    }
+
     private static double Measured(string text, double size, FontFamily family) {
       var tf = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
       var ft = new FormattedText(text, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, tf, size, Brushes.Black, 1.0);
@@ -640,6 +694,8 @@ namespace Board {
         // 当前进展（三态 + 已 X + 轮次）与子代理行
         texts.Add(m.progress.word);
         if (m.progress.ShowTiming) { texts.Add(m.progress.ElapsedText()); texts.Add(m.progress.turns + " 轮"); }
+        // 2026-11-03：卡片第三行改成「模型」小标签 + 裸时长两个元素；标签两个字也是上屏文案，单独送词表
+        texts.Add(PanelWindow.CARD_LABEL_TEXT);
         texts.Add(m.progress.ChildText());
         texts.Add(m.quotaLabel);
         texts.Add("写入 " + Fmt.AgeShort(3) + " 前");
@@ -677,6 +733,18 @@ namespace Board {
         Dump("collapsed", s0);
         Check("UI-collapsed", s0["state"] == "collapsed" && s0["passThrough"] == "1" && s0["panelOpacity"] == "0",
           "收起态：穿透=" + s0["passThrough"] + "、面板不透明=" + s0["panelOpacity"] + "、裁剪露出=" + s0["clipReveal"] + " DIP");
+        // 微型卡片三件的实测判据（2026-11-03 用户口径）：环下写 Codex 5h、余额圈一个不剩、余额只剩一行字、两行不叠
+        Check("UI-card-ring", s0["cardRingLabel"] == "Codex 5h" && s0["cardRingValue"] != "—",
+          "微型卡片大环：" + s0["cardRingLabel"] + " " + s0["cardRingValue"] + "（固定 5h，不是「最紧」）");
+        Check("UI-card-bal-shapes", s0["cardBalShapes"] == "0",
+          "卡片上 y≥60 的圆/弧元素数=" + s0["cardBalShapes"] + "（用户口径：两个小圆环不要了）");
+        Check("UI-card-bal-line", !string.IsNullOrEmpty(s0["cardBalCap"]) && s0["cardBalCap"] != "—" && s0["cardBalAmt"] != "—",
+          "卡片余额行：" + s0["cardBalCap"] + " / " + s0["cardBalAmt"]);
+        double projBottom = RowVal(s0["cardProjRow"], "bottom");
+        double modelTop = RowVal(s0["cardModelRow"], "top");
+        Check("UI-card-rows", projBottom > 0 && modelTop - projBottom >= 2.0,
+          "项目名行底 " + Fmt.Num(projBottom) + " → 模型行顶 " + Fmt.Num(modelTop)
+          + "：间隔 " + Fmt.Num(Math.Round(modelTop - projBottom, 2)) + " DIP（两行分开、≥2）");
         win.TestExpand();
         Pump(500);
         var s1 = win.UiSnapshot();
@@ -708,6 +776,19 @@ namespace Board {
 
     private static void Dump(string tag, Dictionary<string, string> d) {
       foreach (var kv in d) W.WriteLine("READ ui." + tag + "." + kv.Key + " " + kv.Value);
+    }
+
+    // 从「left=62 right=214 top=21.5 bottom=38.1」里取一个数（读不到 → -1，让判据自己红）
+    private static double RowVal(string s, string key) {
+      if (string.IsNullOrEmpty(s)) return -1;
+      int i = s.IndexOf(key + "=");
+      if (i < 0) return -1;
+      i += key.Length + 1;
+      int j = i;
+      while (j < s.Length && (char.IsDigit(s[j]) || s[j] == '.' || s[j] == '-')) j++;
+      double v;
+      return double.TryParse(s.Substring(i, j - i), System.Globalization.NumberStyles.Float,
+        System.Globalization.CultureInfo.InvariantCulture, out v) ? v : -1;
     }
 
     private static void Pump(int ms) {

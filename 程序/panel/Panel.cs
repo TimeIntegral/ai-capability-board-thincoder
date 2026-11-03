@@ -176,6 +176,13 @@ namespace Board {
     internal const double CARD_COL2 = 62.0, CARD_EDGE_PAD = 14.0;
     internal const double CARD_LABEL_W = 18.0, CARD_LABEL_SIZE = 8.5;
     internal const string CARD_LABEL_TEXT = "模型";
+    // 微型卡片各行顶（DIP，相对卡片左上角；唯一出处：排版与自检 T37 共用）
+    // 2026-11-03：项目名行（12.5 DIP，真字体字高 16.6）与「模型」行原来只隔 0.37 DIP —— 真机上就是字压字；
+    //   第三行 38.5 → 43.0（余额圈已从卡片撤掉，下面空出来了），行间 4.9 DIP。
+    internal const double CARD_STATUS_Y = 6.5, CARD_PROJ_Y = 21.5;
+    internal const double CARD_PROJ_SIZE = 12.5, CARD_TIMER_SIZE = 16.5;
+    internal const double CARD_ROW3_Y = 43.0, CARD_LABEL_Y = 49.0, CARD_TURNS_Y = 50.5;
+    internal const double CARD_BAL_Y = 77.0;
 
     private static TextBlock Txt(double x, double y, double w, string text, double size, string color) {
       return Txt(x, y, w, text, size, color, "Left", "Normal", UiFont, null);
@@ -408,33 +415,28 @@ namespace Board {
       cardDot = new Ellipse(); cardDot.Width = 7; cardDot.Height = 7;
       Canvas.SetLeft(cardDot, B + COL2 + 2); Canvas.SetTop(cardDot, B + 11);
       cardBranch.Children.Add(cardDot);
-      cardStatusWord = Txt(B + COL2 + 15, B + 6.5, 70, "—", 11, "#6E7581", "Left", "SemiBold", UiFont, null);
+      cardStatusWord = Txt(B + COL2 + 15, B + CARD_STATUS_Y, 70, "—", 11, "#6E7581", "Left", "SemiBold", UiFont, null);
       cardBranch.Children.Add(cardStatusWord);
       ageText = Txt(B + COL2 + 45, B + 8.5, W - COL2 - EDGE_PAD - 45, "写入 — 前", 8.5, "#9AA0A6", "Right", "Normal", UiFont, null);
       cardBranch.Children.Add(ageText);
-      cardProjName = Txt(B + COL2, B + 21.5, W - COL2 - EDGE_PAD, "—", 12.5, "#12151A", "Left", "SemiBold", UiFont, "ellipsis");
+      cardProjName = Txt(B + COL2, B + CARD_PROJ_Y, W - COL2 - EDGE_PAD, "—", CARD_PROJ_SIZE, "#12151A", "Left", "SemiBold", UiFont, "ellipsis");
       cardBranch.Children.Add(cardProjName);
       // 第三行大字 = 本会话模型累计运行时长（不是「上一个事件到现在」，也不是进程年龄）
-      cardLabel = Txt(B + COL2, B + 47.0, CARD_LABEL_W, CARD_LABEL_TEXT, CARD_LABEL_SIZE, "#8A909C");
+      cardLabel = Txt(B + COL2, B + CARD_LABEL_Y, CARD_LABEL_W, CARD_LABEL_TEXT, CARD_LABEL_SIZE, "#8A909C");
       cardBranch.Children.Add(cardLabel);
-      timer = Txt(B + COL2 + CARD_LABEL_W, B + 38.5, TIMER_W, "", 16.5, "#12151A", "Left", "SemiBold", MonoFont, null);
+      timer = Txt(B + COL2 + CARD_LABEL_W, B + CARD_ROW3_Y, TIMER_W, "", CARD_TIMER_SIZE, "#12151A", "Left", "SemiBold", MonoFont, null);
       cardBranch.Children.Add(timer);
       // 本会话轮次（新一轮：从会话 manifest 的 turnCount 来；读不到就不显示）
-      cardTurns = Txt(B + W - EDGE_PAD - TURNS_W, B + 46.0, TURNS_W, "", 9, "#8A909C", "Right", "Normal", UiFont, null);
+      cardTurns = Txt(B + W - EDGE_PAD - TURNS_W, B + CARD_TURNS_Y, TURNS_W, "", 9, "#8A909C", "Right", "Normal", UiFont, null);
       cardBranch.Children.Add(cardTurns);
-      var balRingBox = new Canvas();
-      Canvas.SetLeft(balRingBox, B + 12); Canvas.SetTop(balRingBox, B + 61.0);
-      balRingBox.Width = W - 24; balRingBox.Height = 2 * 6.25 + 3.0;
-      cardBranch.Children.Add(balRingBox);
-      cardBalBox = balRingBox;
-      balCap = Txt(B + 12, B + 77.0, 150, "", 8.5, "#8A909C");
+      // 卡片底部：只留一行「余额 家名 + 金额」；余额圈已撤（2026-11-03 用户口径：两个小圆环不要了）
+      balCap = Txt(B + 12, B + CARD_BAL_Y, 150, "", 8.5, "#8A909C");
       cardBranch.Children.Add(balCap);
-      balAmt = Txt(B + 150, B + 77.0, W - 162, "", 10, "#12151A", "Right", "SemiBold", MonoUiFont, null);
+      balAmt = Txt(B + 150, B + CARD_BAL_Y, W - 162, "", 10, "#12151A", "Right", "SemiBold", MonoUiFont, null);
       cardBranch.Children.Add(balAmt);
     }
     private Ellipse cardDot;
     private TextBlock cardStatusWord, cardProjName, cardTurns, cardLabel;
-    private Canvas cardBalBox;
 
     // ==================== 排版 / 形态 ====================
     private void LayoutScene(bool force) {
@@ -714,6 +716,8 @@ namespace Board {
     public long lastActivityMax;
 
     // 余额说明行的唯一出处（卡片与刷新都走它）
+    // 2026-11-03：卡片不再画余额圈 —— 与圈有关的字（「1 圈 = ¥X」「<0.01 圈」「不画圈…」）不再上卡片；
+    //   只留「余额 家名」+ 金额，以及「沿用」这类数据状态（卡片用 cardMarks，中型面板照旧用 marks）。
     private sealed class MicroBal { public string cap = "", capColor = "#8A909C", amt = "", amtColor = "#12151A", sig = "none"; }
     private MicroBal MicroBalText(Model m) {
       var o = new MicroBal();
@@ -725,9 +729,7 @@ namespace Board {
       o.amt = bk.amountText;
       if (bk.amountColor == "#FF6B5A") o.amtColor = "#FF6B5A";
       else if (bk.amountColor == "#F2C94C") o.amtColor = "#D89A00";
-      if (!string.IsNullOrEmpty(bk.marks)) o.cap += " · " + bk.marks;
-      if (m.balView.unitHi) { o.cap += " · " + m.balView.unitText; o.capColor = "#B07714"; }
-      if (bk.ringCount <= 0) o.cap += " · 不画圈（币种 " + bk.cur + "）";
+      if (!string.IsNullOrEmpty(bk.cardMarks)) o.cap += " · " + bk.cardMarks;
       return o;
     }
 
@@ -782,26 +784,6 @@ namespace Board {
         if (balMarkTxt.TryGetValue(g.key, out t) && t != null) t.Text = g.marks;
         if (balDashTxt.TryGetValue(g.key, out t) && t != null) t.Visibility = g.drawable ? Visibility.Collapsed : Visibility.Visible;
       }
-      // 卡片底部只放最紧那一家
-      if (cardBalBox != null) {
-        cardBalBox.Children.Clear();
-        var bk = M2.balPick;
-        if (bk != null && bk.known && bk.ringCount > 0) {
-          double R = 6.25, T = 3.0, PITCH = 22.6;
-          for (int i = 0; i < bk.rings.Length; i++) {
-            double cx = R + T / 2.0 + i * PITCH, cy = R + T / 2.0;
-            cardBalBox.Children.Add(Track(cx, cy, R, T, "#E6E9EE"));
-            if (bk.rings[i] > 0.0) {
-              var p = new Path();
-              p.Stroke = Brush(bk.color); p.StrokeThickness = T;
-              p.StrokeStartLineCap = PenLineCap.Round; p.StrokeEndLineCap = PenLineCap.Round;
-              p.Data = ArcGeometry(cx, cy, R, bk.rings[i]);
-              cardBalBox.Children.Add(p);
-              SetDim(p, fr.StaleOf(bk.key));
-            }
-          }
-        }
-      }
     }
 
     // 当前进展（每秒走；状态永远实时——陈旧只压读数，不压这里）
@@ -809,7 +791,7 @@ namespace Board {
     public void UpdateClock() {
       if (model == null) return;
       var pg = model.progress;
-      string el = pg.ElapsedText();
+      string el = pg.ElapsedClockText();
       bool show = pg.ShowTiming;
       if (timer != null) { timer.Text = el; timer.Visibility = show ? Visibility.Visible : Visibility.Collapsed; }
       if (cardLabel != null) cardLabel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
@@ -1398,8 +1380,73 @@ namespace Board {
       int arcs = 0, dim = 0;
       foreach (var kv in balArcs) foreach (var p in kv.Value) { if (p != null) { arcs++; if (p.Opacity < 0.99) dim++; } }
       d["balArcs"] = dim + "/" + arcs;
+      // 微型卡片布局树读数（2026-11-03 验收）：环下文字 / 余额圈元素数 / 两行字的真实位置
+      d["cardRingLabel"] = ringLabel == null ? "—" : ringLabel.Text;
+      d["cardRingValue"] = ringArcTxt == null ? "—" : (ringArcTxt.Text + "@" + Fmt.Num(Math.Round(ringArcTxt.Opacity, 2)));
+      // 卡上「余额圈那一带」（卡片 y ≥ 60）还剩几个圆/弧：用户口径要求 0
+      d["cardBalShapes"] = CardShapes(Geo.CARD_BLEED + 60.0).ToString();
+      d["cardBalCap"] = balCap == null ? "—" : balCap.Text;
+      d["cardBalAmt"] = balAmt == null ? "—" : balAmt.Text;
+      d["cardProjRow"] = RowRect(cardProjName);
+      d["cardModelRow"] = RowRect(timer);
+      d["cardTree"] = CardLayoutText();
       d["sweep"] = SweepText();
       return d;
+    }
+
+    // ---- 布局树读数（只读；--selftest-ui 用）----
+    // 数一数卡片上 y ≥ minY 的圆/弧元素（余额圈撤没撤，用元素数说话，不看代码）
+    private int CardShapes(double minY) { return CountShapes(cardBranch, 0.0, minY); }
+    private static int CountShapes(Canvas c, double baseY, double minY) {
+      if (c == null) return 0;
+      int n = 0;
+      foreach (UIElement e in c.Children) {
+        double top = Canvas.GetTop(e);
+        double y = baseY + (double.IsNaN(top) ? 0.0 : top);
+        if ((e is Path || e is Ellipse) && y >= minY) n++;
+        Canvas cc = e as Canvas;
+        if (cc != null) n += CountShapes(cc, y, minY);
+      }
+      return n;
+    }
+    // 一行字的盒子：坐标改用**卡片内部坐标系**（卡片左上角 = 0,0，228×90），宽高用真字体度量
+    private static string RowRect(TextBlock t) {
+      if (t == null) return "—";
+      double left = Canvas.GetLeft(t), top = Canvas.GetTop(t);
+      if (double.IsNaN(left)) left = 0;
+      if (double.IsNaN(top)) top = 0;
+      left -= Geo.CARD_BLEED; top -= Geo.CARD_BLEED;
+      double w = TextWidth(t);
+      if (!double.IsNaN(t.Width) && t.Width > 0 && w > t.Width) w = t.Width;
+      double h = TextHeight(t);
+      return "left=" + Fmt.Num(Math.Round(left, 1)) + " right=" + Fmt.Num(Math.Round(left + w, 1))
+           + " top=" + Fmt.Num(Math.Round(top, 1)) + " bottom=" + Fmt.Num(Math.Round(top + h, 1));
+    }
+    private static double TextHeight(TextBlock t) { return FmtOf(t).Height; }
+    private static double TextWidth(TextBlock t) { return FmtOf(t).WidthIncludingTrailingWhitespace; }
+    private static FormattedText FmtOf(TextBlock t) {
+      return new FormattedText(t.Text ?? "", CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+        new Typeface(t.FontFamily, t.FontStyle, t.FontWeight, t.FontStretch), t.FontSize, System.Windows.Media.Brushes.Black, 1.0);
+    }
+    // 微型卡片的布局树（类型@x,y；Canvas 向内展开一层）—— 验收时直接贴这条读数
+    public string CardLayoutText() {
+      var sb = new System.Text.StringBuilder();
+      WalkCard(cardBranch, sb);
+      return sb.ToString();
+    }
+    private static void WalkCard(Canvas c, System.Text.StringBuilder sb) {
+      if (c == null) return;
+      foreach (UIElement e in c.Children) {
+        if (sb.Length > 0) sb.Append("；");
+        TextBlock t = e as TextBlock;
+        if (t != null) sb.Append("TextBlock(\"").Append(t.Text).Append("\")");
+        else sb.Append(e.GetType().Name);
+        double l = Canvas.GetLeft(e), tp = Canvas.GetTop(e);
+        sb.Append("@").Append(double.IsNaN(l) ? "—" : Fmt.Num(Math.Round(l, 1)));
+        sb.Append(",").Append(double.IsNaN(tp) ? "—" : Fmt.Num(Math.Round(tp, 1)));
+        Canvas cc = e as Canvas;
+        if (cc != null) { sb.Append("{"); WalkCard(cc, sb); sb.Append("}"); }
+      }
     }
 
     public string SweepText() {

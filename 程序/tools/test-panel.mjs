@@ -54,10 +54,12 @@ test('T6–T16 面板自检全部通过（几何 / 拖动阈值 / 位置记忆 /
   const r = 跑自检();
   const 失败 = r.checks.filter(c => !c.ok);
   assert.equal(失败.length, 0, `自检有失败项：\n${失败.map(c => `  ${c.id} ${c.detail}`).join('\n')}`);
-  assert.ok(r.checks.length >= 93, `自检项太少（${r.checks.length} 条）—— 用例可能没跑全（2026-10-27 基线 93：原 81 + T34 字高/对比度/标签/卡片行 5 条 + T36 模型累计 6 条 + T12 会话起点 1 条）`);
+  assert.ok(r.checks.length >= 98, `自检项太少（${r.checks.length} 条）—— 用例可能没跑全（2026-11-03 基线 98：原 93 + T37 卡片三件 5 条）`);
   for (const id of ['T6-panelH', 'T7-detach', 'T8-clamp', 'T9-remain', 'T10-shared-unit', 'T11-hidden', 'T12-today', 'T12-session-start', 'T13-running', 'T14-quota', 'T15-change', 'T16-list',
     'T28-read-balance', 'T28-hidden', 'T28-shown-again', 'T29-retain', 'T29-firstfail', 'T30-fillet', 'T30-hairline',
-    'T31-line', 'T31-hidden', 'T34-contrast', 'T34-cadence-height', 'T34-child', 'T34-card-row', 'T36-sum', 'T36-no-done', 'T36-stale-open', 'T36-cross-midnight', 'T36-child-sum', 'T36-session']) {
+    'T31-line', 'T31-hidden', 'T34-contrast', 'T34-cadence-height', 'T34-child', 'T34-card-row', 'T36-sum', 'T36-no-done', 'T36-stale-open', 'T36-cross-midnight', 'T36-child-sum', 'T36-session',
+    // 2026-11-03：微型卡片三件（大环固定 5h / 余额圈撤掉 / 项目名行与模型行不相压）
+    'T37-5h-fixed', 'T37-5h-tighter', 'T37-card-gap', 'T37-card-row', 'T37-card-bal-line']) {
     assert.ok(r.checks.some(c => c.id === id), `自检缺少用例 ${id}`);
   }
   assert.match(r.summary, /fail=0/, `自检汇总不是全绿：${r.summary}`);
@@ -118,6 +120,8 @@ test('T16 上屏文本 ⊆ 固定词表（无解释性句子）', { skip: skip�
     /^写入 (\d+[smhd]|\d+h\d{2}m|—) 前$/,
     // 2026-10-27：卡片第三行的「已 X」换成「模型 X」= 本会话模型累计运行（不是上一条事件到现在）
     /^模型 (\d+:)?\d{2}:\d{2}$/,
+    // 2026-11-03：第三行拆成小标签「模型」+ 裸时长两个元素；标签本身也是上屏文案
+    /^模型$/,
     /^\d+ 轮$/,
     /^子代理 \d+ 个在跑 · 最长 .+$/,
     // 余额节奏（充值不算消耗；24 小时没花钱；两种花钱说法）
@@ -135,6 +139,18 @@ test('T16 上屏文本 ⊆ 固定词表（无解释性句子）', { skip: skip�
   // 项目名是目录名（开放集）：不当词表比对，但要像目录名（不是一句话）
   assert.ok(r.proj.length > 0 && r.proj.length <= 64, `项目名异常：「${r.proj}」`);
   assert.ok(!/[。，！？；：]/.test(r.proj), `项目名看起来像一句话：「${r.proj}」`);
+});
+
+// 2026-11-03 用户口径：微型卡片的大环固定显示 Codex 5h（不再取「两个窗口里更紧的那个」），
+//   底部两个余额小圆环不要了、只留「余额 家名 + 金额」一行。布局树读数由 --selftest-ui 的 cardBalShapes（应为 0）
+//   与 cardTree 给出；这条源码针守住回归（容器一回来就红）。
+test('T37 微型卡片：环固定 Codex 5h，余额圈容器不再存在（源码级回归针）', () => {
+  const 面板 = 读('程序/panel/Panel.cs') ?? '';
+  const 模型 = 读('程序/panel/Model.cs') ?? '';
+  assert.ok(!/cardBalBox/.test(面板), '卡片余额圈容器 cardBalBox 还在 —— 用户口径是两个小圆环不要了（只留「余额 家名 + 金额」一行）');
+  assert.ok(!/cardBalBox/.test(模型), 'Model.cs 里不应该有卡片余额圈容器');
+  assert.match(模型, /quotaLabel = "Codex 5h"/, '微型卡片的大环标签必须固定 Codex 5h');
+  assert.ok(!/quotaLabel = "Codex 7 天"/.test(模型), '微型卡片的大环不再按「最紧」切到 7 天');
 });
 
 // ── 编译产物与来源记录（T1 / A1）──────────────────────────────────────────

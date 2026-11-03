@@ -422,6 +422,14 @@ namespace Board {
       if (ms <= 0) return "";
       return "模型 " + Fmt.Duration(ms / 1000.0);
     }
+    // 卡片第三行的大字只放时长本身；「模型」两字由旁边的小标签写一次
+    // （2026-11-03：原来大字里也带「模型」，与大标签叠成「模型模型」且把字压住）
+    public string ElapsedClockText() {
+      if (!haveModel) return "";
+      long ms = ModelElapsedMs(Fmt.NowMs());
+      if (ms <= 0) return "";
+      return Fmt.Duration(ms / 1000.0);
+    }
     // 计时行到底上不上屏（推不出来 → 不显示；不是 0、也不是「—」）
     public bool ShowTiming { get { return haveModel && ModelElapsedMs(Fmt.NowMs()) > 0; } }
     // 子代理行：0 个就不显示（能少写字就少写字；推不出来也不许瞎猜）
@@ -943,7 +951,7 @@ namespace Board {
   }
 
   internal sealed class BalGroup {
-    public string key = "", name = "", color = "", sym = "¥", cur = "CNY", note = "", marks = "", sig = "";
+    public string key = "", name = "", color = "", sym = "¥", cur = "CNY", note = "", marks = "", cardMarks = "", sig = "";
     public bool known, carried, depleted, drawable;
     public double value, low, crit;
     public long atMs;
@@ -999,10 +1007,13 @@ namespace Board {
             if (spec.floored) mk.Add("<0.01 圈");
             if (o.carried) mk.Add("沿用");
             o.marks = string.Join(" · ", mk.ToArray());
+            // 卡片不画圈了：只留数据状态（沿用），圈相关的字不上卡片
+            o.cardMarks = o.carried ? "沿用" : "";
             o.drawable = true;
             o.sig = Fmt.Num(unit) + "|" + string.Join(",", Array.ConvertAll<double, string>(spec.pcts, delegate (double d) { return Fmt.Num(d); }));
           } else {
             o.marks = o.cur;
+            o.cardMarks = o.cur;
           }
         }
         view.groups.Add(o);
@@ -1030,8 +1041,8 @@ namespace Board {
     public string snapText = "";
     public string lastText = "—", todayLine = "今天 0 轮 · 读不到会话记录", weekLine = "近 7 天 —";
     public int todayTurns;
-    public bool ok; public string quotaLabel = "Codex", quotaAlt = "";
-    public double quotaRemain, quotaUsed, qWarnUsed = 80.0, qCritUsed = 95.0;
+    public bool ok; public string quotaLabel = "Codex 5h";
+    public double quotaRemain, qWarnUsed = 80.0, qCritUsed = 95.0;
     public string sessId = ""; public long slotMs; public string slotNo = "";
     public BalSnapshot bal = new BalSnapshot();
     public bool balRetained, codexRetained;   // 这一份是不是「上一份好数据」的沿用（读失败时的降级，不是假装新数据）
@@ -1120,18 +1131,11 @@ namespace Board {
         lastText = "—"; todayTurns = 0;
         todayLine = "今天 0 轮 · 读不到会话记录"; weekLine = "近 7 天 —";
       }
-      // 微型：最紧的那个 Codex 额度
-      ok = false; quotaLabel = "Codex"; quotaRemain = 0; quotaUsed = 0; quotaAlt = "";
+      // 微型卡片的大环：固定显示 Codex 5h 剩余（2026-11-03 用户口径 —— 不再取「两个窗口里更紧的那个」）
+      ok = false; quotaLabel = "Codex 5h"; quotaRemain = 0;
       if (codexOk) {
-        if (fiveRemain <= weekRemain) {
-          quotaLabel = "Codex 5h"; quotaRemain = fiveRemain; quotaUsed = five;
-          qWarnUsed = cx.warn5hUsed; qCritUsed = cx.crit5hUsed;
-          quotaAlt = "7 天 还剩 " + Fmt.Pct(weekRemain);
-        } else {
-          quotaLabel = "Codex 7 天"; quotaRemain = weekRemain; quotaUsed = week;
-          qWarnUsed = cx.warnWeekUsed; qCritUsed = 95.0;
-          quotaAlt = "5h 还剩 " + Fmt.Pct(fiveRemain);
-        }
+        quotaRemain = fiveRemain;
+        qWarnUsed = cx.warn5hUsed; qCritUsed = cx.crit5hUsed;
         ok = true;
       }
       slotMs = sess.newestSlotMs; slotNo = sess.newestSlotNo ?? "";
