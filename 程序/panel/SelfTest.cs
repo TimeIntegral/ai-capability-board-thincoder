@@ -42,6 +42,7 @@ namespace Board {
         Section("T33", delegate { T33(); });
         Section("T34", delegate { T34(); });
         Section("T37", delegate { T37(); });
+        Section("T38", delegate { T38(); });
         Section("T14", delegate { T14(dir); });
         Section("T15", delegate { T15(); });
         Section("T16", delegate { T16(dir); });
@@ -559,12 +560,140 @@ namespace Board {
         + " ≤ 时长左端 " + Fmt.Num(timerLeft) + "；时长「11:08:40」右端 " + Fmt.Num(Math.Round(timerLeft + timerW, 1))
         + " ≤ 轮次左端 " + Fmt.Num(turnsLeft) + " DIP");
 
-      // ⑤ 卡片底部一行字也装得下：说明文字与金额不压（真字体宽度；卡上已无余额圈）
-      double capW = Measured("余额 智谱 GLM · 沿用", 8.5, PanelWindow.UiFont);
-      double amtW = Measured("¥8,888.12", 10, PanelWindow.MonoFont);
-      Check("T37-card-bal-line", capW <= 138.0 && amtW <= 66.0,
-        "余额行「余额 智谱 GLM · 沿用」宽 " + Fmt.Num(Math.Round(capW, 1)) + " DIP ≤ 138（与右侧金额之间留 12）；"
-        + "金额「¥8,888.12」宽 " + Fmt.Num(Math.Round(amtW, 1)) + " DIP ≤ 66");
+      // ⑤ 卡片底部两组的**标签行**也装得下（真字体宽度；2026-11-03 用户口径：余额与今日已消耗拆成两组）
+      double capW = Measured(PanelWindow.CARD_BAL_LABEL + " · 沿用", PanelWindow.CARD_BAL_CAP_SIZE, PanelWindow.UiFont);
+      double todayCapW = Measured(PanelWindow.CARD_TODAY_LABEL, PanelWindow.CARD_BAL_CAP_SIZE, PanelWindow.UiFont);
+      double capEnd = PanelWindow.CARD_BAL_CAP_X + capW;
+      double todayCapStart = PanelWindow.CARD_BAL_RIGHT - todayCapW;
+      Check("T37-card-bal-line", todayCapW <= PanelWindow.CARD_TODAY_CAP_W && capEnd + PanelWindow.CARD_BAL_MIN_GAP <= todayCapStart,
+        "标签行：「" + PanelWindow.CARD_BAL_LABEL + " · 沿用」右端 " + Fmt.Num(Math.Round(capEnd, 1))
+        + " ≤ 「" + PanelWindow.CARD_TODAY_LABEL + "」左端 " + Fmt.Num(Math.Round(todayCapStart, 1))
+        + "（留白 " + Fmt.Num(Math.Round(todayCapStart - capEnd, 1)) + " DIP，要 ≥ " + Fmt.Num(PanelWindow.CARD_BAL_MIN_GAP) + "）；"
+        + "「" + PanelWindow.CARD_TODAY_LABEL + "」宽 " + Fmt.Num(Math.Round(todayCapW, 1)) + " ≤ 槽宽 " + Fmt.Num(PanelWindow.CARD_TODAY_CAP_W)
+        + "（数字行与两行高度在 T38）");
+    }
+
+    // ==================== T38 卡片「今日已消耗」（2026-11-03 用户口径）====================
+    // 口径：今天（**本地 0 点**）起的净消耗 —— 只看今天 0 点之后的采样点，相邻两点之间只累计**下降段**；
+    //   充值（上涨）不计也不冲抵（与网页看板「净消耗」同一把尺子）。今天没有采样点 / 历史读不到 → 整组不显示
+    //   （不显示 0、不显示「—」）。版面：与余额拆成两组「标签 + 数字」两行，两行都落在第三行与卡片下沿之间，
+    //   真字体度量证明装得下、且状态行 / 项目名行 / 第三行一个都没被挤动。
+    private static void T38() {
+      long realNow = Fmt.NowMs();
+      long t0 = Cadence.TodayStartMs(realNow);       // 今天的本地 0 点（夹具都相对它摆，什么时间跑都同一结果）
+      long noon = t0 + 5 * 3600000L;                 // 夹具里的「现在」= 今天 05:00
+      long h1 = t0 + 3600000L, m10 = 600000L;
+      string dir = Path.Combine(Path.GetTempPath(), "board-today-" + Guid.NewGuid().ToString("N"));
+      Directory.CreateDirectory(Path.Combine(dir, "data", "history"));
+      try {
+        // ① 今天只有下降 → 下降段合计
+        WriteHistory(dir, "deepseek", new long[] { h1, h1 + m10, h1 + 2 * m10, h1 + 3 * m10 },
+          new double[] { 100.00, 99.50, 99.50, 98.25 });
+        var a = Cadence.Read(dir, "deepseek", noon);
+        Check("T38-spend", a.todayOk && a.todayMoney == "¥1.75" && Math.Abs(a.todaySpend - 1.75) < 0.0001 && a.todaySamples == 4,
+          "今天 100.00 → 99.50 → 99.50 → 98.25（4 个采样点）：下降 0.50 + 1.25 = " + a.todayMoney + "（卡片上写「今日已消耗 / " + a.todayMoney + "」）");
+
+        // ② 充值不算消耗：上涨段不计、也不冲抵（不是「首−末」，也不是把充值当消耗）
+        WriteHistory(dir, "deepseek", new long[] { h1, h1 + m10, h1 + 2 * m10, h1 + 3 * m10 },
+          new double[] { 100.00, 110.00, 107.00, 104.00 });
+        var b = Cadence.Read(dir, "deepseek", noon);
+        Check("T38-topup", b.todayOk && b.todayMoney == "¥6.00",
+          "今天 100 → 110（充值 +¥10）→ 107 → 104：上涨不计，只算 3 + 3 = " + b.todayMoney
+          + "（若按「首−末」会得 ¥0.00；若把充值当消耗会得 ¥16.00 —— 都不是这把尺子）");
+
+        // ③ 今天有采样点但没花钱 → ¥0.00（不是不显示，也不是「—」）
+        WriteHistory(dir, "deepseek", new long[] { h1, h1 + m10, h1 + 2 * m10 },
+          new double[] { 50.00, 50.00, 50.00 });
+        var c = Cadence.Read(dir, "deepseek", noon);
+        Check("T38-zero", c.todayOk && c.todayMoney == "¥0.00",
+          "今天 3 个采样点余额一直是 50.00 → 上屏 " + c.todayMoney + "（今天确实没花钱；不是不显示，也不是「—」）");
+
+        // ④ 今天没有采样点（只有昨天的）→ 不显示
+        WriteHistory(dir, "deepseek", new long[] { t0 - 2 * 3600000L, t0 - 3600000L },
+          new double[] { 100.00, 99.00 });
+        var d = Cadence.Read(dir, "deepseek", noon);
+        Check("T38-noday", !d.todayOk && d.todayMoney == "" && d.todayWhy.Length > 0,
+          "只有昨天的采样点 → 今日这一项不显示（" + d.todayWhy + "），不显示 0、不显示「—」");
+
+        // ⑤ 历史读不到（没这个文件）→ 不显示
+        var e = Cadence.Read(dir, "glm", noon);
+        Check("T38-nofile", !e.todayOk && e.todayMoney == "",
+          "没有 glm.jsonl → 这一项不显示（" + (e.why.Length > 0 ? e.why : e.todayWhy) + "）");
+
+        // ⑥ 今天只有 1 个采样点 → 算不出（不假装 0）
+        WriteHistory(dir, "deepseek", new long[] { t0 - 3600000L, h1 },
+          new double[] { 100.00, 99.00 });
+        var f = Cadence.Read(dir, "deepseek", noon);
+        Check("T38-single", !f.todayOk && f.todayMoney == "" && f.todayWhy.IndexOf("1 个采样点") >= 0,
+          "昨天最后一个点 + 今天第 1 个点：真正花了多少说不准（跨 0 点那一段没采样）→ 不显示（" + f.todayWhy + "）");
+
+        // ⑦ 0 点边界：跨 0 点那一段不算今天（与看板选「今天 0 点 → 现在」同一个算法）
+        WriteHistory(dir, "deepseek", new long[] { t0 - 2 * 60000L, t0 + 30000L },
+          new double[] { 100.00, 95.00 });
+        var g7a = Cadence.Read(dir, "deepseek", t0 + 35000L);        // 00:00:35：文件里今天只有 0:00:30 一个点
+        WriteHistory(dir, "deepseek", new long[] { t0 - 2 * 60000L, t0 + 30000L, t0 + 50000L },
+          new double[] { 100.00, 95.00, 94.00 });
+        var g7b = Cadence.Read(dir, "deepseek", t0 + 55000L);        // 00:00:55：第二个点到位，今天两个点
+        Check("T38-midnight", !g7a.todayOk && g7b.todayOk && g7b.todayMoney == "¥1.00",
+          "0 点后 35 秒（今天只 1 个点）→ 不显示；0 点后 55 秒（两个点 95.00 → 94.00）→ " + g7b.todayMoney
+          + "（跨 0 点那一段 100.00 → 95.00 归昨天，不算今天；若算进去会是 ¥6.00）");
+
+        // ⑧ 两家各算各的（卡片显示的是哪一家，今日就看哪一家）
+        WriteHistory(dir, "deepseek", new long[] { h1, h1 + m10 }, new double[] { 140.18, 137.51 });
+        WriteHistory(dir, "glm", new long[] { h1, h1 + m10 }, new double[] { 58.62, 57.00 });
+        var ds = Cadence.Read(dir, "deepseek", noon);
+        var gl = Cadence.Read(dir, "glm", noon);
+        Check("T38-two", ds.todayMoney == "¥2.67" && gl.todayMoney == "¥1.62",
+          "同一时间两家各自的下降段：DeepSeek " + ds.todayMoney + "、智谱 GLM " + gl.todayMoney + "（不合并成一个总数）");
+      } finally { try { Directory.Delete(dir, true); } catch { } }
+
+      // ⑨ 版面：两组的标签行 / 数字行都在卡片内，行间不叠、也不压上面三行（真字体度量；行高取字盒高度）
+      double capH = MeasuredH(PanelWindow.CARD_TODAY_LABEL, PanelWindow.CARD_BAL_CAP_SIZE, PanelWindow.UiFont);
+      double nameH = MeasuredH("智谱 GLM", PanelWindow.CARD_BAL_SIZE, PanelWindow.UiFont);
+      double amtH = MeasuredH("¥8,888.12", PanelWindow.CARD_BAL_SIZE, PanelWindow.MonoFont);
+      double row3H = MeasuredH("16:02", PanelWindow.CARD_TIMER_SIZE, PanelWindow.MonoFont);
+      double row3Bottom = PanelWindow.CARD_ROW3_Y + row3H;
+      double capBottom = PanelWindow.CARD_BAL_CAP_Y + capH;
+      double valH = Math.Max(nameH, amtH);
+      double valBottom = PanelWindow.CARD_BAL_AMT_Y + valH;
+      Check("T38-card-rows", row3Bottom + 1.0 <= PanelWindow.CARD_BAL_CAP_Y && capBottom + 1.0 <= PanelWindow.CARD_BAL_AMT_Y && valBottom <= 90.0,
+        "第三行底 " + Fmt.Num(Math.Round(row3Bottom, 2)) + " → 标签行顶 " + Fmt.Num(PanelWindow.CARD_BAL_CAP_Y)
+        + "（距 " + Fmt.Num(Math.Round(PanelWindow.CARD_BAL_CAP_Y - row3Bottom, 2)) + "）；标签行底 " + Fmt.Num(Math.Round(capBottom, 2))
+        + " → 数字行顶 " + Fmt.Num(PanelWindow.CARD_BAL_AMT_Y) + "（距 " + Fmt.Num(Math.Round(PanelWindow.CARD_BAL_AMT_Y - capBottom, 2)) + "）；数字行底 "
+        + Fmt.Num(Math.Round(valBottom, 2)) + " ≤ 卡片高 90（余 " + Fmt.Num(Math.Round(90.0 - valBottom, 2)) + "）；字高：标签 "
+        + Fmt.Num(Math.Round(capH, 2)) + " / 家名 " + Fmt.Num(Math.Round(nameH, 2)) + " / 金额 " + Fmt.Num(Math.Round(amtH, 2)));
+
+      // ⑩ 上面三行一个都没动：状态行 → 项目名行 → 第三行（那处只有 0.3 DIP 的余地，没被压成负数）
+      double statusH = MeasuredH("正在干活", 11.0, PanelWindow.UiFont);
+      double projH = MeasuredH("中文项目名示例", PanelWindow.CARD_PROJ_SIZE, PanelWindow.UiFont);
+      double statusBottom = PanelWindow.CARD_STATUS_Y + statusH;
+      double projBottom = PanelWindow.CARD_PROJ_Y + projH;
+      Check("T38-card-rows-kept", statusBottom <= PanelWindow.CARD_PROJ_Y && projBottom + 2.0 <= PanelWindow.CARD_ROW3_Y,
+        "状态行底 " + Fmt.Num(Math.Round(statusBottom, 2)) + " ≤ 项目名行顶 " + Fmt.Num(PanelWindow.CARD_PROJ_Y)
+        + "（余 " + Fmt.Num(Math.Round(PanelWindow.CARD_PROJ_Y - statusBottom, 2)) + "）；项目名行底 " + Fmt.Num(Math.Round(projBottom, 2))
+        + " + 2 ≤ 第三行顶 " + Fmt.Num(PanelWindow.CARD_ROW3_Y) + "（余 " + Fmt.Num(Math.Round(PanelWindow.CARD_ROW3_Y - projBottom, 1)) + "）");
+
+      // ⑪ 数字行横向：左组（家名 + 金额）与右组（今日金额）不叠 —— 取装得下的最宽组合
+      double nameW = Measured("智谱 GLM", PanelWindow.CARD_BAL_SIZE, PanelWindow.UiFont);
+      double amtW = Measured("¥8,888.12", PanelWindow.CARD_BAL_SIZE, PanelWindow.MonoFont);
+      double todayW = Measured("¥2,888.88", PanelWindow.CARD_BAL_SIZE, PanelWindow.MonoFont);
+      double leftEnd = PanelWindow.CARD_BAL_CAP_X + nameW + PanelWindow.CARD_BAL_NAME_GAP + amtW;
+      double rightStart = PanelWindow.CARD_BAL_RIGHT - todayW;
+      Check("T38-card-cols", leftEnd + PanelWindow.CARD_BAL_MIN_GAP <= rightStart,
+        "最宽组合：家名「智谱 GLM」" + Fmt.Num(Math.Round(nameW, 1)) + " + 金额「¥8,888.12」" + Fmt.Num(Math.Round(amtW, 1))
+        + " → 左组右端 " + Fmt.Num(Math.Round(leftEnd, 1)) + "；右组「¥2,888.88」" + Fmt.Num(Math.Round(todayW, 1))
+        + " → 左端 " + Fmt.Num(Math.Round(rightStart, 1)) + "（留白 " + Fmt.Num(Math.Round(rightStart - leftEnd, 1)) + " ≥ " + Fmt.Num(PanelWindow.CARD_BAL_MIN_GAP) + "）");
+
+      // ⑫ 真机当前值的那一组（DeepSeek ¥140.18 / 今日 ¥2.67）更宽裕 —— 两个数都量出来贴上
+      double n1 = Measured("DeepSeek", PanelWindow.CARD_BAL_SIZE, PanelWindow.UiFont);
+      double a1 = Measured("¥140.18", PanelWindow.CARD_BAL_SIZE, PanelWindow.MonoFont);
+      double t1 = Measured("¥2.67", PanelWindow.CARD_BAL_SIZE, PanelWindow.MonoFont);
+      double l1 = PanelWindow.CARD_BAL_CAP_X + n1 + PanelWindow.CARD_BAL_NAME_GAP + a1;
+      double r1 = PanelWindow.CARD_BAL_RIGHT - t1;
+      Check("T38-card-cols-real", l1 + PanelWindow.CARD_BAL_MIN_GAP <= r1,
+        "真机值：家名「DeepSeek」" + Fmt.Num(Math.Round(n1, 1)) + " + 金额「¥140.18」" + Fmt.Num(Math.Round(a1, 1))
+        + " → 右端 " + Fmt.Num(Math.Round(l1, 1)) + "；「¥2.67」" + Fmt.Num(Math.Round(t1, 1)) + " → 左端 " + Fmt.Num(Math.Round(r1, 1))
+        + "（留白 " + Fmt.Num(Math.Round(r1 - l1, 1)) + " DIP）");
     }
 
     private static double Measured(string text, double size, FontFamily family) {
@@ -686,7 +815,11 @@ namespace Board {
           texts.Add(g.name); texts.Add(g.amountText); texts.Add(g.marks);
           var cad = m.CadenceOf(g.key);
           if (cad.ok) texts.Add(cad.text);
+          if (cad.todayOk) texts.Add(cad.todayMoney);   // 卡片右下那组「今日已消耗」的数字
         }
+        // 卡片底部两组「标签 + 数字」的标签文字（2026-11-03）：也是上屏文案，走同一张词表
+        texts.Add(PanelWindow.CARD_BAL_LABEL);
+        texts.Add(PanelWindow.CARD_TODAY_LABEL);
         texts.Add("今天 · 这个项目");
         texts.Add("最近 " + m.lastText);
         texts.Add(m.todayLine);
@@ -738,8 +871,29 @@ namespace Board {
           "微型卡片大环：" + s0["cardRingLabel"] + " " + s0["cardRingValue"] + "（固定 5h，不是「最紧」）");
         Check("UI-card-bal-shapes", s0["cardBalShapes"] == "0",
           "卡片上 y≥60 的圆/弧元素数=" + s0["cardBalShapes"] + "（用户口径：两个小圆环不要了）");
-        Check("UI-card-bal-line", !string.IsNullOrEmpty(s0["cardBalCap"]) && s0["cardBalCap"] != "—" && s0["cardBalAmt"] != "—",
-          "卡片余额行：" + s0["cardBalCap"] + " / " + s0["cardBalAmt"]);
+        Check("UI-card-bal-line", !string.IsNullOrEmpty(s0["cardBalCap"]) && s0["cardBalCap"].StartsWith(PanelWindow.CARD_BAL_LABEL) && s0["cardBalAmt"] != "—",
+          "卡片余额那一组：「" + s0["cardBalCap"] + "」/「" + s0["cardBalName"] + " " + s0["cardBalAmt"] + "」");
+        // 右下那组「今日已消耗 + 数字」：要么两个元素都在（且是词表里的形状），要么整组不显示并给理由
+        bool todayShown = !string.IsNullOrEmpty(s0["cardTodayAmt"]);
+        Check("UI-card-today", todayShown
+          ? s0["cardTodayCap"] == PanelWindow.CARD_TODAY_LABEL && s0["cardTodayAmt"].StartsWith("¥")
+          : !string.IsNullOrEmpty(s0["cardTodayWhy"]) && s0["cardTodayWhy"].StartsWith("不显示"),
+          "今日已消耗那一组：" + (todayShown ? "「" + s0["cardTodayCap"] + "」/「" + s0["cardTodayAmt"] + "」" : s0["cardTodayWhy"]));
+        // 两组在真窗口里也不叠：左组（家名 + 金额）右端 + 12 ≤ 右组数字左端；右端不出卡片（216 = 228 − 12）
+        double balAmtRight = RowVal(s0["cardBalAmtRow"], "right");
+        double todayAmtLeft = RowVal(s0["cardTodayAmtRow"], "left"), todayAmtRight = RowVal(s0["cardTodayAmtRow"], "right");
+        double todayCapRight = RowVal(s0["cardTodayCapRow"], "right");
+        Check("UI-card-today-fit", !todayShown || (balAmtRight + PanelWindow.CARD_BAL_MIN_GAP <= todayAmtLeft + 0.6 && todayAmtRight <= 216.6 && todayCapRight <= 216.6),
+          "左组右端 " + Fmt.Num(Math.Round(balAmtRight, 1)) + " → 今日金额左端 " + Fmt.Num(Math.Round(todayAmtLeft, 1))
+          + "（留白 " + Fmt.Num(Math.Round(todayAmtLeft - balAmtRight, 1)) + "）；右端 " + Fmt.Num(Math.Round(todayAmtRight, 1)) + " / 标签右端 " + Fmt.Num(Math.Round(todayCapRight, 1)) + " ≤ 216");
+        // 纵向：第三行 → 标签行 → 数字行，四道间距都不为负、数字行底不出卡片
+        double modelBottom = RowVal(s0["cardModelRow"], "bottom");
+        double capTop = RowVal(s0["cardTodayCapRow"], "top"), capBot = RowVal(s0["cardTodayCapRow"], "bottom");
+        double valTop = RowVal(s0["cardTodayAmtRow"], "top");
+        double valBot = Math.Max(RowVal(s0["cardBalNameRow"], "bottom"), RowVal(s0["cardBalAmtRow"], "bottom"));
+        Check("UI-card-bal-rows", modelBottom > 0 && capTop - modelBottom >= 1.0 && valTop - capBot >= 1.0 && valBot <= 90.5,
+          "第三行底 " + Fmt.Num(Math.Round(modelBottom, 2)) + " → 标签行 " + Fmt.Num(Math.Round(capTop, 2)) + "–" + Fmt.Num(Math.Round(capBot, 2))
+          + " → 数字行顶 " + Fmt.Num(Math.Round(valTop, 2)) + "，数字行底 " + Fmt.Num(Math.Round(valBot, 2)) + " ≤ 90（卡片高）");
         double projBottom = RowVal(s0["cardProjRow"], "bottom");
         double modelTop = RowVal(s0["cardModelRow"], "top");
         Check("UI-card-rows", projBottom > 0 && modelTop - projBottom >= 2.0,

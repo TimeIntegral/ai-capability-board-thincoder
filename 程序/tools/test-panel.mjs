@@ -54,12 +54,15 @@ test('T6–T16 面板自检全部通过（几何 / 拖动阈值 / 位置记忆 /
   const r = 跑自检();
   const 失败 = r.checks.filter(c => !c.ok);
   assert.equal(失败.length, 0, `自检有失败项：\n${失败.map(c => `  ${c.id} ${c.detail}`).join('\n')}`);
-  assert.ok(r.checks.length >= 98, `自检项太少（${r.checks.length} 条）—— 用例可能没跑全（2026-11-03 基线 98：原 93 + T37 卡片三件 5 条）`);
+  assert.ok(r.checks.length >= 110, `自检项太少（${r.checks.length} 条）—— 用例可能没跑全（2026-11-03 基线 110：原 93 + T37 卡片三件 5 条 + T38 今日已消耗 12 条）`);
   for (const id of ['T6-panelH', 'T7-detach', 'T8-clamp', 'T9-remain', 'T10-shared-unit', 'T11-hidden', 'T12-today', 'T12-session-start', 'T13-running', 'T14-quota', 'T15-change', 'T16-list',
     'T28-read-balance', 'T28-hidden', 'T28-shown-again', 'T29-retain', 'T29-firstfail', 'T30-fillet', 'T30-hairline',
     'T31-line', 'T31-hidden', 'T34-contrast', 'T34-cadence-height', 'T34-child', 'T34-card-row', 'T36-sum', 'T36-no-done', 'T36-stale-open', 'T36-cross-midnight', 'T36-child-sum', 'T36-session',
     // 2026-11-03：微型卡片三件（大环固定 5h / 余额圈撤掉 / 项目名行与模型行不相压）
-    'T37-5h-fixed', 'T37-5h-tighter', 'T37-card-gap', 'T37-card-row', 'T37-card-bal-line']) {
+    'T37-5h-fixed', 'T37-5h-tighter', 'T37-card-gap', 'T37-card-row', 'T37-card-bal-line',
+    // 2026-11-03：卡片「今日已消耗」（口径五条 + 版面四条）
+    'T38-spend', 'T38-topup', 'T38-zero', 'T38-noday', 'T38-nofile', 'T38-single', 'T38-midnight', 'T38-two',
+    'T38-card-rows', 'T38-card-rows-kept', 'T38-card-cols', 'T38-card-cols-real']) {
     assert.ok(r.checks.some(c => c.id === id), `自检缺少用例 ${id}`);
   }
   assert.match(r.summary, /fail=0/, `自检汇总不是全绿：${r.summary}`);
@@ -105,6 +108,8 @@ test('T16 上屏文本 ⊆ 固定词表（无解释性句子）', { skip: skip�
     /^刷新窗口都已过 · 数据 .+$/,
     /^余额$/,
     /^余额 .+$/,
+    // 2026-11-03：卡片底部两组「标签 + 数字」——「今日已消耗」是固定标签（数字走下面的金额词条）
+    /^今日已消耗$/,
     /^1 圈 = ¥[\d,]+$/,
     /^\d+ 圈$/, /^<0\.01 圈$/,
     /^¥[\d,]+\.\d{2}$/, /^[A-Z]{3} [\d,]+\.\d{2}$/,

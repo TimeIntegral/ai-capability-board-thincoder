@@ -57,8 +57,8 @@ namespace Board {
     private Path panelShape, sliverFill, sliverEdge, ring5Arc, ring7Arc, ringArc;
     private RectangleGeometry clip;
     private ScaleTransform panelScale, cardScale;
-    private TextBlock ring5Txt, ring7Txt, ringArcTxt, ringLabel, resetText, snapText, balUnit, balData, balCap, balAmt,
-                      statusWord, ageText, projName, timer, lastText, todayText, weekText, titleCodex, titleBal, titleProj;
+    private TextBlock ring5Txt, ring7Txt, ringArcTxt, ringLabel, resetText, snapText, balUnit, balData, balCap, balName, balAmt,
+                      cardTodayCap, cardTodayAmt, statusWord, ageText, projName, timer, lastText, todayText, weekText, titleCodex, titleBal, titleProj;
     private Ellipse dot;
     private Border cardBorder;
     private Rectangle cardHint;
@@ -182,7 +182,21 @@ namespace Board {
     internal const double CARD_STATUS_Y = 6.5, CARD_PROJ_Y = 21.5;
     internal const double CARD_PROJ_SIZE = 12.5, CARD_TIMER_SIZE = 16.5;
     internal const double CARD_ROW3_Y = 43.0, CARD_LABEL_Y = 49.0, CARD_TURNS_Y = 50.5;
-    internal const double CARD_BAL_Y = 77.0;
+    // 卡片底部：两组「标签 + 数字」（2026-11-03 用户口径 —— 余额与今日已消耗是两件事，拆成各自独立的一组，不混排）：
+    //   上排两个小灰标签（余额 / 今日已消耗，8.5 DIP）、下排两个数字（家名 + 金额 / 今日金额，10 DIP，数字同号字）。
+    //   高度来源：第三行（模型 16:02，16.5 DIP 真字体字高 19.32 → 底 62.32）与卡片下沿之间原有 14.68 DIP 空地，
+    //   两行合计 11.31 + 13.30 = 24.61（含行间 1.09）= 用这块空地，**状态行 / 项目名行 / 第三行一个都不动**
+    //   （状态行与项目名行之间只有 0.3 DIP，动不得）。真字体度量与四道间距在自检 T38。
+    internal const double CARD_BAL_CAP_Y = 63.6;    // 标签行顶（卡内 y）
+    internal const double CARD_BAL_AMT_Y = 76.0;    // 数字行顶（卡内 y）
+    internal const double CARD_BAL_CAP_X = 12.0;    // 左组起点（卡内 x）
+    internal const double CARD_BAL_RIGHT = 216.0;   // 右组右端（卡宽 228 − 12）
+    internal const double CARD_TODAY_CAP_W = 100.0; // 「今日已消耗」右对齐槽宽（真字体宽 42.5）
+    internal const double CARD_TODAY_AMT_W = 90.0;  // 「¥12.34」右对齐槽宽（真字体宽 33.0）
+    internal const double CARD_BAL_NAME_GAP = 4.0;  // 家名 → 金额
+    internal const double CARD_BAL_MIN_GAP = 12.0;  // 左组右端 → 右组左端（不叠字的最小留白）
+    internal const double CARD_BAL_SIZE = 10.0, CARD_BAL_CAP_SIZE = 8.5;
+    internal const string CARD_BAL_LABEL = "余额", CARD_TODAY_LABEL = "今日已消耗";
 
     private static TextBlock Txt(double x, double y, double w, string text, double size, string color) {
       return Txt(x, y, w, text, size, color, "Left", "Normal", UiFont, null);
@@ -429,14 +443,21 @@ namespace Board {
       // 本会话轮次（新一轮：从会话 manifest 的 turnCount 来；读不到就不显示）
       cardTurns = Txt(B + W - EDGE_PAD - TURNS_W, B + CARD_TURNS_Y, TURNS_W, "", 9, "#8A909C", "Right", "Normal", UiFont, null);
       cardBranch.Children.Add(cardTurns);
-      // 卡片底部：只留一行「余额 家名 + 金额」；余额圈已撤（2026-11-03 用户口径：两个小圆环不要了）
-      balCap = Txt(B + 12, B + CARD_BAL_Y, 150, "", 8.5, "#8A909C");
+      // 卡片底部：两组「标签 + 数字」——上排两个小灰标签（左：余额；右：今日已消耗）、下排两个数字（左：家名 + 金额；右：今日金额）
+      balCap = Txt(B + CARD_BAL_CAP_X, B + CARD_BAL_CAP_Y, 0, CARD_BAL_LABEL, CARD_BAL_CAP_SIZE, "#8A909C");
+      balName = Txt(B + CARD_BAL_CAP_X, B + CARD_BAL_AMT_Y, 0, "", CARD_BAL_SIZE, "#6E7581");
+      balAmt = Txt(B + CARD_BAL_CAP_X, B + CARD_BAL_AMT_Y, 0, "", CARD_BAL_SIZE, "#12151A", "Left", "SemiBold", MonoUiFont, null);
+      cardTodayCap = Txt(B + CARD_BAL_RIGHT - CARD_TODAY_CAP_W, B + CARD_BAL_CAP_Y, CARD_TODAY_CAP_W, CARD_TODAY_LABEL, CARD_BAL_CAP_SIZE, "#8A909C", "Right", "Normal", UiFont, null);
+      cardTodayAmt = Txt(B + CARD_BAL_RIGHT - CARD_TODAY_AMT_W, B + CARD_BAL_AMT_Y, CARD_TODAY_AMT_W, "", CARD_BAL_SIZE, "#12151A", "Right", "SemiBold", MonoUiFont, null);
       cardBranch.Children.Add(balCap);
-      balAmt = Txt(B + 150, B + CARD_BAL_Y, W - 162, "", 10, "#12151A", "Right", "SemiBold", MonoUiFont, null);
+      cardBranch.Children.Add(balName);
       cardBranch.Children.Add(balAmt);
+      cardBranch.Children.Add(cardTodayCap);
+      cardBranch.Children.Add(cardTodayAmt);
     }
     private Ellipse cardDot;
     private TextBlock cardStatusWord, cardProjName, cardTurns, cardLabel;
+    private string cardTodayWhy = "";   // 「今日已消耗」那一组为什么显示 / 不显示（布局树读数用，不上屏）
 
     // ==================== 排版 / 形态 ====================
     private void LayoutScene(bool force) {
@@ -668,7 +689,31 @@ namespace Board {
       }
       var bc = MicroBalText(model);
       if (balCap != null) { balCap.Text = bc.cap; balCap.Foreground = Brush(bc.capColor); }
+      if (balName != null) balName.Text = bc.name;
       if (balAmt != null) { balAmt.Text = bc.amt; balAmt.Foreground = Brush(bc.amtColor); }
+      // 家名之后的位置按真字体度量摆（家名就两种长短：DeepSeek / 智谱 GLM，不写死偏移）
+      if (balAmt != null) {
+        double nx = CARD_BAL_CAP_X + (balName != null && !string.IsNullOrEmpty(bc.name) ? TextWidth(balName) + CARD_BAL_NAME_GAP : 0.0);
+        Canvas.SetLeft(balAmt, Geo.CARD_BLEED + nx);
+      }
+      // 右下那组「今日已消耗 + 数字」：与余额同一家、同一个「净消耗」口径；
+      //   今天没有采样点 / 历史读不到 → 整组（标签 + 数字）不显示 —— 不显示 0、也不显示「—」
+      var tc = TodayCellOf(model, fr);
+      if (cardTodayCap != null) cardTodayCap.Text = tc.show ? CARD_TODAY_LABEL : "";
+      if (cardTodayAmt != null) { cardTodayAmt.Text = tc.show ? tc.money : ""; cardTodayAmt.Foreground = Brush(tc.moneyColor); }
+      cardTodayWhy = tc.why;
+      if (tc.show && balAmt != null && cardTodayAmt != null) {
+        // 不叠字：左组（家名 + 金额）右端 → 右组数字左端至少留 CARD_BAL_MIN_GAP；真的装不下就整组不显示（不截断）
+        double leftEnd = Canvas.GetLeft(balAmt) - Geo.CARD_BLEED + TextWidth(balAmt) + CARD_BAL_MIN_GAP;
+        double rightStart = CARD_BAL_RIGHT - TextWidth(cardTodayAmt);
+        if (leftEnd > rightStart) {
+          cardTodayWhy = "装不下：左组右端 " + Fmt.Num(Math.Round(leftEnd, 1)) + " > 右组左端 " + Fmt.Num(Math.Round(rightStart, 1)) + " DIP";
+          if (cardTodayCap != null) cardTodayCap.Text = "";
+          cardTodayAmt.Text = "";
+          tc.show = false;
+        }
+      }
+      SetDim(cardTodayCap, tc.dim); SetDim(cardTodayAmt, tc.show && tc.dim);
       // 余额节奏：每家一行「最近 ¥10 用了多久」（只在能算出来时有字；算不出 = 空串，不上屏）
       foreach (var g in model.balView.groups) {
         TextBlock t;
@@ -715,21 +760,39 @@ namespace Board {
     }
     public long lastActivityMax;
 
-    // 余额说明行的唯一出处（卡片与刷新都走它）
-    // 2026-11-03：卡片不再画余额圈 —— 与圈有关的字（「1 圈 = ¥X」「<0.01 圈」「不画圈…」）不再上卡片；
-    //   只留「余额 家名」+ 金额，以及「沿用」这类数据状态（卡片用 cardMarks，中型面板照旧用 marks）。
-    private sealed class MicroBal { public string cap = "", capColor = "#8A909C", amt = "", amtColor = "#12151A", sig = "none"; }
+    // 余额那一组的唯一出处（卡片与刷新都走它）
+    // 2026-11-03：卡片不再画余额圈 —— 与圈有关的字（「1 圈 = ¥X」「<0.01 圈」「不画圈…」）不再上卡片。
+    // 2026-11-03 用户口径（两组拆开）：上排标签固定写「余额」（数据状态如「· 沿用」跟标签走），下排「家名 + 金额」；
+    //   右边的「今日已消耗」是另一组（见 TodayCellOf），两组各写各的，不混在一行里。
+    private sealed class MicroBal { public string cap = "", capColor = "#8A909C", name = "", amt = "", amtColor = "#12151A", sig = "none"; }
     private MicroBal MicroBalText(Model m) {
       var o = new MicroBal();
       var bk = m.balPick;
       if (bk == null) return o;
-      o.cap = "余额 " + bk.name;
+      o.cap = CARD_BAL_LABEL;
+      o.name = bk.name;
       o.sig = bk.key + "|" + bk.sig + "|" + bk.ringCount;
-      if (!bk.known) { o.cap += " —"; return o; }
+      if (!bk.known) { o.amt = "—"; o.amtColor = "#8A909C"; return o; }   // 读不到：金额写「—」，绝不假装 0
       o.amt = bk.amountText;
       if (bk.amountColor == "#FF6B5A") o.amtColor = "#FF6B5A";
       else if (bk.amountColor == "#F2C94C") o.amtColor = "#D89A00";
       if (!string.IsNullOrEmpty(bk.cardMarks)) o.cap += " · " + bk.cardMarks;
+      return o;
+    }
+
+    // 卡片右下那组「今日已消耗 + 数字」的唯一出处：与余额同一家；数字来自余额历史的「今日下降段合计」
+    private sealed class TodayCell { public bool show, dim; public string money = "", moneyColor = "#12151A", why = ""; }
+    private TodayCell TodayCellOf(Model m, Fresh fr) {
+      var o = new TodayCell();
+      var bk = m.balPick;
+      if (bk == null) { o.why = "不显示：没有余额行"; return o; }
+      var cad = m.CadenceOf(bk.key);
+      if (!cad.todayOk || string.IsNullOrEmpty(cad.todayMoney)) {
+        o.why = "不显示：" + (string.IsNullOrEmpty(cad.todayWhy) ? (string.IsNullOrEmpty(cad.why) ? "算不出来" : cad.why) : cad.todayWhy);
+        return o;
+      }
+      o.show = true; o.money = cad.todayMoney; o.why = "显示";
+      o.dim = fr != null && fr.StaleOf(bk.key);   // 沿用余额那条 10 分钟陈旧规则：只暗读数
       return o;
     }
 
@@ -1385,8 +1448,19 @@ namespace Board {
       d["cardRingValue"] = ringArcTxt == null ? "—" : (ringArcTxt.Text + "@" + Fmt.Num(Math.Round(ringArcTxt.Opacity, 2)));
       // 卡上「余额圈那一带」（卡片 y ≥ 60）还剩几个圆/弧：用户口径要求 0
       d["cardBalShapes"] = CardShapes(Geo.CARD_BLEED + 60.0).ToString();
+      // 2026-11-03 两组「标签 + 数字」（余额 / 今日已消耗）：文字 + 真正占的盒子（右对齐槽按槽右端算）
       d["cardBalCap"] = balCap == null ? "—" : balCap.Text;
+      d["cardBalName"] = balName == null ? "—" : balName.Text;
       d["cardBalAmt"] = balAmt == null ? "—" : balAmt.Text;
+      d["cardTodayCap"] = cardTodayCap == null ? "—" : cardTodayCap.Text;
+      d["cardTodayAmt"] = cardTodayAmt == null ? "—" : cardTodayAmt.Text;
+      d["cardTodayDim"] = cardTodayAmt == null ? "—" : "@" + Fmt.Num(Math.Round(cardTodayAmt.Opacity, 2));
+      d["cardTodayWhy"] = cardTodayWhy;
+      d["cardBalCapRow"] = RowRect(balCap);
+      d["cardBalNameRow"] = RowRect(balName);
+      d["cardBalAmtRow"] = RowRect(balAmt);
+      d["cardTodayCapRow"] = RowRect(cardTodayCap);
+      d["cardTodayAmtRow"] = RowRect(cardTodayAmt);
       d["cardProjRow"] = RowRect(cardProjName);
       d["cardModelRow"] = RowRect(timer);
       d["cardTree"] = CardLayoutText();
@@ -1410,6 +1484,7 @@ namespace Board {
       return n;
     }
     // 一行字的盒子：坐标改用**卡片内部坐标系**（卡片左上角 = 0,0，228×90），宽高用真字体度量
+    // 2026-11-03：右对齐 / 居中的槽要按「字真正画在哪」算 —— 字画在槽的右端，不是槽的左上角（否则量出来的左端是假的）
     private static string RowRect(TextBlock t) {
       if (t == null) return "—";
       double left = Canvas.GetLeft(t), top = Canvas.GetTop(t);
@@ -1417,7 +1492,11 @@ namespace Board {
       if (double.IsNaN(top)) top = 0;
       left -= Geo.CARD_BLEED; top -= Geo.CARD_BLEED;
       double w = TextWidth(t);
-      if (!double.IsNaN(t.Width) && t.Width > 0 && w > t.Width) w = t.Width;
+      if (!double.IsNaN(t.Width) && t.Width > 0) {
+        if (w > t.Width) w = t.Width;
+        if (t.TextAlignment == TextAlignment.Right) left += t.Width - w;
+        else if (t.TextAlignment == TextAlignment.Center) left += (t.Width - w) / 2.0;
+      }
       double h = TextHeight(t);
       return "left=" + Fmt.Num(Math.Round(left, 1)) + " right=" + Fmt.Num(Math.Round(left + w, 1))
            + " top=" + Fmt.Num(Math.Round(top, 1)) + " bottom=" + Fmt.Num(Math.Round(top + h, 1));

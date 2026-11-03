@@ -669,14 +669,23 @@ namespace Board {
   //   跨过充值那一段时间不许算进去；充值后没花够 ¥10 → 「充值后花了 ¥X · 用时 Y」；
   //   近 24 小时没花钱 → 「最近 24 小时没花钱」；**绝不许出现 Infinity**（永远是个具体时长或一句固定话）。
   //
-  // 数据：<安装根>/data/history/<平台>.jsonl，每行 {ts, ok, totalBalance|balance, …}（采集器每 5 分钟追加一行）。
+  // 数据：<安装根>/data/history/<平台>.jsonl，每行 {ts, ok, totalBalance|balance, …}（采集器每分钟追加一行）。
   //   只看 ok 为真的样本；余额**上升 > ¥1** 记一次充值（小额抖动不算）；只把**下降**累计成消耗。
+  //
+  // 2026-11-03 用户口径（并进同一个解析器，不重读一遍文件）：「今日已消耗」= 今天（**本地 0 点**）起的净消耗 ——
+  //   与网页看板框选统计的「净消耗」同一把尺子：只看今天 0 点之后的采样点，相邻两点之间**只累计下降段**；
+  //   上涨 = 充值，不是花钱 —— 不计入、也不冲抵（所以「首−末 + 期间上涨」与「下降段合计」是同一个数）。
+  //   0 点那一刀按采样点切：跨 0 点的那一段（前一个采样点在昨天）**不算今天** —— 与看板选「今天 0 点 → 现在」
+  //   同一个算法；代价是 0 点后还没攒到第二个点时算不出来，这一项先不显示（不假装 0）。
   internal sealed class Cadence {
     public const double TOPUP_RISE = 1.0;     // ¥1：一次余额上升超过它才算充值
     public const double BLOCK = 10.0;         // 「最近 ¥10」那一块
     public const double NO_SPEND_HOURS = 24.0;
     public bool ok; public string why = "", text = "";
     public double spent; public int topups; public int blocks;
+    // 今日已消耗：todayOk = 算得出来（历史读得到、且今天有 ≥2 个采样点）；算不出来时 todayMoney 为空（这一项不上屏）
+    public bool todayOk; public double todaySpend; public string todayMoney = "", todayWhy = "";
+    public int todaySamples; public long todayStartMs;
     public static string PathOf(string dataRoot, string key) {
       return Path.Combine(Path.Combine(Path.Combine(dataRoot ?? "", "data"), "history"), key + ".jsonl");
     }
@@ -699,6 +708,18 @@ namespace Board {
         }
       } catch (Exception ex) { o.why = ex.Message; return o; }
       int n = ts.Count;
+      // 今日已消耗：今天 0 点起、相邻两点之间的**下降段**合计（充值 = 上涨，不计也不冲抵）
+      long today0 = TodayStartMs(nowMs);
+      int i0 = -1;
+      for (int j = 0; j < n; j++) if (ts[j] >= today0) { i0 = j; break; }
+      if (i0 >= 0 && n - i0 >= 2) {
+        double td = 0.0;
+        for (int j = i0 + 1; j < n; j++) { double d = val[j - 1] - val[j]; if (d > 0.0) td += d; }
+        o.todayOk = true; o.todaySpend = td; o.todayMoney = Fmt.Money("¥", td);
+        o.todaySamples = n - i0; o.todayStartMs = ts[i0];
+      } else {
+        o.todayWhy = i0 < 0 ? "今天还没有采样点" : "今天只有 " + (n - i0) + " 个采样点（要 2 个点才算得出）";
+      }
       if (n < 2) { o.why = "历史只有 " + n + " 行"; return o; }
       // 最后一次充值（余额单次上升 > TOPUP_RISE）
       int start = 0;
@@ -735,6 +756,12 @@ namespace Board {
       string head = start > 0 ? "充值后花了 " : "花了 ";
       o.text = head + Fmt.Money("¥", cum) + " · 用时 " + Fmt.AgeShort(sec);
       return o;
+    }
+    // 本地 0 点（毫秒）：今天这一刀按**本机日历**切（用户口径「从每天 0 点开始算」），不是 UTC 也不是「最近 24 小时」
+    public static long TodayStartMs(long nowMs) {
+      var t = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).ToLocalTime();
+      var d = new DateTime(t.Year, t.Month, t.Day, 0, 0, 0, DateTimeKind.Unspecified);
+      return new DateTimeOffset(d, t.Offset).ToUnixTimeMilliseconds();
     }
     private static bool Num(string line, string key, out long v) {
       v = 0; int i = line.IndexOf(key, StringComparison.Ordinal);
